@@ -1,0 +1,39 @@
+import 'dotenv/config'
+import express from 'express'
+import cors from 'cors'
+import projectsRouter from './routes/projects.js'
+import testCasesRouter from './routes/testCases.js'
+import { patchTestCase } from './routes/testCases.js'
+import bugsRouter from './routes/bugs.js'
+import { patchBug } from './routes/bugs.js'
+import statsRouter from './routes/stats.js'
+import { requireAuth } from './middleware/auth.js'
+
+const app = express()
+const PORT = process.env.PORT || 3002
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://localhost:5173'
+
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN)
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+  if (req.method === 'OPTIONS') { res.sendStatus(204); return }
+  next()
+})
+
+app.use(express.json())
+
+// Health
+app.get('/health', (req, res) => res.json({ status: 'ok' }))
+
+// Routes
+app.use('/api/projects', projectsRouter)
+app.use('/api/projects/:id/test-cases', testCasesRouter)
+app.use('/api/projects/:id/bugs', bugsRouter)
+app.use('/api/stats', statsRouter)
+
+// Standalone PATCH routes
+app.patch('/api/test-cases/:id', requireAuth, patchTestCase)
+app.patch('/api/bugs/:id', requireAuth, patchBug)
+
+app.listen(PORT, () => console.log(`QA Tool server running on port ${PORT}`))
