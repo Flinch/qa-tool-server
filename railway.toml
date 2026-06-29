@@ -1,9 +1,9 @@
 [build]
 builder = "nixpacks"
-buildCommand = "npm install && npm run db:migrate"
+buildCommand = "npm install"
 
 [deploy]
-startCommand = "npm start"
+startCommand = "npm run db:migrate && npm start"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
