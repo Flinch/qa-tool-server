@@ -7,6 +7,7 @@ import { patchTestCase } from './routes/testCases.js'
 import bugsRouter from './routes/bugs.js'
 import { patchBug } from './routes/bugs.js'
 import statsRouter from './routes/stats.js'
+import authRouter from './routes/auth.js'
 import { requireAuth } from './middleware/auth.js'
 
 const app = express()
@@ -27,6 +28,7 @@ app.use(express.json())
 app.get('/health', (req, res) => res.json({ status: 'ok' }))
 
 // Routes
+app.use('/api/auth', authRouter)
 app.use('/api/projects', projectsRouter)
 app.use('/api/projects/:id/test-cases', testCasesRouter)
 app.use('/api/projects/:id/bugs', bugsRouter)
