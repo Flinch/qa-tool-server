@@ -8,7 +8,7 @@ import bugsRouter from './routes/bugs.js'
 import { patchBug } from './routes/bugs.js'
 import statsRouter from './routes/stats.js'
 import authRouter from './routes/auth.js'
-import { requireAuth } from './middleware/auth.js'
+import { requireAuth, requireRole } from './middleware/auth.js'
 
 const app = express()
 const PORT = process.env.PORT || 3002
@@ -35,7 +35,7 @@ app.use('/api/projects/:id/bugs', bugsRouter)
 app.use('/api/stats', statsRouter)
 
 // Standalone PATCH routes
-app.patch('/api/test-cases/:id', requireAuth, patchTestCase)
-app.patch('/api/bugs/:id', requireAuth, patchBug)
+app.patch('/api/test-cases/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchTestCase)
+app.patch('/api/bugs/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchBug)
 
 app.listen(PORT, () => console.log(`QA Tool server running on port ${PORT}`))

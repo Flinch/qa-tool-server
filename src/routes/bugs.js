@@ -4,6 +4,7 @@ import { requireAuth } from '../middleware/auth.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
+router.use(requireRole('qa_engineer', 'admin'))
 
 // GET /projects/:id/bugs
 router.get('/', async (req, res) => {

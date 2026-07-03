@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
+router.use(requireRole('qa_engineer', 'admin'))
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
