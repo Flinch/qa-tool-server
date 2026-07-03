@@ -1,9 +1,10 @@
 import { Router } from 'express'
 import { query } from '../db/pool.js'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAuth, requireRole } from '../middleware/auth.js'
 
 const router = Router()
 router.use(requireAuth)
+router.use(requireRole('qa_engineer', 'admin'))
 
 router.get('/', async (req, res) => {
   try {
@@ -17,8 +18,7 @@ router.get('/', async (req, res) => {
       FROM projects p
       LEFT JOIN test_cases tc ON tc.project_id = p.id
       LEFT JOIN bugs b ON b.project_id = p.id
-      WHERE p.created_by = $1
-    `, [req.userId])
+    `)
     res.json(rows[0])
   } catch (e) {
     res.status(500).json({ error: e.message })

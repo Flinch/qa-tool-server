@@ -2,11 +2,18 @@ import { pool } from './pool.js'
 
 const schema = `
 CREATE TABLE IF NOT EXISTS users (
-  id          TEXT PRIMARY KEY,
-  email       TEXT UNIQUE NOT NULL,
-  role        TEXT NOT NULL DEFAULT 'qa_engineer',
-  created_at  TIMESTAMPTZ DEFAULT NOW()
+  id            TEXT PRIMARY KEY,
+  email         TEXT UNIQUE NOT NULL,
+  password_hash TEXT,
+  name          TEXT,
+  role          TEXT NOT NULL DEFAULT 'qa_engineer',
+  created_at    TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Safe to re-run: adds the new auth columns if this table already existed
+-- from before real auth was wired up.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT;
 
 CREATE TABLE IF NOT EXISTS projects (
   id           SERIAL PRIMARY KEY,
