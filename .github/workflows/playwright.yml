@@ -1,6 +1,9 @@
 name: Playwright Tests
 
 on:
+  push:
+    branches:
+      - feat/automation-suite   # TEMPORARY: swap in your actual feature branch name, remove before merging to master
   workflow_dispatch:
     inputs:
       suite_slug:
@@ -36,19 +39,16 @@ jobs:
       - name: Determine suite
         id: suite
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "slug=nightly" >> "$GITHUB_OUTPUT"
-            echo "path=tests" >> "$GITHUB_OUTPUT"
-          else
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "slug=${{ inputs.suite_slug }}" >> "$GITHUB_OUTPUT"
-            echo "path=tests/${{ inputs.suite_slug }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "slug=smoke" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run Playwright tests
         continue-on-error: true
         env:
           CI: true
-          PLAYWRIGHT_JSON_OUTPUT_NAME: results.json
         run: npx playwright test
 
       - name: Deploy report to GitHub Pages
@@ -64,7 +64,7 @@ jobs:
         if: always()
         env:
           SUITE_SLUG: ${{ steps.suite.outputs.slug }}
-          TRIGGER_TYPE: ${{ github.event_name == 'schedule' && 'nightly' || 'manual' }}
+          TRIGGER_TYPE: ${{ github.event_name == 'schedule' && 'nightly' || (github.event_name == 'workflow_dispatch' && 'manual' || 'push') }}
           RUN_CORRELATION_ID: ${{ inputs.run_correlation_id }}
           PROJECT_ID: ${{ vars.QA_TOOL_PROJECT_ID }}
           REPORT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/reports/${{ github.run_id }}/index.html
