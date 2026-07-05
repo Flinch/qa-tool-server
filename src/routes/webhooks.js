@@ -66,7 +66,7 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       await query(
         `INSERT INTO test_run_results (test_run_id, test_title, status, duration_ms, error_message)
          VALUES ($1,$2,$3,$4,$5)`,
-        [runId, r.test_title, r.status, r.duration_ms || null, r.error_message || null]
+        [runId, r.test_title, r.status, r.duration_ms != null ? Math.round(r.duration_ms) : null, r.error_message || null]
       )
     }
 

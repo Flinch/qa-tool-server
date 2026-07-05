@@ -15,7 +15,7 @@ function walkSuites(suites, out) {
         out.push({
           test_title: spec.title,
           status: result.status === 'passed' ? 'passed' : result.status === 'skipped' ? 'skipped' : 'failed',
-          duration_ms: result.duration || 0,
+          duration_ms: Math.round(result.duration || 0),
           error_message: result.error?.message || null,
         })
       }
@@ -45,7 +45,7 @@ const payload = {
   passed: results.filter(r => r.status === 'passed').length,
   failed: results.filter(r => r.status === 'failed').length,
   skipped: results.filter(r => r.status === 'skipped').length,
-  duration_ms: report.stats?.duration || 0,
+  duration_ms: Math.round(report.stats?.duration || 0),
   report_url: REPORT_URL,
   github_run_url: GITHUB_RUN_URL,
   results,
