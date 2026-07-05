@@ -8,6 +8,8 @@ import bugsRouter from './routes/bugs.js'
 import { patchBug } from './routes/bugs.js'
 import statsRouter from './routes/stats.js'
 import authRouter from './routes/auth.js'
+import automationRouter from './routes/automation.js'
+import webhooksRouter from './routes/webhooks.js'
 import { requireAuth, requireRole } from './middleware/auth.js'
 
 const app = express()
@@ -32,7 +34,9 @@ app.use('/api/auth', authRouter)
 app.use('/api/projects', projectsRouter)
 app.use('/api/projects/:id/test-cases', testCasesRouter)
 app.use('/api/projects/:id/bugs', bugsRouter)
+app.use('/api/projects/:id/automation', automationRouter)
 app.use('/api/stats', statsRouter)
+app.use('/api/webhooks', webhooksRouter)
 
 // Standalone PATCH routes
 app.patch('/api/test-cases/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchTestCase)

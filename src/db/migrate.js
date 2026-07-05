@@ -64,6 +64,61 @@ CREATE TABLE IF NOT EXISTS bugs (
 CREATE INDEX IF NOT EXISTS idx_test_cases_project ON test_cases(project_id);
 CREATE INDEX IF NOT EXISTS idx_bugs_project ON bugs(project_id);
 CREATE INDEX IF NOT EXISTS idx_bugs_test_case ON bugs(test_case_id);
+
+-- Automation suite hub: buckets of automated tests (regression, smoke, e2e),
+-- their execution runs (manual click or nightly cron), and per-test results
+-- within each run. Separate from test_cases/bugs above, which are manual QA.
+
+CREATE TABLE IF NOT EXISTS automation_suites (
+  id           SERIAL PRIMARY KEY,
+  project_id   INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  name         TEXT NOT NULL,
+  slug         TEXT NOT NULL,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(project_id, slug)
+);
+
+CREATE TABLE IF NOT EXISTS automated_test_cases (
+  id           SERIAL PRIMARY KEY,
+  suite_id     INTEGER REFERENCES automation_suites(id) ON DELETE CASCADE,
+  title        TEXT NOT NULL,
+  file_path    TEXT,
+  created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS test_runs (
+  id             SERIAL PRIMARY KEY,
+  project_id     INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  suite_id       INTEGER REFERENCES automation_suites(id) ON DELETE CASCADE,
+  correlation_id TEXT UNIQUE,
+  trigger_type   TEXT NOT NULL CHECK (trigger_type IN ('manual','nightly')),
+  status         TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','completed','failed')),
+  total          INTEGER,
+  passed         INTEGER,
+  failed         INTEGER,
+  skipped        INTEGER,
+  duration_ms    INTEGER,
+  report_url     TEXT,
+  github_run_url TEXT,
+  created_by     TEXT REFERENCES users(id),
+  started_at     TIMESTAMPTZ DEFAULT NOW(),
+  completed_at   TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS test_run_results (
+  id            SERIAL PRIMARY KEY,
+  test_run_id   INTEGER REFERENCES test_runs(id) ON DELETE CASCADE,
+  test_title    TEXT NOT NULL,
+  status        TEXT NOT NULL CHECK (status IN ('passed','failed','skipped')),
+  duration_ms   INTEGER,
+  error_message TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_automation_suites_project ON automation_suites(project_id);
+CREATE INDEX IF NOT EXISTS idx_automated_test_cases_suite ON automated_test_cases(suite_id);
+CREATE INDEX IF NOT EXISTS idx_test_runs_project ON test_runs(project_id);
+CREATE INDEX IF NOT EXISTS idx_test_runs_suite ON test_runs(suite_id);
+CREATE INDEX IF NOT EXISTS idx_test_run_results_run ON test_run_results(test_run_id);
 `
 
 async function migrate() {
