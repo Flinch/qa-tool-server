@@ -2,6 +2,10 @@ import jwt from 'jsonwebtoken'
 
 const JWT_SECRET = process.env.JWT_SECRET
 
+export function verifyToken(token) {
+  return jwt.verify(token, JWT_SECRET)
+}
+
 export async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization
 
@@ -12,7 +16,7 @@ export async function requireAuth(req, res, next) {
   const token = authHeader.split(' ')[1]
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET)
+    const decoded = verifyToken(token)
     req.userId = decoded.sub
     req.userEmail = decoded.email
     req.userRole = decoded.role

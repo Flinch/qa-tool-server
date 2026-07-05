@@ -1,0 +1,71 @@
+name: Playwright Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite_slug:
+        description: 'Which suite to run (matches a folder under tests/)'
+        required: true
+        type: string
+      run_correlation_id:
+        description: 'Correlation ID linking this run back to a pending row in the DB'
+        required: false
+        type: string
+  schedule:
+    - cron: '0 7 * * *' # 7am UTC nightly — adjust to whatever time you want
+
+permissions:
+  contents: write # needed to push the report to the gh-pages branch
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Determine suite
+        id: suite
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "slug=${{ inputs.suite_slug }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "slug=smoke" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Playwright tests
+        continue-on-error: true
+        env:
+          CI: true
+        run: npx playwright test
+
+      - name: Deploy report to GitHub Pages
+        if: always()
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./playwright-report
+          destination_dir: reports/${{ github.run_id }}
+          keep_files: true
+
+      - name: Report results to QA Tool
+        if: always()
+        env:
+          SUITE_SLUG: ${{ steps.suite.outputs.slug }}
+          TRIGGER_TYPE: ${{ github.event_name == 'schedule' && 'nightly' || 'manual' }}
+          RUN_CORRELATION_ID: ${{ inputs.run_correlation_id }}
+          PROJECT_ID: ${{ vars.QA_TOOL_PROJECT_ID }}
+          REPORT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/reports/${{ github.run_id }}/index.html
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+        run: node .github/scripts/report-results.js
