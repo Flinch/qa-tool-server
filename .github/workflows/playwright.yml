@@ -64,7 +64,7 @@ jobs:
         if: always()
         env:
           SUITE_SLUG: ${{ steps.suite.outputs.slug }}
-          TRIGGER_TYPE: ${{ github.event_name == 'schedule' && 'nightly' || (github.event_name == 'workflow_dispatch' && 'manual' || 'push') }}
+          TRIGGER_TYPE: ${{ github.event_name == 'schedule' && 'nightly' || 'manual' }}
           RUN_CORRELATION_ID: ${{ inputs.run_correlation_id }}
           PROJECT_ID: ${{ vars.QA_TOOL_PROJECT_ID }}
           REPORT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/reports/${{ github.run_id }}/index.html
