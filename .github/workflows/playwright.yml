@@ -38,15 +38,17 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "slug=${{ inputs.suite_slug }}" >> "$GITHUB_OUTPUT"
+            echo "path=tests/${{ inputs.suite_slug }}" >> "$GITHUB_OUTPUT"
           else
             echo "slug=smoke" >> "$GITHUB_OUTPUT"
+            echo "path=tests/smoke" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run Playwright tests
         continue-on-error: true
         env:
           CI: true
-        run: npx playwright test
+        run: npx playwright test ${{ steps.suite.outputs.path }}
 
       - name: Deploy report to GitHub Pages
         if: always()

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { createTicket } from '../helpers/createTicket';
-import { loginAsAdmin } from '../helpers/auth';
+import { createTicket } from '../../helpers/createTicket';
+import { loginAsAdmin } from '../../helpers/auth';
 
 // These @smoke tests are what the demo triggers.
 // Keep them fast (< 30s total) and reliable.
