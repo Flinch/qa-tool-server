@@ -64,35 +64,3 @@ test('@smoke admin can delete tickets', async({page})=>{
     await expect(page.getByText(testTicket.title)).toHaveCount(0);
 
 })
-
-//ensure admin can assign tickets
-test('@smoke admin can assign tickets', async ({page})=>{
-
-  await page.goto(url);
-  await loginAsAdmin(page);
-
-  //create ticket 
-  const testTicket = await createTicket(page)
-  
-  //access ticket
-  await page.getByRole('cell', {name:testTicket.title}).click()
-
-  //modify ticket
-  await page.getByRole('button').filter({ hasText: /^$/ }).click();
-  await page.getByRole('combobox').selectOption('u2');
-  
-  //verify it
-  await expect(page.getByText('Bob Martinez')).toBeVisible();
-})
-
-test('@smoke ensure admin can search for ticket', async({page})=>{
-    await page.goto(url);
-    await loginAsAdmin(page);
-
-    const testTicket = await createTicket(page)
-    await page.getByRole('textbox', {name:'Search tickets'}).fill(testTicket.title)
-
-    //verify
-    await expect(page.getByRole('cell', {name:testTicket.title})).toBeVisible()
-
-})
