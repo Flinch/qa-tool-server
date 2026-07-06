@@ -70,6 +70,18 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       )
     }
 
+    // Keep the suite's known test roster in sync with what actually ran.
+    // New test titles get added automatically; renamed/removed ones just
+    // stop showing up in future runs rather than being deleted here.
+    for (const r of results) {
+      await query(
+        `INSERT INTO automated_test_cases (suite_id, title)
+         VALUES ($1, $2)
+         ON CONFLICT (suite_id, title) DO NOTHING`,
+        [suiteId, r.test_title]
+      )
+    }
+
     broadcast(project_id, 'run_completed', { run_id: runId })
 
     res.status(200).json({ received: true, run_id: runId })
