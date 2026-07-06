@@ -33,7 +33,7 @@ router.get('/suites', ...staffOnly, async (req, res) => {
       ) latest ON true
       WHERE s.project_id = $1
       GROUP BY s.id, latest.status, latest.passed, latest.failed, latest.completed_at
-      ORDER BY s.name
+      ORDER BY latest.completed_at DESC NULLS LAST, s.name
     `, [req.params.id])
     res.json(rows)
   } catch (e) {
