@@ -114,8 +114,15 @@ CREATE TABLE IF NOT EXISTS test_run_results (
   error_message TEXT
 );
 
-ALTER TABLE automated_test_cases
-  ADD CONSTRAINT automated_test_cases_suite_title_unique UNIQUE (suite_id, title);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'automated_test_cases_suite_title_unique'
+  ) THEN
+    ALTER TABLE automated_test_cases
+      ADD CONSTRAINT automated_test_cases_suite_title_unique UNIQUE (suite_id, title);
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_automation_suites_project ON automation_suites(project_id);
 CREATE INDEX IF NOT EXISTS idx_automated_test_cases_suite ON automated_test_cases(suite_id);
