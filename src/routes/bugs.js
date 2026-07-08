@@ -10,9 +10,12 @@ router.use(requireRole('qa_engineer', 'admin'))
 router.get('/', async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT * FROM bugs WHERE project_id=$1 ORDER BY
-        CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
-        created_at DESC`,
+      `SELECT b.*, er.name AS execution_run_name
+       FROM bugs b
+       LEFT JOIN execution_runs er ON er.id = b.execution_run_id
+       WHERE b.project_id=$1 ORDER BY
+        CASE b.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+        b.created_at DESC`,
       [req.params.id]
     )
     res.json(rows)

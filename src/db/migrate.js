@@ -150,12 +150,18 @@ CREATE TABLE IF NOT EXISTS execution_run_test_cases (
   id               SERIAL PRIMARY KEY,
   execution_run_id INTEGER REFERENCES execution_runs(id) ON DELETE CASCADE,
   test_case_id     INTEGER REFERENCES test_cases(id) ON DELETE CASCADE,
-  status           TEXT NOT NULL DEFAULT 'not_run' CHECK (status IN ('not_run','pass','fail','skipped')),
+  status           TEXT NOT NULL DEFAULT 'not_run' CHECK (status IN ('not_run','pass','fail','blocked')),
   notes            TEXT,
   executed_by      TEXT REFERENCES users(id),
   executed_at      TIMESTAMPTZ,
   UNIQUE(execution_run_id, test_case_id)
 );
+
+-- Fix-up for databases where execution_run_test_cases already exists with the
+-- older 'skipped' status option — rename it to 'blocked' and update the check.
+UPDATE execution_run_test_cases SET status='blocked' WHERE status='skipped';
+ALTER TABLE execution_run_test_cases DROP CONSTRAINT IF EXISTS execution_run_test_cases_status_check;
+ALTER TABLE execution_run_test_cases ADD CONSTRAINT execution_run_test_cases_status_check CHECK (status IN ('not_run','pass','fail','blocked'));
 
 CREATE TABLE IF NOT EXISTS execution_run_suites (
   id                 SERIAL PRIMARY KEY,

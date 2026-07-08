@@ -15,7 +15,7 @@ async function markInProgress(runId) {
   )
 }
 
-// GET / — execution runs for a project, with pass/fail/not-run/skipped + suite counts
+// GET / — execution runs for a project, with pass/fail/not-run/blocked + suite counts
 router.get('/', ...staffOnly, async (req, res) => {
   try {
     const { rows } = await query(`
@@ -24,7 +24,7 @@ router.get('/', ...staffOnly, async (req, res) => {
         COUNT(DISTINCT etc.id) FILTER (WHERE etc.status='pass')::int AS passed,
         COUNT(DISTINCT etc.id) FILTER (WHERE etc.status='fail')::int AS failed,
         COUNT(DISTINCT etc.id) FILTER (WHERE etc.status='not_run')::int AS not_run,
-        COUNT(DISTINCT etc.id) FILTER (WHERE etc.status='skipped')::int AS skipped,
+        COUNT(DISTINCT etc.id) FILTER (WHERE etc.status='blocked')::int AS blocked,
         COUNT(DISTINCT es.id)::int AS suite_count
       FROM execution_runs er
       LEFT JOIN execution_run_test_cases etc ON etc.execution_run_id = er.id
@@ -150,10 +150,10 @@ router.patch('/:runId', ...staffOnly, async (req, res) => {
   }
 })
 
-// PATCH /:runId/test-cases/:etcId — mark one test case pass/fail/skipped/not_run
+// PATCH /:runId/test-cases/:etcId — mark one test case pass/fail/blocked/not_run
 router.patch('/:runId/test-cases/:etcId', ...staffOnly, async (req, res) => {
   const { status, notes } = req.body
-  if (status !== undefined && !['not_run', 'pass', 'fail', 'skipped'].includes(status)) {
+  if (status !== undefined && !['not_run', 'pass', 'fail', 'blocked'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status' })
   }
 
@@ -193,7 +193,7 @@ router.patch('/:runId/test-cases/:etcId', ...staffOnly, async (req, res) => {
 // PATCH /:runId/test-cases/bulk — mark selected (or all) test cases at once
 router.patch('/:runId/test-cases/bulk', ...staffOnly, async (req, res) => {
   const { ids, status } = req.body
-  if (!['not_run', 'pass', 'fail', 'skipped'].includes(status)) return res.status(400).json({ error: 'Invalid status' })
+  if (!['not_run', 'pass', 'fail', 'blocked'].includes(status)) return res.status(400).json({ error: 'Invalid status' })
 
   try {
     let rows
