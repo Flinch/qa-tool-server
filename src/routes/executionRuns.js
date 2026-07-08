@@ -1,11 +1,14 @@
 import { Router } from 'express'
 import { query } from '../db/pool.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
+import { requireProjectAccess } from '../middleware/projectAccess.js'
 import { triggerSuiteRun } from '../lib/automationTrigger.js'
 
 const router = Router({ mergeParams: true })
+router.use(requireAuth)
+router.use(requireProjectAccess)
 
-const staffOnly = [requireAuth, requireRole('qa_engineer', 'admin')]
+const staffOnly = requireRole('qa_engineer', 'admin')
 
 async function markInProgress(runId) {
   await query(
@@ -15,8 +18,9 @@ async function markInProgress(runId) {
   )
 }
 
-// GET / — execution runs for a project, with pass/fail/not-run/blocked + suite counts
-router.get('/', ...staffOnly, async (req, res) => {
+// GET / — execution runs for a project, with pass/fail/not-run/blocked + suite counts.
+// Staff + read-only clients who are project members.
+router.get('/', async (req, res) => {
   try {
     const { rows } = await query(`
       SELECT er.*,
@@ -40,7 +44,7 @@ router.get('/', ...staffOnly, async (req, res) => {
 })
 
 // POST / — create a run from a selection of test cases + automation suites
-router.post('/', ...staffOnly, async (req, res) => {
+router.post('/', staffOnly, async (req, res) => {
   const { name, test_case_ids = [], suite_ids = [] } = req.body
   if (!name?.trim()) return res.status(400).json({ error: 'Name is required' })
   if (test_case_ids.length === 0 && suite_ids.length === 0) {
@@ -75,8 +79,9 @@ router.post('/', ...staffOnly, async (req, res) => {
   }
 })
 
-// GET /:runId — run + its test cases (with per-run status) + its suites (with latest run status)
-router.get('/:runId', ...staffOnly, async (req, res) => {
+// GET /:runId — run + its test cases (with per-run status) + its suites (with latest run status).
+// Staff + read-only clients who are project members.
+router.get('/:runId', async (req, res) => {
   try {
     const { rows: runRows } = await query(
       `SELECT * FROM execution_runs WHERE id=$1 AND project_id=$2`,
@@ -115,7 +120,7 @@ router.get('/:runId', ...staffOnly, async (req, res) => {
 })
 
 // PATCH /:runId — rename and/or change run status (e.g. mark completed)
-router.patch('/:runId', ...staffOnly, async (req, res) => {
+router.patch('/:runId', staffOnly, async (req, res) => {
   const { name, status } = req.body
   const fields = []
   const values = []
@@ -151,7 +156,7 @@ router.patch('/:runId', ...staffOnly, async (req, res) => {
 })
 
 // PATCH /:runId/test-cases/:etcId — mark one test case pass/fail/blocked/not_run
-router.patch('/:runId/test-cases/:etcId', ...staffOnly, async (req, res) => {
+router.patch('/:runId/test-cases/:etcId', staffOnly, async (req, res) => {
   const { status, notes } = req.body
   if (status !== undefined && !['not_run', 'pass', 'fail', 'blocked'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status' })
@@ -191,7 +196,7 @@ router.patch('/:runId/test-cases/:etcId', ...staffOnly, async (req, res) => {
 })
 
 // PATCH /:runId/test-cases/bulk — mark selected (or all) test cases at once
-router.patch('/:runId/test-cases/bulk', ...staffOnly, async (req, res) => {
+router.patch('/:runId/test-cases/bulk', staffOnly, async (req, res) => {
   const { ids, status } = req.body
   if (!['not_run', 'pass', 'fail', 'blocked'].includes(status)) return res.status(400).json({ error: 'Invalid status' })
 
@@ -219,7 +224,7 @@ router.patch('/:runId/test-cases/bulk', ...staffOnly, async (req, res) => {
 })
 
 // POST /:runId/suites/:suiteId/run — trigger a suite attached to this run via GitHub Actions
-router.post('/:runId/suites/:suiteId/run', ...staffOnly, async (req, res) => {
+router.post('/:runId/suites/:suiteId/run', staffOnly, async (req, res) => {
   try {
     const { rows: esRows } = await query(
       `SELECT * FROM execution_run_suites WHERE execution_run_id=$1 AND suite_id=$2`,
@@ -239,7 +244,7 @@ router.post('/:runId/suites/:suiteId/run', ...staffOnly, async (req, res) => {
 })
 
 // DELETE /:runId
-router.delete('/:runId', ...staffOnly, async (req, res) => {
+router.delete('/:runId', staffOnly, async (req, res) => {
   try {
     const { rows } = await query(
       `DELETE FROM execution_runs WHERE id=$1 AND project_id=$2 RETURNING id`,

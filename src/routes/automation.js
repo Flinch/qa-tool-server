@@ -1,15 +1,18 @@
 import { Router } from 'express'
 import { query } from '../db/pool.js'
 import { requireAuth, requireRole, verifyToken } from '../middleware/auth.js'
+import { requireProjectAccess } from '../middleware/projectAccess.js'
 import { subscribe, unsubscribe } from '../lib/sse.js'
 import { triggerSuiteRun } from '../lib/automationTrigger.js'
 
 const router = Router({ mergeParams: true })
 
-const staffOnly = [requireAuth, requireRole('qa_engineer', 'admin')]
+const staffOnly = requireRole('qa_engineer', 'admin')
+const anyProjectMember = [requireAuth, requireProjectAccess]
 
-// GET /suites — bucket cards with counts + latest run summary
-router.get('/suites', ...staffOnly, async (req, res) => {
+// GET /suites — bucket cards with counts + latest run summary. Staff +
+// read-only clients who are project members.
+router.get('/suites', ...anyProjectMember, async (req, res) => {
   try {
     const { rows } = await query(`
       SELECT s.*,
@@ -37,7 +40,7 @@ router.get('/suites', ...staffOnly, async (req, res) => {
 })
 
 // POST /suites — create a new suite bucket (e.g. "Regression")
-router.post('/suites', ...staffOnly, async (req, res) => {
+router.post('/suites', requireAuth, staffOnly, async (req, res) => {
   const { name, slug } = req.body
   if (!name?.trim() || !slug?.trim()) return res.status(400).json({ error: 'Name and slug are required' })
   try {
@@ -53,7 +56,7 @@ router.post('/suites', ...staffOnly, async (req, res) => {
 })
 
 // GET /runs — recent executions (optionally ?suite_id=)
-router.get('/runs', ...staffOnly, async (req, res) => {
+router.get('/runs', ...anyProjectMember, async (req, res) => {
   try {
     const { suite_id } = req.query
     const params = [req.params.id]
@@ -77,7 +80,7 @@ router.get('/runs', ...staffOnly, async (req, res) => {
 })
 
 // GET /runs/:runId — detailed drill-down for one run
-router.get('/runs/:runId', ...staffOnly, async (req, res) => {
+router.get('/runs/:runId', ...anyProjectMember, async (req, res) => {
   try {
     const { rows } = await query(`
       SELECT tr.*, s.name AS suite_name, s.slug AS suite_slug
@@ -98,7 +101,7 @@ router.get('/runs/:runId', ...staffOnly, async (req, res) => {
 })
 
 // POST /runs/trigger — kick off a manual run via GitHub workflow_dispatch
-router.post('/runs/trigger', ...staffOnly, async (req, res) => {
+router.post('/runs/trigger', requireAuth, staffOnly, async (req, res) => {
   const { suite_id } = req.body
   if (!suite_id) return res.status(400).json({ error: 'suite_id is required' })
 
@@ -122,8 +125,15 @@ router.get('/runs/stream', async (req, res) => {
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' })
   }
-  if (!['qa_engineer', 'admin'].includes(decoded.role)) {
+  if (!['qa_engineer', 'admin', 'client'].includes(decoded.role)) {
     return res.status(403).json({ error: "You don't have access to this resource" })
+  }
+  if (decoded.role === 'client') {
+    const { rows } = await query(
+      `SELECT 1 FROM project_members WHERE project_id=$1 AND user_id=$2`,
+      [req.params.id, decoded.sub]
+    )
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' })
   }
 
   res.setHeader('Content-Type', 'text/event-stream')

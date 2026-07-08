@@ -1,12 +1,15 @@
 import { Router } from 'express'
 import { query } from '../db/pool.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
+import { requireProjectAccess } from '../middleware/projectAccess.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
-router.use(requireRole('qa_engineer', 'admin'))
+router.use(requireProjectAccess)
 
-// GET /projects/:id/bugs
+const staffOnly = requireRole('qa_engineer', 'admin')
+
+// GET /projects/:id/bugs — staff + read-only clients who are project members
 router.get('/', async (req, res) => {
   try {
     const { rows } = await query(
@@ -24,8 +27,8 @@ router.get('/', async (req, res) => {
   }
 })
 
-// POST /projects/:id/bugs
-router.post('/', async (req, res) => {
+// POST /projects/:id/bugs — staff only
+router.post('/', staffOnly, async (req, res) => {
   const { title, severity, steps_to_reproduce, expected, actual, notes, test_case_id, execution_run_id } = req.body
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
 
