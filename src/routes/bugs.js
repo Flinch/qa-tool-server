@@ -23,14 +23,14 @@ router.get('/', async (req, res) => {
 
 // POST /projects/:id/bugs
 router.post('/', async (req, res) => {
-  const { title, severity, steps_to_reproduce, expected, actual, notes, test_case_id } = req.body
+  const { title, severity, steps_to_reproduce, expected, actual, notes, test_case_id, execution_run_id } = req.body
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
 
   try {
     const { rows } = await query(
-      `INSERT INTO bugs (project_id, test_case_id, title, severity, steps_to_reproduce, expected, actual, notes, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [req.params.id, test_case_id || null, title.trim(), severity || 'medium',
+      `INSERT INTO bugs (project_id, test_case_id, execution_run_id, title, severity, steps_to_reproduce, expected, actual, notes, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [req.params.id, test_case_id || null, execution_run_id || null, title.trim(), severity || 'medium',
        steps_to_reproduce || null, expected || null, actual || null, notes || null, req.userId]
     )
     await query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])

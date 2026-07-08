@@ -1,15 +1,10 @@
 import { Router } from 'express'
-import crypto from 'crypto'
 import { query } from '../db/pool.js'
 import { requireAuth, requireRole, verifyToken } from '../middleware/auth.js'
 import { subscribe, unsubscribe } from '../lib/sse.js'
+import { triggerSuiteRun } from '../lib/automationTrigger.js'
 
 const router = Router({ mergeParams: true })
-
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN
-const GITHUB_OWNER = process.env.GITHUB_OWNER
-const GITHUB_REPO = process.env.GITHUB_REPO
-const GITHUB_WORKFLOW_ID = process.env.GITHUB_WORKFLOW_ID // e.g. "playwright.yml"
 
 const staffOnly = [requireAuth, requireRole('qa_engineer', 'admin')]
 
@@ -106,54 +101,12 @@ router.get('/runs/:runId', ...staffOnly, async (req, res) => {
 router.post('/runs/trigger', ...staffOnly, async (req, res) => {
   const { suite_id } = req.body
   if (!suite_id) return res.status(400).json({ error: 'suite_id is required' })
-  if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO || !GITHUB_WORKFLOW_ID) {
-    return res.status(500).json({ error: 'GitHub Actions is not configured on the server' })
-  }
 
   try {
-    const { rows: suiteRows } = await query(
-      `SELECT * FROM automation_suites WHERE id=$1 AND project_id=$2`,
-      [suite_id, req.params.id]
-    )
-    if (!suiteRows[0]) return res.status(404).json({ error: 'Suite not found' })
-    const suite = suiteRows[0]
-
-    const correlationId = crypto.randomUUID()
-
-    const { rows } = await query(
-      `INSERT INTO test_runs (project_id, suite_id, correlation_id, trigger_type, status, created_by)
-       VALUES ($1,$2,$3,'manual','pending',$4) RETURNING *`,
-      [req.params.id, suite_id, correlationId, req.userId]
-    )
-
-    const ghRes = await fetch(
-      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW_ID}/dispatches`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${GITHUB_TOKEN}`,
-          Accept: 'application/vnd.github+json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ref: 'master',
-          inputs: {
-            suite_slug: suite.slug,
-            run_correlation_id: correlationId,
-          },
-        }),
-      }
-    )
-
-    if (!ghRes.ok) {
-      const errText = await ghRes.text()
-      await query(`UPDATE test_runs SET status='failed' WHERE id=$1`, [rows[0].id])
-      return res.status(502).json({ error: `GitHub Actions dispatch failed: ${errText}` })
-    }
-
-    res.status(202).json(rows[0])
+    const run = await triggerSuiteRun({ projectId: req.params.id, suiteId: suite_id, userId: req.userId })
+    res.status(202).json(run)
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(e.status || 500).json({ error: e.message })
   }
 })
 
