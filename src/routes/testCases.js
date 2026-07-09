@@ -42,6 +42,11 @@ router.post('/generate', async (req, res) => {
   const { requirements, mode = 'mvp' } = req.body
   if (!requirements?.trim()) return res.status(400).json({ error: 'Requirements are required' })
 
+  const automationGuidance = `- "automationCandidate": boolean — true if this test is a good candidate for test automation
+- "automationReasoning": string — one short sentence explaining the automationCandidate call
+
+Guidance for automationCandidate: mark true when the test has deterministic, scriptable steps and a clear pass/fail assertion — e.g. form submission, API/data validation, CRUD flows, navigation, repeated regression checks. Mark false when the test relies on subjective human judgment — e.g. visual/layout review, usability or copy review, CAPTCHA, one-off exploratory testing, or steps needing something automation can't easily do (email/SMS retrieval, third-party approvals, physical devices).`
+
   const mvpPrompt = `You are a senior QA engineer. Given the following requirements, generate a focused MVP test suite.
 
 Return ONLY a valid JSON array with no preamble, no markdown, no explanation. Each object must have:
@@ -49,6 +54,7 @@ Return ONLY a valid JSON array with no preamble, no markdown, no explanation. Ea
 - "type": one of "functional" | "integration" | "e2e"
 - "steps": array of strings — numbered steps to execute the test
 - "expected": string — the expected result
+${automationGuidance}
 
 Rules for MVP mode:
 - Cover the core happy path for each requirement
@@ -67,6 +73,7 @@ Return ONLY a valid JSON array with no preamble, no markdown, no explanation. Ea
 - "type": one of "functional" | "integration" | "e2e"
 - "steps": array of strings — numbered steps to execute the test
 - "expected": string — the expected result
+${automationGuidance}
 
 Cover happy paths, edge cases, error conditions, boundary values, and integration points. Aim for 12-20 test cases.
 
@@ -87,9 +94,9 @@ ${requirements}`
     const inserted = []
     for (const tc of generated) {
       const { rows } = await query(
-        `INSERT INTO test_cases (project_id, title, type, steps, expected, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-        [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', req.userId]
+        `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId]
       )
       inserted.push({ ...rows[0], bug_count: 0 })
     }
@@ -103,7 +110,7 @@ ${requirements}`
 })
 
 export async function patchTestCase(req, res) {
-  const { status, title, type, steps, expected } = req.body
+  const { status, title, type, steps, expected, automationCandidate, automationReasoning } = req.body
 
   const fields = []
   const values = []
@@ -126,6 +133,12 @@ export async function patchTestCase(req, res) {
   }
   if (expected !== undefined) {
     fields.push(`expected=$${i++}`); values.push(expected)
+  }
+  if (automationCandidate !== undefined) {
+    fields.push(`automation_candidate=$${i++}`); values.push(!!automationCandidate)
+  }
+  if (automationReasoning !== undefined) {
+    fields.push(`automation_reasoning=$${i++}`); values.push(automationReasoning)
   }
 
   if (fields.length === 0) return res.status(400).json({ error: 'No fields to update' })

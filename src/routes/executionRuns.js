@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { query } from '../db/pool.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
 import { requireProjectAccess } from '../middleware/projectAccess.js'
-import { triggerSuiteRun } from '../lib/automationTrigger.js'
+import { triggerSuiteRun, reconcileStaleRuns } from '../lib/automationTrigger.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
@@ -83,6 +83,8 @@ router.post('/', staffOnly, async (req, res) => {
 // Staff + read-only clients who are project members.
 router.get('/:runId', async (req, res) => {
   try {
+    await reconcileStaleRuns(req.params.id)
+
     const { rows: runRows } = await query(
       `SELECT * FROM execution_runs WHERE id=$1 AND project_id=$2`,
       [req.params.runId, req.params.id]
@@ -105,7 +107,9 @@ router.get('/:runId', async (req, res) => {
       SELECT es.id AS execution_suite_id, es.suite_id, es.latest_test_run_id,
         s.name AS suite_name, s.slug AS suite_slug,
         tr.status AS latest_status, tr.total, tr.passed, tr.failed, tr.skipped,
-        tr.duration_ms, tr.report_url, tr.github_run_url, tr.completed_at AS latest_completed_at
+        tr.duration_ms, tr.report_url, tr.github_run_url,
+        tr.started_at AS latest_started_at, tr.completed_at AS latest_completed_at,
+        tr.error_message AS latest_error_message
       FROM execution_run_suites es
       JOIN automation_suites s ON s.id = es.suite_id
       LEFT JOIN test_runs tr ON tr.id = es.latest_test_run_id
