@@ -61,6 +61,12 @@ CREATE TABLE IF NOT EXISTS bugs (
   updated_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Flags whether a test case is a good candidate for test automation (set by
+-- the AI at generation time, editable by a QA engineer afterwards). Used to
+-- filter down to a worklist when building out automated_test_cases later.
+ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS automation_candidate BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS automation_reasoning TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_test_cases_project ON test_cases(project_id);
 CREATE INDEX IF NOT EXISTS idx_bugs_project ON bugs(project_id);
 CREATE INDEX IF NOT EXISTS idx_bugs_test_case ON bugs(test_case_id);
@@ -104,6 +110,10 @@ CREATE TABLE IF NOT EXISTS test_runs (
   started_at     TIMESTAMPTZ DEFAULT NOW(),
   completed_at   TIMESTAMPTZ
 );
+
+-- Why a run is sitting at 'failed' — dispatch errors, a CI crash before results
+-- were produced, or a server-side timeout when CI never reports back at all.
+ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS error_message TEXT;
 
 CREATE TABLE IF NOT EXISTS test_run_results (
   id            SERIAL PRIMARY KEY,
@@ -177,6 +187,21 @@ CREATE INDEX IF NOT EXISTS idx_execution_runs_project ON execution_runs(project_
 CREATE INDEX IF NOT EXISTS idx_execution_run_test_cases_run ON execution_run_test_cases(execution_run_id);
 CREATE INDEX IF NOT EXISTS idx_execution_run_suites_run ON execution_run_suites(execution_run_id);
 CREATE INDEX IF NOT EXISTS idx_bugs_execution_run ON bugs(execution_run_id);
+
+-- Comment thread on a bug, visible to every project member (staff + client).
+-- image_data holds a base64 data URL — no object storage is configured for
+-- this app, so images ride along in the same row as the comment text.
+CREATE TABLE IF NOT EXISTS bug_comments (
+  id           SERIAL PRIMARY KEY,
+  bug_id       INTEGER REFERENCES bugs(id) ON DELETE CASCADE,
+  user_id      TEXT REFERENCES users(id),
+  body         TEXT,
+  image_data   TEXT,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  CHECK (body IS NOT NULL OR image_data IS NOT NULL)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bug_comments_bug ON bug_comments(bug_id);
 `
 
 async function migrate() {

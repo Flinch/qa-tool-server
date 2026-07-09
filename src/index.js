@@ -25,7 +25,9 @@ app.use((req, res, next) => {
   next()
 })
 
-app.use(express.json())
+// Raised from the default 100kb so bug-comment screenshots (base64-encoded,
+// no object storage configured for this app) fit in the request body.
+app.use(express.json({ limit: '8mb' }))
 
 // Health
 app.get('/health', (req, res) => res.json({ status: 'ok' }))

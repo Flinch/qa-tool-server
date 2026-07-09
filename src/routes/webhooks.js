@@ -20,7 +20,7 @@ router.post('/test-runs', verifySecret, async (req, res) => {
   const {
     correlation_id, project_id, suite_slug, trigger_type,
     status, total, passed, failed, skipped, duration_ms,
-    report_url, github_run_url, results = [],
+    report_url, github_run_url, error_message, results = [],
   } = req.body
 
   if (!project_id || !suite_slug || !status) {
@@ -41,10 +41,10 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       const { rows } = await query(
         `UPDATE test_runs
          SET status=$1, total=$2, passed=$3, failed=$4, skipped=$5,
-             duration_ms=$6, report_url=$7, github_run_url=$8, completed_at=NOW()
-         WHERE correlation_id=$9
+             duration_ms=$6, report_url=$7, github_run_url=$8, error_message=$9, completed_at=NOW()
+         WHERE correlation_id=$10
          RETURNING id`,
-        [status, total, passed, failed, skipped, duration_ms, report_url, github_run_url, correlation_id]
+        [status, total, passed, failed, skipped, duration_ms, report_url, github_run_url, error_message || null, correlation_id]
       )
       runId = rows[0]?.id
     }
@@ -53,11 +53,11 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       const { rows } = await query(
         `INSERT INTO test_runs
            (project_id, suite_id, trigger_type, status, total, passed, failed, skipped,
-            duration_ms, report_url, github_run_url, completed_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+            duration_ms, report_url, github_run_url, error_message, completed_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
          RETURNING id`,
         [project_id, suiteId, trigger_type || 'nightly', status, total, passed, failed, skipped,
-         duration_ms, report_url, github_run_url]
+         duration_ms, report_url, github_run_url, error_message || null]
       )
       runId = rows[0].id
     }

@@ -3,7 +3,7 @@ import { query } from '../db/pool.js'
 import { requireAuth, requireRole, verifyToken } from '../middleware/auth.js'
 import { requireProjectAccess } from '../middleware/projectAccess.js'
 import { subscribe, unsubscribe } from '../lib/sse.js'
-import { triggerSuiteRun } from '../lib/automationTrigger.js'
+import { triggerSuiteRun, reconcileStaleRuns } from '../lib/automationTrigger.js'
 
 const router = Router({ mergeParams: true })
 
@@ -14,13 +14,16 @@ const anyProjectMember = [requireAuth, requireProjectAccess]
 // read-only clients who are project members.
 router.get('/suites', ...anyProjectMember, async (req, res) => {
   try {
+    await reconcileStaleRuns(req.params.id)
     const { rows } = await query(`
       SELECT s.*,
         COUNT(atc.id)::int AS test_case_count,
         latest.status AS latest_status,
         latest.passed AS latest_passed,
         latest.failed AS latest_failed,
-        latest.completed_at AS latest_completed_at
+        latest.started_at AS latest_started_at,
+        latest.completed_at AS latest_completed_at,
+        latest.error_message AS latest_error_message
       FROM automation_suites s
       LEFT JOIN automated_test_cases atc ON atc.suite_id = s.id
       LEFT JOIN LATERAL (
@@ -30,7 +33,7 @@ router.get('/suites', ...anyProjectMember, async (req, res) => {
         LIMIT 1
       ) latest ON true
       WHERE s.project_id = $1
-      GROUP BY s.id, latest.status, latest.passed, latest.failed, latest.completed_at
+      GROUP BY s.id, latest.status, latest.passed, latest.failed, latest.started_at, latest.completed_at, latest.error_message
       ORDER BY latest.completed_at DESC NULLS LAST, s.name
     `, [req.params.id])
     res.json(rows)
@@ -58,6 +61,7 @@ router.post('/suites', requireAuth, staffOnly, async (req, res) => {
 // GET /runs — recent executions (optionally ?suite_id=)
 router.get('/runs', ...anyProjectMember, async (req, res) => {
   try {
+    await reconcileStaleRuns(req.params.id)
     const { suite_id } = req.query
     const params = [req.params.id]
     let filter = ''
@@ -82,6 +86,7 @@ router.get('/runs', ...anyProjectMember, async (req, res) => {
 // GET /runs/:runId — detailed drill-down for one run
 router.get('/runs/:runId', ...anyProjectMember, async (req, res) => {
   try {
+    await reconcileStaleRuns(req.params.id)
     const { rows } = await query(`
       SELECT tr.*, s.name AS suite_name, s.slug AS suite_slug
       FROM test_runs tr
