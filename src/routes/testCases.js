@@ -52,7 +52,7 @@ Guidance for automationCandidate: mark true when the test has deterministic, scr
 Return ONLY a valid JSON array with no preamble, no markdown, no explanation. Each object must have:
 - "title": string — clear, specific test case name
 - "type": one of "functional" | "integration" | "e2e"
-- "steps": array of strings — numbered steps to execute the test
+- "steps": array of strings — one action per step, in order. Do NOT prefix each string with a number or "Step N:" — the UI renders these in a numbered list already
 - "expected": string — the expected result
 ${automationGuidance}
 
@@ -71,7 +71,7 @@ ${requirements}`
 Return ONLY a valid JSON array with no preamble, no markdown, no explanation. Each object must have:
 - "title": string — clear, specific test case name
 - "type": one of "functional" | "integration" | "e2e"
-- "steps": array of strings — numbered steps to execute the test
+- "steps": array of strings — one action per step, in order. Do NOT prefix each string with a number or "Step N:" — the UI renders these in a numbered list already
 - "expected": string — the expected result
 ${automationGuidance}
 
