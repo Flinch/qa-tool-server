@@ -1,20 +1,18 @@
 import { Router } from 'express'
-import crypto from 'crypto'
 import { query } from '../db/pool.js'
 import { requireAuth, requireRole, verifyToken } from '../middleware/auth.js'
+import { requireProjectAccess } from '../middleware/projectAccess.js'
 import { subscribe, unsubscribe } from '../lib/sse.js'
+import { triggerSuiteRun } from '../lib/automationTrigger.js'
 
 const router = Router({ mergeParams: true })
 
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN
-const GITHUB_OWNER = process.env.GITHUB_OWNER
-const GITHUB_REPO = process.env.GITHUB_REPO
-const GITHUB_WORKFLOW_ID = process.env.GITHUB_WORKFLOW_ID // e.g. "playwright.yml"
+const staffOnly = requireRole('qa_engineer', 'admin')
+const anyProjectMember = [requireAuth, requireProjectAccess]
 
-const staffOnly = [requireAuth, requireRole('qa_engineer', 'admin')]
-
-// GET /suites — bucket cards with counts + latest run summary
-router.get('/suites', ...staffOnly, async (req, res) => {
+// GET /suites — bucket cards with counts + latest run summary. Staff +
+// read-only clients who are project members.
+router.get('/suites', ...anyProjectMember, async (req, res) => {
   try {
     const { rows } = await query(`
       SELECT s.*,
@@ -42,7 +40,7 @@ router.get('/suites', ...staffOnly, async (req, res) => {
 })
 
 // POST /suites — create a new suite bucket (e.g. "Regression")
-router.post('/suites', ...staffOnly, async (req, res) => {
+router.post('/suites', requireAuth, staffOnly, async (req, res) => {
   const { name, slug } = req.body
   if (!name?.trim() || !slug?.trim()) return res.status(400).json({ error: 'Name and slug are required' })
   try {
@@ -58,7 +56,7 @@ router.post('/suites', ...staffOnly, async (req, res) => {
 })
 
 // GET /runs — recent executions (optionally ?suite_id=)
-router.get('/runs', ...staffOnly, async (req, res) => {
+router.get('/runs', ...anyProjectMember, async (req, res) => {
   try {
     const { suite_id } = req.query
     const params = [req.params.id]
@@ -82,7 +80,7 @@ router.get('/runs', ...staffOnly, async (req, res) => {
 })
 
 // GET /runs/:runId — detailed drill-down for one run
-router.get('/runs/:runId', ...staffOnly, async (req, res) => {
+router.get('/runs/:runId', ...anyProjectMember, async (req, res) => {
   try {
     const { rows } = await query(`
       SELECT tr.*, s.name AS suite_name, s.slug AS suite_slug
@@ -103,57 +101,15 @@ router.get('/runs/:runId', ...staffOnly, async (req, res) => {
 })
 
 // POST /runs/trigger — kick off a manual run via GitHub workflow_dispatch
-router.post('/runs/trigger', ...staffOnly, async (req, res) => {
+router.post('/runs/trigger', requireAuth, staffOnly, async (req, res) => {
   const { suite_id } = req.body
   if (!suite_id) return res.status(400).json({ error: 'suite_id is required' })
-  if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO || !GITHUB_WORKFLOW_ID) {
-    return res.status(500).json({ error: 'GitHub Actions is not configured on the server' })
-  }
 
   try {
-    const { rows: suiteRows } = await query(
-      `SELECT * FROM automation_suites WHERE id=$1 AND project_id=$2`,
-      [suite_id, req.params.id]
-    )
-    if (!suiteRows[0]) return res.status(404).json({ error: 'Suite not found' })
-    const suite = suiteRows[0]
-
-    const correlationId = crypto.randomUUID()
-
-    const { rows } = await query(
-      `INSERT INTO test_runs (project_id, suite_id, correlation_id, trigger_type, status, created_by)
-       VALUES ($1,$2,$3,'manual','pending',$4) RETURNING *`,
-      [req.params.id, suite_id, correlationId, req.userId]
-    )
-
-    const ghRes = await fetch(
-      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW_ID}/dispatches`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${GITHUB_TOKEN}`,
-          Accept: 'application/vnd.github+json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ref: 'master',
-          inputs: {
-            suite_slug: suite.slug,
-            run_correlation_id: correlationId,
-          },
-        }),
-      }
-    )
-
-    if (!ghRes.ok) {
-      const errText = await ghRes.text()
-      await query(`UPDATE test_runs SET status='failed' WHERE id=$1`, [rows[0].id])
-      return res.status(502).json({ error: `GitHub Actions dispatch failed: ${errText}` })
-    }
-
-    res.status(202).json(rows[0])
+    const run = await triggerSuiteRun({ projectId: req.params.id, suiteId: suite_id, userId: req.userId })
+    res.status(202).json(run)
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(e.status || 500).json({ error: e.message })
   }
 })
 
@@ -169,8 +125,15 @@ router.get('/runs/stream', async (req, res) => {
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' })
   }
-  if (!['qa_engineer', 'admin'].includes(decoded.role)) {
+  if (!['qa_engineer', 'admin', 'client'].includes(decoded.role)) {
     return res.status(403).json({ error: "You don't have access to this resource" })
+  }
+  if (decoded.role === 'client') {
+    const { rows } = await query(
+      `SELECT 1 FROM project_members WHERE project_id=$1 AND user_id=$2`,
+      [req.params.id, decoded.sub]
+    )
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' })
   }
 
   res.setHeader('Content-Type', 'text/event-stream')

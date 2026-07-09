@@ -1,18 +1,24 @@
 import { Router } from 'express'
 import { query } from '../db/pool.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
+import { requireProjectAccess } from '../middleware/projectAccess.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
-router.use(requireRole('qa_engineer', 'admin'))
+router.use(requireProjectAccess)
 
-// GET /projects/:id/bugs
+const staffOnly = requireRole('qa_engineer', 'admin')
+
+// GET /projects/:id/bugs — staff + read-only clients who are project members
 router.get('/', async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT * FROM bugs WHERE project_id=$1 ORDER BY
-        CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
-        created_at DESC`,
+      `SELECT b.*, er.name AS execution_run_name
+       FROM bugs b
+       LEFT JOIN execution_runs er ON er.id = b.execution_run_id
+       WHERE b.project_id=$1 ORDER BY
+        CASE b.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+        b.created_at DESC`,
       [req.params.id]
     )
     res.json(rows)
@@ -21,16 +27,16 @@ router.get('/', async (req, res) => {
   }
 })
 
-// POST /projects/:id/bugs
-router.post('/', async (req, res) => {
-  const { title, severity, steps_to_reproduce, expected, actual, notes, test_case_id } = req.body
+// POST /projects/:id/bugs — staff only
+router.post('/', staffOnly, async (req, res) => {
+  const { title, severity, steps_to_reproduce, expected, actual, notes, test_case_id, execution_run_id } = req.body
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
 
   try {
     const { rows } = await query(
-      `INSERT INTO bugs (project_id, test_case_id, title, severity, steps_to_reproduce, expected, actual, notes, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [req.params.id, test_case_id || null, title.trim(), severity || 'medium',
+      `INSERT INTO bugs (project_id, test_case_id, execution_run_id, title, severity, steps_to_reproduce, expected, actual, notes, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [req.params.id, test_case_id || null, execution_run_id || null, title.trim(), severity || 'medium',
        steps_to_reproduce || null, expected || null, actual || null, notes || null, req.userId]
     )
     await query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])

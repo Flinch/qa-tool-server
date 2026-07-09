@@ -129,6 +129,54 @@ CREATE INDEX IF NOT EXISTS idx_automated_test_cases_suite ON automated_test_case
 CREATE INDEX IF NOT EXISTS idx_test_runs_project ON test_runs(project_id);
 CREATE INDEX IF NOT EXISTS idx_test_runs_suite ON test_runs(suite_id);
 CREATE INDEX IF NOT EXISTS idx_test_run_results_run ON test_run_results(test_run_id);
+
+-- Execution runs: a QA engineer bundles a selection of manual test_cases and
+-- automation_suites into one session, works through the manual cases (pass/fail
+-- snapshot independent of test_cases.status), triggers automation suites from
+-- inside the run, and ends with a downloadable report.
+
+CREATE TABLE IF NOT EXISTS execution_runs (
+  id           SERIAL PRIMARY KEY,
+  project_id   INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  name         TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'not_started' CHECK (status IN ('not_started','in_progress','completed')),
+  created_by   TEXT REFERENCES users(id),
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  started_at   TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS execution_run_test_cases (
+  id               SERIAL PRIMARY KEY,
+  execution_run_id INTEGER REFERENCES execution_runs(id) ON DELETE CASCADE,
+  test_case_id     INTEGER REFERENCES test_cases(id) ON DELETE CASCADE,
+  status           TEXT NOT NULL DEFAULT 'not_run' CHECK (status IN ('not_run','pass','fail','blocked')),
+  notes            TEXT,
+  executed_by      TEXT REFERENCES users(id),
+  executed_at      TIMESTAMPTZ,
+  UNIQUE(execution_run_id, test_case_id)
+);
+
+-- Fix-up for databases where execution_run_test_cases already exists with the
+-- older 'skipped' status option — rename it to 'blocked' and update the check.
+UPDATE execution_run_test_cases SET status='blocked' WHERE status='skipped';
+ALTER TABLE execution_run_test_cases DROP CONSTRAINT IF EXISTS execution_run_test_cases_status_check;
+ALTER TABLE execution_run_test_cases ADD CONSTRAINT execution_run_test_cases_status_check CHECK (status IN ('not_run','pass','fail','blocked'));
+
+CREATE TABLE IF NOT EXISTS execution_run_suites (
+  id                 SERIAL PRIMARY KEY,
+  execution_run_id   INTEGER REFERENCES execution_runs(id) ON DELETE CASCADE,
+  suite_id           INTEGER REFERENCES automation_suites(id) ON DELETE CASCADE,
+  latest_test_run_id INTEGER REFERENCES test_runs(id) ON DELETE SET NULL,
+  UNIQUE(execution_run_id, suite_id)
+);
+
+ALTER TABLE bugs ADD COLUMN IF NOT EXISTS execution_run_id INTEGER REFERENCES execution_runs(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_execution_runs_project ON execution_runs(project_id);
+CREATE INDEX IF NOT EXISTS idx_execution_run_test_cases_run ON execution_run_test_cases(execution_run_id);
+CREATE INDEX IF NOT EXISTS idx_execution_run_suites_run ON execution_run_suites(execution_run_id);
+CREATE INDEX IF NOT EXISTS idx_bugs_execution_run ON bugs(execution_run_id);
 `
 
 async function migrate() {

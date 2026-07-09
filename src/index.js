@@ -9,6 +9,7 @@ import { patchBug } from './routes/bugs.js'
 import statsRouter from './routes/stats.js'
 import authRouter from './routes/auth.js'
 import automationRouter from './routes/automation.js'
+import executionRunsRouter from './routes/executionRuns.js'
 import webhooksRouter from './routes/webhooks.js'
 import { requireAuth, requireRole } from './middleware/auth.js'
 
@@ -35,6 +36,7 @@ app.use('/api/projects', projectsRouter)
 app.use('/api/projects/:id/test-cases', testCasesRouter)
 app.use('/api/projects/:id/bugs', bugsRouter)
 app.use('/api/projects/:id/automation', automationRouter)
+app.use('/api/projects/:id/execution-runs', executionRunsRouter)
 app.use('/api/stats', statsRouter)
 app.use('/api/webhooks', webhooksRouter)
 
