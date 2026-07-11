@@ -18,6 +18,7 @@
     "svix": "^1.21.0"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-code": "^2.1.206",
     "@playwright/test": "^1.61.1"
   }
 }

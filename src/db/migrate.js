@@ -202,6 +202,109 @@ CREATE TABLE IF NOT EXISTS bug_comments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_bug_comments_bug ON bug_comments(bug_id);
+
+-- ============================================================================
+-- Test generation pipeline (manual TCs -> Playwright agents -> PR)
+-- ============================================================================
+
+-- One row per "Generate automated tests" click. Deliberately SEPARATE from
+-- test_runs: a generation run is long (15-30+ min vs minutes), progresses
+-- through visible internal phases the UI displays live, and its artifact is a
+-- pull request rather than a pass/fail report. Modeling both lifecycles in one
+-- table would mean half-null columns and special-cased CHECK constraints.
+-- It also must NOT be touched by reconcileStaleRuns and its 10-minute
+-- timeout — generation gets its own sweep with a 60-minute window (workflow
+-- timeout is 45 min; the sweep must outlast it or a slow-but-succeeding run
+-- gets marked failed right before its completion webhook lands).
+CREATE TABLE IF NOT EXISTS generation_runs (
+  id             SERIAL PRIMARY KEY,
+  project_id     INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  suite_id       INTEGER REFERENCES automation_suites(id) ON DELETE CASCADE,
+
+  -- The handshake between server and CI — two systems with no shared
+  -- transaction. Server inserts this row BEFORE dispatching (so a failed
+  -- dispatch has somewhere to record its error), CI carries the id through
+  -- the whole run, and every webhook event locates the row by it. UNIQUE is
+  -- what makes webhook handling idempotent: a retried delivery can't create
+  -- a duplicate row.
+  correlation_id TEXT UNIQUE,
+
+  -- Lifecycle and phase collapsed into one column on purpose: the phases are
+  -- strictly ordered and exactly one is ever true, so a separate phase column
+  -- would just be a second thing to keep in sync. CI's generation-events
+  -- webhook advances this as the agent script moves through its phases.
+  status         TEXT NOT NULL DEFAULT 'pending' CHECK (status IN
+                   ('pending','exploring','generating','healing','opening_pr','completed','failed')),
+
+  -- v1 trade-off, chosen knowingly: an int array instead of a join table.
+  -- Costs: no FK integrity on the ids (a deleted TC can leave a dangling id
+  -- here), and "which runs included TC-42" needs ANY() scans. Acceptable
+  -- because per-TC outcomes live elsewhere (the PR body during review,
+  -- automated_test_cases.test_case_id after merge). If Phase 4 wants live
+  -- per-TC progress, upgrade path is a generation_run_test_cases join table.
+  test_case_ids  INTEGER[] NOT NULL DEFAULT '{}',
+
+  -- Outputs (populated by CI webhook events as they happen)
+  branch_name    TEXT,
+  pr_url         TEXT,
+
+  -- Populated by the final failure webhook, a failed dispatch, or the sweep.
+  error_message  TEXT,
+
+  created_by     TEXT REFERENCES users(id),
+  started_at     TIMESTAMPTZ DEFAULT NOW(),
+  completed_at   TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_generation_runs_project ON generation_runs(project_id);
+CREATE INDEX IF NOT EXISTS idx_generation_runs_suite ON generation_runs(suite_id);
+
+-- automated_test_cases learns where each automated test came from and what
+-- review state it's in. Every generated test title starts with "TC-<id>:",
+-- which is how report-results.js will link rows here back to manual TCs.
+
+-- SET NULL, not CASCADE: deleting a manual test case must not delete the
+-- automated test — that spec still exists in the repo and still runs in CI.
+-- The link is metadata about origin, not a lifecycle dependency. (Contrast
+-- with suite_id above, which IS lifecycle: no suite, no roster entry.)
+ALTER TABLE automated_test_cases ADD COLUMN IF NOT EXISTS
+  test_case_id INTEGER REFERENCES test_cases(id) ON DELETE SET NULL;
+
+-- 'manual' default grandfathers every pre-existing row correctly: everything
+-- in the roster today was hand-written.
+ALTER TABLE automated_test_cases ADD COLUMN IF NOT EXISTS
+  origin TEXT NOT NULL DEFAULT 'manual';
+
+-- Review lifecycle for agent-touched tests:
+--   active                 normal, trusted
+--   pending_review         generated, PR not yet merged/approved
+--   healed_pending_review  healer changed it, awaiting human approval (Phase 4)
+--   flagged_regression     healer says behavior changed — possible real bug (Phase 4)
+ALTER TABLE automated_test_cases ADD COLUMN IF NOT EXISTS
+  review_status TEXT NOT NULL DEFAULT 'active';
+
+-- CHECK constraints for the two new columns, added idempotently via the same
+-- pg_constraint pattern used for automated_test_cases_suite_title_unique.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'automated_test_cases_origin_check'
+  ) THEN
+    ALTER TABLE automated_test_cases
+      ADD CONSTRAINT automated_test_cases_origin_check
+      CHECK (origin IN ('manual','generated'));
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'automated_test_cases_review_status_check'
+  ) THEN
+    ALTER TABLE automated_test_cases
+      ADD CONSTRAINT automated_test_cases_review_status_check
+      CHECK (review_status IN ('active','pending_review','healed_pending_review','flagged_regression'));
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_automated_test_cases_test_case ON automated_test_cases(test_case_id);
 `
 
 async function migrate() {
