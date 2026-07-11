@@ -110,29 +110,62 @@ async function main() {
   const suiteDir = path.join('tests', 'generated', suiteSlug)
   fs.mkdirSync(suiteDir, { recursive: true })
 
-  const results = []
+  const entries = plans.map(plan => ({
+    ...plan,
+    specPath: path.join(suiteDir, plan.filename.replace(/\.md$/, '.spec.ts')),
+  }))
 
-  for (const plan of plans) {
-    const specPath = path.join(suiteDir, plan.filename.replace(/\.md$/, '.spec.ts'))
-    try {
-      await runAgent(
-        `Use the playwright-test-planner agent to verify and refine the plan in specs/${plan.filename} against the running app at ${targetUrl}, following AGENTS.md conventions. Update the file in place only if changes are needed.`
-      )
-      await reportPhaseOnce('generating')
-      await runAgent(
-        `Use the playwright-test-generator agent to implement the plan in specs/${plan.filename} as ${specPath}, following AGENTS.md conventions.`
-      )
-      // Primary success signal is the file existing on disk, independent of
-      // whatever the agent's own stdout claims happened.
-      if (!fs.existsSync(specPath)) {
-        throw new Error(`generator agent did not produce ${specPath}`)
-      }
-      results.push({ tc_id: plan.tc_id, specPath, success: true })
-    } catch (err) {
-      if (err instanceof CostCapExceededError) throw err
-      console.error(`TC ${plan.tc_id} failed to generate:`, err.message)
-      results.push({ tc_id: plan.tc_id, specPath, success: false, error: err.message })
-    }
+  // Both phases below batch every plan into ONE agent invocation instead of
+  // one call per TC. Each `claude -p` call repays a fixed ~$0.15-0.25
+  // overhead just to load AGENTS.md/tool definitions before doing any real
+  // work — with N TCs per run, that was N times the fixed cost for no
+  // benefit. Batching amortizes it across the whole run.
+  //
+  // The tradeoff: a hard failure (is_error, permission denial, cost cap) in
+  // a batched call can't be pinned to one specific TC, since one invocation
+  // now covers all of them — so a hard failure here fails every TC in the
+  // batch, not just one. A TC-specific problem that the agent itself can
+  // route around (e.g. a plan flagged "blocked" by planExport.js) is NOT a
+  // hard failure — the agent just doesn't produce that one file, which the
+  // per-TC file-existence check below still catches correctly. So per-TC
+  // outcomes stay accurate for the common case; only a systemic failure
+  // (not a single-TC content problem) loses isolation.
+  try {
+    const plannerList = entries.map(e => `- specs/${e.filename}`).join('\n')
+    await runAgent(
+      `Use the playwright-test-planner agent to verify and refine EACH of the following plans against the running app at ${targetUrl}, following AGENTS.md conventions. Update each file in place only if changes are needed. Process every plan in this list before finishing:\n${plannerList}`
+    )
+  } catch (err) {
+    if (err instanceof CostCapExceededError) throw err
+    const msg = `Planner batch failed, no TCs could be verified: ${err.message}`
+    await reportEvent('failed', { error_message: msg.slice(0, 2000) })
+    console.error(msg)
+    process.exit(1)
+  }
+
+  await reportPhaseOnce('generating')
+
+  try {
+    const generatorList = entries.map(e => `- specs/${e.filename} -> ${e.specPath}`).join('\n')
+    await runAgent(
+      `Use the playwright-test-generator agent to implement EACH of the following plans as its corresponding spec file, following AGENTS.md conventions. Process every entry in this list:\n${generatorList}`
+    )
+  } catch (err) {
+    if (err instanceof CostCapExceededError) throw err
+    // Don't bail immediately — some specs may have been written before the
+    // failure. Fall through to the per-TC file check below to find out.
+    console.error('Generator batch reported an error, checking what actually got written:', err.message)
+  }
+
+  // Primary success signal is each file existing on disk, independent of
+  // whatever the agent's own stdout claims happened — this is what still
+  // gives us accurate per-TC outcomes despite the batched call above.
+  const results = entries.map(e => fs.existsSync(e.specPath)
+    ? { tc_id: e.tc_id, specPath: e.specPath, success: true }
+    : { tc_id: e.tc_id, specPath: e.specPath, success: false, error: 'generator did not produce this file' })
+
+  for (const r of results) {
+    if (!r.success) console.error(`TC ${r.tc_id} failed to generate: ${r.error}`)
   }
 
   const succeeded = results.filter(r => r.success)
