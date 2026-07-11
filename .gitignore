@@ -5,3 +5,4 @@ test-results/
 results.json
 .auth/
 .playwright-mcp/
+.env
