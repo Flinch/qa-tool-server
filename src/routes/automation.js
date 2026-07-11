@@ -3,7 +3,7 @@ import { query } from '../db/pool.js'
 import { requireAuth, requireRole, verifyToken } from '../middleware/auth.js'
 import { requireProjectAccess } from '../middleware/projectAccess.js'
 import { subscribe, unsubscribe } from '../lib/sse.js'
-import { triggerSuiteRun, reconcileStaleRuns } from '../lib/automationTrigger.js'
+import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileStaleGenerationRuns } from '../lib/automationTrigger.js'
 
 const router = Router({ mergeParams: true })
 
@@ -115,6 +115,42 @@ router.post('/runs/trigger', requireAuth, staffOnly, async (req, res) => {
     res.status(202).json(run)
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message })
+  }
+})
+
+// POST /generate — kick off a test GENERATION run (manual TCs -> agents -> PR)
+router.post('/generate', requireAuth, staffOnly, async (req, res) => {
+  const { suite_id, test_case_ids } = req.body
+  if (!suite_id) return res.status(400).json({ error: 'suite_id is required' })
+
+  try {
+    const run = await triggerGenerationRun({
+      projectId: req.params.id,
+      suiteId: suite_id,
+      testCaseIds: test_case_ids,
+      userId: req.userId,
+    })
+    res.status(202).json(run)
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message })
+  }
+})
+
+// GET /generation-runs — recent generation runs, newest first
+router.get('/generation-runs', ...anyProjectMember, async (req, res) => {
+  try {
+    await reconcileStaleGenerationRuns(req.params.id)
+    const { rows } = await query(`
+      SELECT gr.*, s.name AS suite_name, s.slug AS suite_slug
+      FROM generation_runs gr
+      JOIN automation_suites s ON s.id = gr.suite_id
+      WHERE gr.project_id = $1
+      ORDER BY gr.started_at DESC
+      LIMIT 20
+    `, [req.params.id])
+    res.json(rows)
+  } catch (e) {
+    res.status(500).json({ error: e.message })
   }
 })
 

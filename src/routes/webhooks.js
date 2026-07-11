@@ -2,6 +2,9 @@ import { Router } from 'express'
 import crypto from 'crypto'
 import { query } from '../db/pool.js'
 import { broadcast } from '../lib/sse.js'
+import { exportPlansForTestCases } from '../lib/planExport.js'
+
+const GENERATION_STATUSES = ['pending', 'exploring', 'generating', 'healing', 'opening_pr', 'completed', 'failed']
 
 const router = Router()
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || ''
@@ -85,6 +88,84 @@ router.post('/test-runs', verifySecret, async (req, res) => {
     broadcast(project_id, 'run_completed', { run_id: runId })
 
     res.status(200).json({ received: true, run_id: runId })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// GET /generation-payload/:correlationId — CI calls this back after
+// workflow_dispatch to fetch the plans it needs (see automationTrigger.js
+// for why only a correlation id crosses the dispatch boundary).
+router.get('/generation-payload/:correlationId', verifySecret, async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT gr.*, s.slug AS suite_slug
+       FROM generation_runs gr
+       JOIN automation_suites s ON s.id = gr.suite_id
+       WHERE gr.correlation_id = $1`,
+      [req.params.correlationId]
+    )
+    const run = rows[0]
+    if (!run) return res.status(404).json({ error: 'Unknown correlation id' })
+
+    // CI fetching the payload is the moment work actually begins.
+    if (run.status === 'pending') {
+      await query(`UPDATE generation_runs SET status='exploring' WHERE id=$1`, [run.id])
+      broadcast(run.project_id, 'generation_progress', { generation_run_id: run.id, status: 'exploring' })
+    }
+
+    res.json({
+      project_id: run.project_id,
+      suite_id: run.suite_id,
+      suite_slug: run.suite_slug,
+      target_url: process.env.TARGET_URL || 'https://service-desk-roan.vercel.app',
+      plans: await exportPlansForTestCases(run.project_id, run.test_case_ids),
+    })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// POST /generation-events — CI reports phase progress + completion here as
+// the agent workflow moves through its phases.
+router.post('/generation-events', verifySecret, async (req, res) => {
+  const { correlation_id, status, pr_url, branch_name, error_message } = req.body
+
+  if (!GENERATION_STATUSES.includes(status)) {
+    return res.status(400).json({ error: `status must be one of: ${GENERATION_STATUSES.join(', ')}` })
+  }
+
+  try {
+    const { rows: existing } = await query(
+      `SELECT id FROM generation_runs WHERE correlation_id=$1`,
+      [correlation_id]
+    )
+    if (!existing[0]) return res.status(404).json({ error: 'Unknown correlation id' })
+
+    const isTerminal = status === 'completed' || status === 'failed'
+
+    // No WHERE status guard: a completion webhook must be able to overwrite
+    // a row the stale-run sweep already marked 'failed' — real results beat
+    // a timeout guess (see reconcileStaleGenerationRuns for the full race).
+    const { rows } = await query(
+      `UPDATE generation_runs
+       SET status=$1,
+           pr_url=COALESCE($2, pr_url),
+           branch_name=COALESCE($3, branch_name),
+           error_message=$4,
+           completed_at = CASE WHEN $5 THEN NOW() ELSE completed_at END
+       WHERE correlation_id=$6
+       RETURNING id, project_id, pr_url`,
+      [status, pr_url || null, branch_name || null, error_message || null, isTerminal, correlation_id]
+    )
+    const run = rows[0]
+
+    broadcast(run.project_id, 'generation_progress', { generation_run_id: run.id, status, pr_url: run.pr_url })
+    if (isTerminal) {
+      broadcast(run.project_id, 'generation_completed', { generation_run_id: run.id })
+    }
+
+    res.status(200).json({ received: true, generation_run_id: run.id })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
