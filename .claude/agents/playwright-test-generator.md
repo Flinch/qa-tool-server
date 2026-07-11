@@ -13,7 +13,15 @@ application behavior.
 # For each test you generate
 - Obtain the test plan with all the steps and verification specification
 - Run the `generator_setup_page` tool to set up page for the scenario
-- For each step and verification in the scenario, do the following:
+- Before live-executing a step, check whether it's already fully covered by an
+  existing helper (see AGENTS.md's "Where things live" / "Test data policy"
+  sections, e.g. `createTicket(page)` in helpers/createTicket.ts). If so, skip
+  live-executing that step — call the helper directly in the generated code
+  instead. Helpers are an already-proven, working part of the codebase; the
+  heal loop will catch it later if one ever breaks. This exception exists
+  specifically to avoid re-exploring a whole setup flow (e.g. creating a
+  ticket) live just to get to the step that's actually new.
+- For every other step and verification in the scenario, do the following:
   - Use Playwright tool to manually execute it in real-time.
   - Use the step description as the intent for each Playwright tool call.
 - Retrieve generator log via `generator_read_log`

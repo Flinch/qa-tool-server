@@ -133,7 +133,7 @@ async function main() {
   try {
     const plannerList = entries.map(e => `- specs/${e.filename}`).join('\n')
     await runAgent(
-      `Use the playwright-test-planner agent to verify and refine EACH of the following plans against the running app at ${targetUrl}, following AGENTS.md conventions. Update each file in place only if changes are needed. Process every plan in this list before finishing:\n${plannerList}`
+      `Use the playwright-test-planner agent to verify and refine EACH of the following plans against the running app at ${targetUrl}, following AGENTS.md conventions. Update each file in place only if changes are needed. Process every plan in this list before finishing:\n${plannerList}\n\nIf a plan step is fully covered by an existing helper (see AGENTS.md's helpers list, e.g. createTicket(page) for creating a ticket), you don't need to re-verify that step live — it's already a proven, working part of the codebase. Focus live verification on steps that aren't already covered by a helper.`
     )
   } catch (err) {
     if (err instanceof CostCapExceededError) throw err
