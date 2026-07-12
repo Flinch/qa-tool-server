@@ -334,6 +334,31 @@ CREATE TABLE IF NOT EXISTS requirement_test_cases (
 CREATE INDEX IF NOT EXISTS idx_requirements_project ON requirements(project_id);
 CREATE INDEX IF NOT EXISTS idx_requirement_test_cases_requirement ON requirement_test_cases(requirement_id);
 CREATE INDEX IF NOT EXISTS idx_requirement_test_cases_test_case ON requirement_test_cases(test_case_id);
+
+-- ============================================================================
+-- Requirements traceability (Phase 2: document upload + AI parsing)
+-- ============================================================================
+
+-- The uploaded doc, kept permanently as the source-of-truth artifact even
+-- after its parsed requirements are edited or superseded by a later upload
+-- (diffing against a later upload is Phase 3, not built yet).
+CREATE TABLE IF NOT EXISTS requirement_documents (
+  id           SERIAL PRIMARY KEY,
+  project_id   INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  filename     TEXT,
+  raw_text     TEXT NOT NULL,
+  uploaded_by  TEXT REFERENCES users(id),
+  created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_requirement_documents_project ON requirement_documents(project_id);
+
+-- SET NULL, not CASCADE: deleting the source document must not delete the
+-- requirements parsed from it — same reasoning as
+-- automated_test_cases.test_case_id above (origin metadata, not a lifecycle
+-- dependency).
+ALTER TABLE requirements ADD COLUMN IF NOT EXISTS
+  document_id INTEGER REFERENCES requirement_documents(id) ON DELETE SET NULL;
 `
 
 async function migrate() {

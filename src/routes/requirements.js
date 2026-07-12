@@ -1,10 +1,14 @@
 import { Router } from 'express'
+import Anthropic from '@anthropic-ai/sdk'
 import { query } from '../db/pool.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
+import { extractDocumentText } from '../lib/extractDocumentText.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
 router.use(requireRole('qa_engineer', 'admin'))
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 router.get('/', async (req, res) => {
   try {
@@ -35,6 +39,66 @@ router.post('/', async (req, res) => {
     )
     res.status(201).json({ ...rows[0], linked_test_case_count: 0 })
   } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// POST /upload — parse a requirements document (paste or file) into
+// discrete requirements. Phase 2 only: this always creates new rows, with
+// no diffing against what's already there — diffing a re-upload against the
+// existing set is Phase 3, not built yet.
+router.post('/upload', async (req, res) => {
+  const { filename, mimetype, data, text } = req.body
+  if (!data && !text?.trim()) return res.status(400).json({ error: 'A file or pasted text is required' })
+
+  try {
+    const rawText = data ? await extractDocumentText({ filename, mimetype, data }) : text.trim()
+    if (!rawText?.trim()) return res.status(400).json({ error: 'Could not extract any text from that document' })
+
+    const { rows: docRows } = await query(
+      `INSERT INTO requirement_documents (project_id, filename, raw_text, uploaded_by)
+       VALUES ($1,$2,$3,$4) RETURNING *`,
+      [req.params.id, filename || null, rawText, req.userId]
+    )
+    const doc = docRows[0]
+
+    const prompt = `You are a senior QA/product analyst. Given the following requirements document, break it down into a list of discrete, individually testable requirements.
+
+Return ONLY a valid JSON array with no preamble, no markdown, no explanation. Each object must have:
+- "title": string — short, specific requirement name
+- "description": string — the full requirement detail, rewritten clearly if needed
+
+Rules:
+- Split compound requirements into separate items when they describe genuinely different behavior
+- Do not invent requirements that aren't actually in the document
+- Aim for individually testable units, not a paragraph-by-paragraph copy
+
+Document:
+${rawText}`
+
+    const message = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4000,
+      messages: [{ role: 'user', content: prompt }],
+    })
+
+    const raw = message.content[0].text.trim()
+    const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
+    const parsed = JSON.parse(cleaned)
+
+    const inserted = []
+    for (const r of parsed) {
+      const { rows } = await query(
+        `INSERT INTO requirements (project_id, title, description, document_id, created_by)
+         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+        [req.params.id, r.title, r.description || '', doc.id, req.userId]
+      )
+      inserted.push({ ...rows[0], linked_test_case_count: 0 })
+    }
+
+    res.status(201).json({ document: doc, requirements: inserted })
+  } catch (e) {
+    console.error('Requirement upload error:', e)
     res.status(500).json({ error: e.message })
   }
 })
