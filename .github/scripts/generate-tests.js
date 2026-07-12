@@ -1,20 +1,19 @@
 import fs from 'fs'
 import path from 'path'
 import { execFile } from 'child_process'
-import { promisify } from 'util'
 import https from 'https'
 import http from 'http'
-
-const execFileAsync = promisify(execFile)
 
 const {
   CORRELATION_ID,
   WEBHOOK_BASE_URL,
   WEBHOOK_SECRET,
   GENERATION_COST_CAP_USD = '5',
+  AGENT_TIMEOUT_MS = String(15 * 60 * 1000), // 15 min default per call
 } = process.env
 
 const COST_CAP = Number(GENERATION_COST_CAP_USD)
+const AGENT_TIMEOUT = Number(AGENT_TIMEOUT_MS)
 
 if (!CORRELATION_ID || !WEBHOOK_BASE_URL || !WEBHOOK_SECRET) {
   console.error('CORRELATION_ID, WEBHOOK_BASE_URL, and WEBHOOK_SECRET are required')
@@ -65,17 +64,47 @@ async function reportPhaseOnce(status) {
 
 let totalCostUsd = 0
 class CostCapExceededError extends Error {}
+class AgentTimeoutError extends Error {}
+
+// Runs `npx claude -p ...` with a hard wall-clock timeout that kills the
+// WHOLE process tree, not just the immediate child. This matters because a
+// hang was observed firsthand: cancelling a stuck run showed GitHub Actions
+// having to individually clean up orphaned `claude`, `npm exec
+// playwright run-test-mcp-server`, and `chrome-headless-shell` processes —
+// npx/claude/the MCP server/the browser form a multi-level process tree, and
+// a plain SIGTERM to the top process doesn't reliably cascade down through
+// all of it. `detached: true` makes the child the leader of its own process
+// group, so `process.kill(-pid, ...)` (negative pid = the whole group)
+// reaches every descendant in one signal.
+function runClaudeProcess(args, { timeout, maxBuffer }) {
+  return new Promise((resolve, reject) => {
+    const child = execFile('npx', args, { maxBuffer, detached: true }, (error, stdout, stderr) => {
+      clearTimeout(timer)
+      if (error) return reject(Object.assign(error, { stdout, stderr }))
+      resolve({ stdout, stderr })
+    })
+
+    const timer = setTimeout(() => {
+      try {
+        process.kill(-child.pid, 'SIGKILL')
+      } catch {
+        child.kill('SIGKILL')
+      }
+      reject(new AgentTimeoutError(`Agent invocation timed out after ${timeout}ms and was killed — likely stuck on a browser action that never resolved (confirmed possible: a prior hang left the browser and MCP server processes still alive after the whole claude process should have exited).`))
+    }, timeout)
+  })
+}
 
 // Invokes a named subagent headlessly and returns its parsed JSON result.
 // Cost is checked AFTER each call completes (there's no mid-run cost hook)
 // and accumulated across the whole script run; going over aborts whatever
 // comes next rather than killing an in-flight call.
 async function runAgent(prompt) {
-  const { stdout } = await execFileAsync('npx', [
+  const { stdout } = await runClaudeProcess([
     'claude', '-p', prompt,
     '--permission-mode', 'dontAsk',
     '--output-format', 'json',
-  ], { maxBuffer: 1024 * 1024 * 50 })
+  ], { maxBuffer: 1024 * 1024 * 50, timeout: AGENT_TIMEOUT })
 
   const result = JSON.parse(stdout)
   if (typeof result.total_cost_usd === 'number') totalCostUsd += result.total_cost_usd
@@ -145,7 +174,10 @@ async function main() {
 
   await reportPhaseOnce('generating')
 
-  let costCapHit = false
+  // Set when the generator phase hit its cost cap or timed out — both cases
+  // skip the heal loop below (no point spending/waiting further after
+  // either), but still retain whatever files actually got written.
+  let skipHealing = false
   try {
     const generatorList = entries.map(e => `- specs/${e.filename} -> ${e.specPath}`).join('\n')
     await runAgent(
@@ -153,12 +185,14 @@ async function main() {
     )
   } catch (err) {
     // Don't bail immediately — some specs may have been written before the
-    // failure (the batched call already ran to completion by the time cost
-    // is known, since there's no mid-call cost hook — whatever it wrote is
-    // really on disk). Fall through to the per-TC file check below either
-    // way. A cost cap hit specifically also skips the heal loop further
-    // down, so we don't keep spending past the cap trying to fix things up.
-    if (err instanceof CostCapExceededError) costCapHit = true
+    // failure. On a cost cap, the batched call already ran to completion by
+    // the time cost is known (no mid-call hook), so whatever it wrote is
+    // really on disk. On a timeout, the process was killed mid-flight, so a
+    // partially-written file is possible but not guaranteed — the
+    // file-existence check below is still the right signal either way: if
+    // generator_write_test finished for a TC before the kill, that file is
+    // real and complete; if it didn't, the file simply won't exist.
+    if (err instanceof CostCapExceededError || err instanceof AgentTimeoutError) skipHealing = true
     console.error('Generator batch reported an error, checking what actually got written:', err.message)
   }
 
@@ -176,14 +210,14 @@ async function main() {
   const succeeded = results.filter(r => r.success)
   if (succeeded.length === 0) {
     const combined = results.map(r => `TC ${r.tc_id}: ${r.error}`).join('; ')
-    const prefix = costCapHit ? 'Cost cap exceeded and nothing was generated successfully. ' : 'No test cases generated successfully. '
+    const prefix = skipHealing ? 'Generation was cut short (cost cap or timeout) and nothing was generated successfully. ' : 'No test cases generated successfully. '
     await reportEvent('failed', { error_message: `${prefix}${combined}`.slice(0, 2000) })
     console.error('Nothing generated — failing the run.')
     process.exit(1)
   }
 
-  if (costCapHit) {
-    console.warn(`Cost cap exceeded — skipping the heal loop to avoid spending further. Proceeding to PR with ${succeeded.length}/${entries.length} test case(s) as generated (unhealed).`)
+  if (skipHealing) {
+    console.warn(`Generation was cut short (cost cap or timeout) — skipping the heal loop. Proceeding to PR with ${succeeded.length}/${entries.length} test case(s) as generated (unhealed).`)
   } else {
     await reportPhaseOnce('healing')
     let clean = await runPlaywrightTest(suiteDir)
