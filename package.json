@@ -15,9 +15,9 @@
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2",
     "mammoth": "^1.12.0",
-    "pdf-parse": "^2.4.5",
     "pg": "^8.12.0",
-    "svix": "^1.21.0"
+    "svix": "^1.21.0",
+    "unpdf": "^1.6.2"
   },
   "devDependencies": {
     "@anthropic-ai/claude-code": "^2.1.206",
