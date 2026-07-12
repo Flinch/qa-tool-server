@@ -145,15 +145,20 @@ async function main() {
 
   await reportPhaseOnce('generating')
 
+  let costCapHit = false
   try {
     const generatorList = entries.map(e => `- specs/${e.filename} -> ${e.specPath}`).join('\n')
     await runAgent(
       `Use the playwright-test-generator agent to implement EACH of the following plans as its corresponding spec file, following AGENTS.md conventions. Process every entry in this list:\n${generatorList}`
     )
   } catch (err) {
-    if (err instanceof CostCapExceededError) throw err
     // Don't bail immediately — some specs may have been written before the
-    // failure. Fall through to the per-TC file check below to find out.
+    // failure (the batched call already ran to completion by the time cost
+    // is known, since there's no mid-call cost hook — whatever it wrote is
+    // really on disk). Fall through to the per-TC file check below either
+    // way. A cost cap hit specifically also skips the heal loop further
+    // down, so we don't keep spending past the cap trying to fix things up.
+    if (err instanceof CostCapExceededError) costCapHit = true
     console.error('Generator batch reported an error, checking what actually got written:', err.message)
   }
 
@@ -171,22 +176,27 @@ async function main() {
   const succeeded = results.filter(r => r.success)
   if (succeeded.length === 0) {
     const combined = results.map(r => `TC ${r.tc_id}: ${r.error}`).join('; ')
-    await reportEvent('failed', { error_message: `No test cases generated successfully. ${combined}`.slice(0, 2000) })
+    const prefix = costCapHit ? 'Cost cap exceeded and nothing was generated successfully. ' : 'No test cases generated successfully. '
+    await reportEvent('failed', { error_message: `${prefix}${combined}`.slice(0, 2000) })
     console.error('Nothing generated — failing the run.')
     process.exit(1)
   }
 
-  await reportPhaseOnce('healing')
-  let clean = await runPlaywrightTest(suiteDir)
-  for (let attempt = 1; attempt <= 3 && !clean; attempt++) {
-    console.log(`Heal attempt ${attempt}/3`)
-    await runAgent(
-      `Use the playwright-test-healer agent to fix any failing tests in ${suiteDir}, following AGENTS.md conventions. Do not weaken assertions — if a failure means app behavior changed rather than the test being wrong, mark it with test.fixme() and a POSSIBLE REGRESSION comment instead of forcing it to pass.`
-    )
-    clean = await runPlaywrightTest(suiteDir)
-  }
-  if (!clean) {
-    console.warn('Heal loop exhausted (3 attempts) with tests still failing — proceeding to PR anyway (a flagged failure is still reviewable, per AGENTS.md healing rules).')
+  if (costCapHit) {
+    console.warn(`Cost cap exceeded — skipping the heal loop to avoid spending further. Proceeding to PR with ${succeeded.length}/${entries.length} test case(s) as generated (unhealed).`)
+  } else {
+    await reportPhaseOnce('healing')
+    let clean = await runPlaywrightTest(suiteDir)
+    for (let attempt = 1; attempt <= 3 && !clean; attempt++) {
+      console.log(`Heal attempt ${attempt}/3`)
+      await runAgent(
+        `Use the playwright-test-healer agent to fix any failing tests in ${suiteDir}, following AGENTS.md conventions. Do not weaken assertions — if a failure means app behavior changed rather than the test being wrong, mark it with test.fixme() and a POSSIBLE REGRESSION comment instead of forcing it to pass.`
+      )
+      clean = await runPlaywrightTest(suiteDir)
+    }
+    if (!clean) {
+      console.warn('Heal loop exhausted (3 attempts) with tests still failing — proceeding to PR anyway (a flagged failure is still reviewable, per AGENTS.md healing rules).')
+    }
   }
 
   // Script's job ends here. The workflow's next steps (peter-evans/create-pull-request,
