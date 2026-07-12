@@ -12,9 +12,9 @@ router.get('/', async (req, res) => {
       SELECT
         COUNT(DISTINCT p.id)::int AS projects,
         COUNT(DISTINCT tc.id)::int AS "testCases",
-        COUNT(tc.id) FILTER (WHERE tc.status = 'pass')::int AS passed,
-        COUNT(tc.id) FILTER (WHERE tc.status = 'fail')::int AS failed,
-        COUNT(b.id) FILTER (WHERE b.status = 'open')::int AS "openBugs"
+        COUNT(DISTINCT tc.id) FILTER (WHERE tc.status = 'pass')::int AS passed,
+        COUNT(DISTINCT tc.id) FILTER (WHERE tc.status = 'fail')::int AS failed,
+        COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'open')::int AS "openBugs"
       FROM projects p
       LEFT JOIN test_cases tc ON tc.project_id = p.id
       LEFT JOIN bugs b ON b.project_id = p.id

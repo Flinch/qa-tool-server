@@ -92,16 +92,101 @@ router.get('/:id/stats', async (req, res) => {
     const { rows } = await query(`
       SELECT
         COUNT(DISTINCT tc.id)::int AS "testCases",
-        COUNT(tc.id) FILTER (WHERE tc.status = 'pass')::int AS passed,
-        COUNT(tc.id) FILTER (WHERE tc.status = 'fail')::int AS failed,
-        COUNT(tc.id) FILTER (WHERE tc.status = 'not_run')::int AS "notRun",
-        COUNT(b.id) FILTER (WHERE b.status = 'open')::int AS "openBugs"
+        COUNT(DISTINCT tc.id) FILTER (WHERE tc.status = 'pass')::int AS passed,
+        COUNT(DISTINCT tc.id) FILTER (WHERE tc.status = 'fail')::int AS failed,
+        COUNT(DISTINCT tc.id) FILTER (WHERE tc.status = 'not_run')::int AS "notRun",
+        COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'open')::int AS "openBugs"
       FROM projects p
       LEFT JOIN test_cases tc ON tc.project_id = p.id
       LEFT JOIN bugs b ON b.project_id = p.id
       WHERE p.id = $1
     `, [req.params.id])
     res.json(rows[0])
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// GET /projects/:id/health — quality-health dashboard data (see DECISIONS.md
+// "Phase 4 — quality health dashboard" for the healthStatus thresholds and
+// why the trend is sourced from execution_runs rather than test_cases.status).
+router.get('/:id/health', async (req, res) => {
+  try {
+    if (!(await assertProjectAccess(req, res))) return
+    const projectId = req.params.id
+
+    const [testCaseRows, bugRows, coverageRows, trendRows] = await Promise.all([
+      query(`
+        SELECT
+          COUNT(DISTINCT tc.id)::int AS total,
+          COUNT(DISTINCT tc.id) FILTER (WHERE tc.status = 'pass')::int AS passed,
+          COUNT(DISTINCT tc.id) FILTER (WHERE tc.status = 'fail')::int AS failed,
+          COUNT(DISTINCT tc.id) FILTER (WHERE tc.status = 'not_run')::int AS "notRun"
+        FROM test_cases tc
+        WHERE tc.project_id = $1
+      `, [projectId]),
+      query(`
+        SELECT severity, COUNT(*)::int AS count
+        FROM bugs
+        WHERE project_id = $1 AND status = 'open'
+        GROUP BY severity
+      `, [projectId]),
+      query(`
+        SELECT
+          COUNT(DISTINCT tc.id)::int AS total,
+          COUNT(DISTINCT tc.id) FILTER (WHERE atc.id IS NOT NULL)::int AS automated
+        FROM test_cases tc
+        LEFT JOIN automated_test_cases atc ON atc.test_case_id = tc.id
+        WHERE tc.project_id = $1
+      `, [projectId]),
+      query(`
+        SELECT er.id, er.completed_at,
+          COUNT(erc.id) FILTER (WHERE erc.status = 'pass')::int AS passed,
+          COUNT(erc.id) FILTER (WHERE erc.status IN ('pass','fail'))::int AS total
+        FROM execution_runs er
+        JOIN execution_run_test_cases erc ON erc.execution_run_id = er.id
+        WHERE er.project_id = $1 AND er.status = 'completed'
+        GROUP BY er.id, er.completed_at
+        ORDER BY er.completed_at DESC
+        LIMIT 8
+      `, [projectId]),
+    ])
+
+    const tc = testCaseRows.rows[0]
+    const passRate = tc.total > 0 ? Math.round((tc.passed / tc.total) * 100) : null
+
+    const bugsBySeverity = { critical: 0, high: 0, medium: 0, low: 0 }
+    for (const row of bugRows.rows) bugsBySeverity[row.severity] = row.count
+
+    const cov = coverageRows.rows[0]
+    const automationCoverage = cov.total > 0 ? Math.round((cov.automated / cov.total) * 100) : null
+
+    const passRateTrend = trendRows.rows
+      .filter(r => r.total > 0)
+      .map(r => ({ date: r.completed_at, passRate: Math.round((r.passed / r.total) * 100) }))
+      .reverse()
+
+    let healthStatus
+    if (passRate === null) {
+      healthStatus = 'insufficient_data'
+    } else if (bugsBySeverity.critical > 0 || passRate < 70) {
+      healthStatus = 'needs_attention'
+    } else if (bugsBySeverity.high > 0 || passRate < 90) {
+      healthStatus = 'good'
+    } else {
+      healthStatus = 'excellent'
+    }
+
+    res.json({
+      healthStatus,
+      passRate,
+      testCases: { total: tc.total, passed: tc.passed, failed: tc.failed, notRun: tc.notRun },
+      bugsBySeverity,
+      automationCoverage,
+      automatedTestCases: cov.automated,
+      totalTestCases: cov.total,
+      passRateTrend,
+    })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
@@ -122,6 +207,36 @@ router.post('/:id/members', requireRole('admin'), async (req, res) => {
       [req.params.id, userRows[0].id]
     )
     res.status(201).json({ added: email })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// GET /projects/:id/members — admin only, lists clients this project has been shared with
+router.get('/:id/members', requireRole('admin'), async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT u.id, u.email, u.name
+       FROM project_members pm
+       JOIN users u ON u.id = pm.user_id
+       WHERE pm.project_id = $1 AND pm.role = 'client'
+       ORDER BY u.email`,
+      [req.params.id]
+    )
+    res.json(rows)
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// DELETE /projects/:id/members/:userId — admin only, revokes a client's access
+router.delete('/:id/members/:userId', requireRole('admin'), async (req, res) => {
+  try {
+    await query(
+      `DELETE FROM project_members WHERE project_id=$1 AND user_id=$2`,
+      [req.params.id, req.params.userId]
+    )
+    res.status(204).end()
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
