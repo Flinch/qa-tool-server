@@ -240,7 +240,15 @@ async function main() {
   console.log(`Done. ${succeeded.length}/${plans.length} test case(s) generated. Handing off to the PR step.`)
 }
 
-main().catch(async err => {
+main().then(() => {
+  // Explicit exit is necessary, not cosmetic: observed firsthand that the
+  // process hung indefinitely after this point on a real run (the "Done"
+  // line printed, but the "Generate and heal tests" step never completed).
+  // The webhook POSTs in postJson/reportEvent use Node's default
+  // keep-alive HTTP agent, which can leave a socket handle open and the
+  // event loop alive even with nothing left to do.
+  process.exit(0)
+}).catch(async err => {
   console.error('Generation run failed:', err.message)
   await reportEvent('failed', { error_message: err.message.slice(0, 2000) }).catch(() => {})
   process.exit(1)
