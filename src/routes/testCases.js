@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import Anthropic from '@anthropic-ai/sdk'
-import { query } from '../db/pool.js'
+import { query, pool } from '../db/pool.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
 
 const router = Router({ mergeParams: true })
@@ -26,6 +26,24 @@ router.get('/', async (req, res) => {
   }
 })
 
+router.post('/', async (req, res) => {
+  const { title, type, steps, expected } = req.body
+  if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
+  if (!['functional', 'integration', 'e2e'].includes(type)) return res.status(400).json({ error: 'Invalid type' })
+
+  try {
+    const { rows } = await query(
+      `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, created_by)
+       VALUES ($1,$2,$3,$4,$5,false,$6) RETURNING *`,
+      [req.params.id, title.trim(), type, JSON.stringify(steps || []), expected || '', req.userId]
+    )
+    await query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])
+    res.status(201).json({ ...rows[0], bug_count: 0 })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 router.get('/:tcId/bugs', async (req, res) => {
   try {
     const { rows } = await query(
@@ -39,7 +57,7 @@ router.get('/:tcId/bugs', async (req, res) => {
 })
 
 router.post('/generate', async (req, res) => {
-  const { requirements, mode = 'mvp' } = req.body
+  const { requirements, mode = 'mvp', replace = false } = req.body
   if (!requirements?.trim()) return res.status(400).json({ error: 'Requirements are required' })
 
   const automationGuidance = `- "automationCandidate": boolean — true if this test is a good candidate for test automation
@@ -91,17 +109,46 @@ ${requirements}`
     const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
     const generated = JSON.parse(cleaned)
 
+    // Parsing happens before any DB mutation either way, so a bad AI
+    // response never touches existing data. Replace mode additionally needs
+    // real transactional atomicity: the delete-then-insert has to be
+    // all-or-nothing, or a mid-loop failure would leave the project with no
+    // test cases at all — an ordinary loop of independent `query()` calls
+    // (each its own connection) can't guarantee that.
     const inserted = []
-    for (const tc of generated) {
-      const { rows } = await query(
-        `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-        [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId]
-      )
-      inserted.push({ ...rows[0], bug_count: 0 })
+    if (replace) {
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        await client.query(`DELETE FROM test_cases WHERE project_id=$1`, [req.params.id])
+        for (const tc of generated) {
+          const { rows } = await client.query(
+            `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+            [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId]
+          )
+          inserted.push({ ...rows[0], bug_count: 0 })
+        }
+        await client.query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])
+        await client.query('COMMIT')
+      } catch (e) {
+        await client.query('ROLLBACK')
+        throw e
+      } finally {
+        client.release()
+      }
+    } else {
+      for (const tc of generated) {
+        const { rows } = await query(
+          `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+          [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId]
+        )
+        inserted.push({ ...rows[0], bug_count: 0 })
+      }
+      await query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])
     }
 
-    await query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])
     res.status(201).json(inserted)
   } catch (e) {
     console.error('Generation error:', e)

@@ -104,6 +104,13 @@ export async function triggerGenerationRun({ projectId, suiteId, testCaseIds, us
   if (!Array.isArray(testCaseIds) || testCaseIds.length === 0) {
     throw new TriggerError(400, 'testCaseIds must be a non-empty array')
   }
+  // Batches beyond ~3 TCs risk hitting the CI job's wall-clock/timeout budget
+  // before finishing (each TC still needs real live browser turns regardless
+  // of batching) — enforced server-side too so this can't be bypassed by a
+  // raw API call, not just disabled checkboxes in the UI.
+  if (testCaseIds.length > 3) {
+    throw new TriggerError(400, 'A maximum of 3 test cases can be batched into one generation run')
+  }
 
   const { rows: suiteRows } = await query(
     `SELECT * FROM automation_suites WHERE id=$1 AND project_id=$2`,
