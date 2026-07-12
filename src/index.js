@@ -4,6 +4,8 @@ import cors from 'cors'
 import projectsRouter from './routes/projects.js'
 import testCasesRouter from './routes/testCases.js'
 import { patchTestCase } from './routes/testCases.js'
+import requirementsRouter from './routes/requirements.js'
+import { patchRequirement } from './routes/requirements.js'
 import bugsRouter from './routes/bugs.js'
 import { patchBug } from './routes/bugs.js'
 import statsRouter from './routes/stats.js'
@@ -36,6 +38,7 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }))
 app.use('/api/auth', authRouter)
 app.use('/api/projects', projectsRouter)
 app.use('/api/projects/:id/test-cases', testCasesRouter)
+app.use('/api/projects/:id/requirements', requirementsRouter)
 app.use('/api/projects/:id/bugs', bugsRouter)
 app.use('/api/projects/:id/automation', automationRouter)
 app.use('/api/projects/:id/execution-runs', executionRunsRouter)
@@ -44,6 +47,7 @@ app.use('/api/webhooks', webhooksRouter)
 
 // Standalone PATCH routes
 app.patch('/api/test-cases/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchTestCase)
+app.patch('/api/requirements/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchRequirement)
 app.patch('/api/bugs/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchBug)
 
 app.listen(PORT, () => console.log(`QA Tool server running on port ${PORT}`))

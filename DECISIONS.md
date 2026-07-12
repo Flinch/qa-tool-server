@@ -84,3 +84,12 @@
 
 - Added `GET /projects/:id/members` and `DELETE /projects/:id/members/:userId`, both admin-only, mirroring the existing `POST /projects/:id/members` pattern (same role gate, same table). No `assertProjectAccess` needed here — `requireRole('admin')` alone is the correct gate, same as the existing add-member route.
 - Client-side confirmation uses a plain `window.confirm()` rather than the app's usual custom modal — deliberate: unlike the replace-mode TC deletion (which cascades and destroys execution history), revoking a client's access is fully and trivially reversible by re-adding their email, so a lighter-weight confirmation is proportionate.
+
+## Phase 4 — requirements traceability, Phase 1 (schema + manual linking)
+
+- New `requirements` and `requirement_test_cases` tables. Deliberately no `key`/identifier column yet (test_cases doesn't have one either — title is the identifier) and no `document_id`/source-document column yet — both arrive with the upload/diff phase, not needed for manual-only Phase 1. Avoids designing schema for a phase that isn't built yet.
+- `requirement_test_cases` is a pure join table with `ON DELETE CASCADE` on both FKs, unlike `test_cases` deletion elsewhere in the app — deleting a link here destroys nothing but the link itself, not real execution history, so the caution that applies to TC deletion doesn't apply here.
+- The requirements list query uses `COUNT(DISTINCT rtc.test_case_id)` via a LEFT JOIN, not a bare `COUNT()` — deliberately applying the fan-out lesson from the `/projects/:id/stats` bug found and fixed earlier this phase (verified empirically: linking 2 test cases to a requirement and confirming the list endpoint reports exactly 2, not a multiplied number).
+- No hard DELETE endpoint for a requirement — only `PATCH .../requirements/:id` with `status: 'removed'` (soft delete). The entire point of this feature is traceability, so a requirement disappearing without a trace would undermine it; archived requirements stay queryable.
+- The Requirements page is staff-only (`requireRole('qa_engineer', 'admin')`, same gate as `testCases.js`) and reuses 100% existing CSS classes — no new styling needed, matching the existing page conventions exactly (`TestCasesPage.jsx`'s table/modal/edit-in-place shape).
+- This phase intentionally ships with zero requirement-to-test-case links on every existing project. The "Link test cases" picker on the Requirements page is the retroactive-linking tool for that — without it, coverage numbers would start at a meaningless 0% indefinitely.

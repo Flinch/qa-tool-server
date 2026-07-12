@@ -305,6 +305,35 @@ BEGIN
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_automated_test_cases_test_case ON automated_test_cases(test_case_id);
+
+-- ============================================================================
+-- Requirements traceability (Phase 1: manual only — see DECISIONS.md)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS requirements (
+  id           SERIAL PRIMARY KEY,
+  project_id   INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  title        TEXT NOT NULL,
+  description  TEXT,
+  status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','removed')),
+  created_by   TEXT REFERENCES users(id),
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Pure join table — CASCADE on both sides is safe here (unlike test_cases
+-- deletion elsewhere, dropping a link destroys nothing but the link itself).
+CREATE TABLE IF NOT EXISTS requirement_test_cases (
+  id             SERIAL PRIMARY KEY,
+  requirement_id INTEGER REFERENCES requirements(id) ON DELETE CASCADE,
+  test_case_id   INTEGER REFERENCES test_cases(id) ON DELETE CASCADE,
+  created_at     TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(requirement_id, test_case_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_requirements_project ON requirements(project_id);
+CREATE INDEX IF NOT EXISTS idx_requirement_test_cases_requirement ON requirement_test_cases(requirement_id);
+CREATE INDEX IF NOT EXISTS idx_requirement_test_cases_test_case ON requirement_test_cases(test_case_id);
 `
 
 async function migrate() {
