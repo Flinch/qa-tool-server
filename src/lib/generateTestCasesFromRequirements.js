@@ -32,13 +32,34 @@ Rules:
 Requirements:
 ${list}`
 
+  // A flat budget truncates on bulk generation once there are enough
+  // requirements — the old (now-removed) freeform endpoint scaled this by
+  // mode (2000 for ~4-8 test cases, 4000 for ~12-20). This scales by actual
+  // input size instead, since a single call here can cover anywhere from 1
+  // to a whole project's worth of uncovered requirements. Floor of 4000
+  // keeps the single-requirement path at least as generous as the old
+  // proven-working flat value (never a regression there); scales up past
+  // that for bulk; capped at 8192, the safe ceiling already proven
+  // elsewhere in this app for this model.
+  const maxTokens = Math.min(8192, Math.max(4000, requirements.length * 900))
+
   const message = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
-    max_tokens: 4000,
+    max_tokens: maxTokens,
     messages: [{ role: 'user', content: prompt }],
   })
 
   const raw = message.content[0].text.trim()
   const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
-  return JSON.parse(cleaned)
+  try {
+    return JSON.parse(cleaned)
+  } catch (e) {
+    // A truncated response (hit max_tokens mid-JSON) throws a generic
+    // "Unexpected end of JSON input" that's useless for debugging from the
+    // client side — surface what actually happened instead.
+    if (message.stop_reason === 'max_tokens') {
+      throw new Error(`AI response was cut off before completing (too many requirements in one batch — try fewer at once, or generate this one individually).`)
+    }
+    throw e
+  }
 }
