@@ -43,10 +43,12 @@ router.post('/', async (req, res) => {
   }
 })
 
-// POST /upload — parse a requirements document (paste or file) into
-// discrete requirements. Phase 2 only: this always creates new rows, with
-// no diffing against what's already there — diffing a re-upload against the
-// existing set is Phase 3, not built yet.
+// POST /upload — parse a requirements document (paste or file). If the
+// project has no active requirements yet, segments the doc and creates them
+// directly (Phase 2). If it already has requirements, diffs the new text
+// against the current set instead of blindly adding duplicates, and returns
+// the diff for review — nothing is written to `requirements` in that case
+// until POST /apply-diff confirms it (Phase 3).
 router.post('/upload', async (req, res) => {
   const { filename, mimetype, data, text } = req.body
   if (!data && !text?.trim()) return res.status(400).json({ error: 'A file or pasted text is required' })
@@ -62,7 +64,17 @@ router.post('/upload', async (req, res) => {
     )
     const doc = docRows[0]
 
-    const prompt = `You are a senior QA/product analyst. Given the following requirements document, break it down into a list of discrete, individually testable requirements.
+    const { rows: existing } = await query(
+      `SELECT r.id, r.title, r.description, COUNT(DISTINCT rtc.test_case_id)::int AS linked_test_case_count
+       FROM requirements r
+       LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
+       WHERE r.project_id=$1 AND r.status='active'
+       GROUP BY r.id`,
+      [req.params.id]
+    )
+
+    if (existing.length === 0) {
+      const prompt = `You are a senior QA/product analyst. Given the following requirements document, break it down into a list of discrete, individually testable requirements.
 
 Return ONLY a valid JSON array with no preamble, no markdown, no explanation. Each object must have:
 - "title": string — short, specific requirement name
@@ -76,29 +88,121 @@ Rules:
 Document:
 ${rawText}`
 
+      const message = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4000,
+        messages: [{ role: 'user', content: prompt }],
+      })
+
+      const raw = message.content[0].text.trim()
+      const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
+      const parsed = JSON.parse(cleaned)
+
+      const inserted = []
+      for (const r of parsed) {
+        const { rows } = await query(
+          `INSERT INTO requirements (project_id, title, description, document_id, created_by)
+           VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+          [req.params.id, r.title, r.description || '', doc.id, req.userId]
+        )
+        inserted.push({ ...rows[0], linked_test_case_count: 0 })
+      }
+
+      return res.status(201).json({ mode: 'created', document: doc, requirements: inserted })
+    }
+
+    // Diff mode — no writes to `requirements` here, just classification.
+    const currentList = existing.map(r => `[id=${r.id}] Title: ${r.title}\nDescription: ${r.description || '(none)'}`).join('\n\n')
+
+    const diffPrompt = `You are a senior QA/product analyst. Compare an updated requirements document against the current list of tracked requirements for this project, and classify what changed.
+
+Current requirements:
+${currentList}
+
+New document:
+${rawText}
+
+Return ONLY a valid JSON object with no preamble, no markdown, no explanation, with this exact shape:
+{
+  "modified": [{"id": 12, "title": "...", "description": "..."}],
+  "removed": [13, 15],
+  "new": [{"title": "...", "description": "..."}]
+}
+
+Rules:
+- "modified": existing requirements (use their real id) whose actual meaning or behavior changed based on the new document — title/description are the updated versions. Only mark something modified if the meaning changed, not just wording.
+- "removed": ids of existing requirements no longer present in the new document at all.
+- "new": requirements described in the new document that don't correspond to any existing one.
+- Any existing requirement not mentioned in "modified" or "removed" is assumed unchanged — do not list unchanged ones anywhere.
+- Do not invent requirements that aren't actually in the document.`
+
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 4000,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{ role: 'user', content: diffPrompt }],
     })
 
     const raw = message.content[0].text.trim()
     const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
-    const parsed = JSON.parse(cleaned)
+    const diffResult = JSON.parse(cleaned)
+
+    const byId = Object.fromEntries(existing.map(r => [r.id, r]))
+    const modified = (diffResult.modified || [])
+      .filter(m => byId[m.id])
+      .map(m => ({ id: m.id, title: m.title, description: m.description || '', old: byId[m.id] }))
+    const removed = (diffResult.removed || [])
+      .filter(id => byId[id])
+      .map(id => byId[id])
+    const newItems = diffResult.new || []
+    const unchangedCount = existing.length - modified.length - removed.length
+
+    res.status(201).json({
+      mode: 'diff',
+      document: doc,
+      diff: { modified, removed, new: newItems, unchangedCount },
+    })
+  } catch (e) {
+    console.error('Requirement upload error:', e)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// POST /apply-diff — commits a user-reviewed diff from POST /upload. Only
+// items the user approved should be included; nothing here is inferred.
+router.post('/apply-diff', async (req, res) => {
+  const { documentId, modified = [], removed = [], added = [] } = req.body
+
+  try {
+    const updated = []
+    for (const m of modified) {
+      const { rows } = await query(
+        `UPDATE requirements SET title=$1, description=$2, document_id=$3, updated_at=NOW()
+         WHERE id=$4 AND project_id=$5 RETURNING *`,
+        [m.title, m.description || '', documentId, m.id, req.params.id]
+      )
+      if (rows[0]) updated.push(rows[0])
+    }
+
+    for (const id of removed) {
+      await query(
+        `UPDATE requirements SET status='removed', updated_at=NOW() WHERE id=$1 AND project_id=$2`,
+        [id, req.params.id]
+      )
+    }
 
     const inserted = []
-    for (const r of parsed) {
+    for (const n of added) {
       const { rows } = await query(
         `INSERT INTO requirements (project_id, title, description, document_id, created_by)
          VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-        [req.params.id, r.title, r.description || '', doc.id, req.userId]
+        [req.params.id, n.title, n.description || '', documentId, req.userId]
       )
       inserted.push({ ...rows[0], linked_test_case_count: 0 })
     }
 
-    res.status(201).json({ document: doc, requirements: inserted })
+    res.json({ updated, removedIds: removed, inserted })
   } catch (e) {
-    console.error('Requirement upload error:', e)
+    console.error('Requirement apply-diff error:', e)
     res.status(500).json({ error: e.message })
   }
 })
