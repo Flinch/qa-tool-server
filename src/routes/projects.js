@@ -115,7 +115,7 @@ router.get('/:id/health', async (req, res) => {
     if (!(await assertProjectAccess(req, res))) return
     const projectId = req.params.id
 
-    const [testCaseRows, bugRows, coverageRows, trendRows] = await Promise.all([
+    const [testCaseRows, bugRows, coverageRows, trendRows, requirementCoverageRows] = await Promise.all([
       query(`
         SELECT
           COUNT(DISTINCT tc.id)::int AS total,
@@ -150,6 +150,18 @@ router.get('/:id/health', async (req, res) => {
         ORDER BY er.completed_at DESC
         LIMIT 8
       `, [projectId]),
+      // Same "has at least one link" definition of coverage already used on
+      // the Requirements page itself (linked_test_case_count > 0) — kept
+      // identical on purpose so this dashboard and that page never disagree
+      // about what "covered" means.
+      query(`
+        SELECT
+          COUNT(DISTINCT r.id)::int AS total,
+          COUNT(DISTINCT r.id) FILTER (WHERE rtc.id IS NOT NULL)::int AS covered
+        FROM requirements r
+        LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
+        WHERE r.project_id = $1 AND r.status = 'active'
+      `, [projectId]),
     ])
 
     const tc = testCaseRows.rows[0]
@@ -160,6 +172,9 @@ router.get('/:id/health', async (req, res) => {
 
     const cov = coverageRows.rows[0]
     const automationCoverage = cov.total > 0 ? Math.round((cov.automated / cov.total) * 100) : null
+
+    const reqCov = requirementCoverageRows.rows[0]
+    const requirementCoverage = reqCov.total > 0 ? Math.round((reqCov.covered / reqCov.total) * 100) : null
 
     const passRateTrend = trendRows.rows
       .filter(r => r.total > 0)
@@ -185,6 +200,9 @@ router.get('/:id/health', async (req, res) => {
       automationCoverage,
       automatedTestCases: cov.automated,
       totalTestCases: cov.total,
+      requirementCoverage,
+      coveredRequirements: reqCov.covered,
+      totalRequirements: reqCov.total,
       passRateTrend,
     })
   } catch (e) {

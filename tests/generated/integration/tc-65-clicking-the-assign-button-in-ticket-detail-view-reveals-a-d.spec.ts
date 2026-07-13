@@ -45,6 +45,7 @@ test.describe('Ticket detail assign', () => {
         'Bob Martinez (agent)',
         'Ron Swanson (agent)',
       ]);
+      await page.screenshot({ path: 'test-results/tc-65-assign-dropdown.png' });
     });
 
     // Expect: A dropdown (native select/combobox) appears in place of the Assign button,
@@ -54,6 +55,10 @@ test.describe('Ticket detail assign', () => {
       const combobox = page.getByRole('combobox');
       await expect(combobox.locator('option')).toHaveCount(4);
       await expect(combobox.getByRole('option', { name: 'Bob Martinez (agent)' })).toBeAttached();
+      await page.screenshot({ path: 'test-results/tc-65-assign-dropdown.png' });
+      
     });
+
+    
   });
 });
