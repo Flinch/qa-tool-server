@@ -89,15 +89,27 @@ router.get('/:id', async (req, res) => {
 router.get('/:id/stats', async (req, res) => {
   try {
     if (!(await assertProjectAccess(req, res))) return
+    // Same fix as GET /:id/health — passed/failed/notRun sourced from real
+    // execution history (execution_run_test_cases), not test_cases.status,
+    // which execution runs never write to.
     const { rows } = await query(`
+      WITH latest_execution AS (
+        SELECT DISTINCT ON (erc.test_case_id) erc.test_case_id, erc.status
+        FROM execution_run_test_cases erc
+        JOIN execution_runs er ON er.id = erc.execution_run_id
+        WHERE er.project_id = $1 AND erc.status != 'not_run'
+        ORDER BY erc.test_case_id, erc.executed_at DESC NULLS LAST
+      )
       SELECT
         COUNT(DISTINCT tc.id)::int AS "testCases",
-        COUNT(DISTINCT tc.id) FILTER (WHERE tc.status = 'pass')::int AS passed,
-        COUNT(DISTINCT tc.id) FILTER (WHERE tc.status = 'fail')::int AS failed,
-        COUNT(DISTINCT tc.id) FILTER (WHERE tc.status = 'not_run')::int AS "notRun",
+        COUNT(DISTINCT tc.id) FILTER (WHERE le.status = 'pass')::int AS passed,
+        COUNT(DISTINCT tc.id) FILTER (WHERE le.status = 'fail')::int AS failed,
+        COUNT(DISTINCT tc.id) FILTER (WHERE le.status = 'blocked')::int AS blocked,
+        COUNT(DISTINCT tc.id) FILTER (WHERE le.test_case_id IS NULL)::int AS "notRun",
         COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'open')::int AS "openBugs"
       FROM projects p
       LEFT JOIN test_cases tc ON tc.project_id = p.id
+      LEFT JOIN latest_execution le ON le.test_case_id = tc.id
       LEFT JOIN bugs b ON b.project_id = p.id
       WHERE p.id = $1
     `, [req.params.id])
@@ -116,13 +128,28 @@ router.get('/:id/health', async (req, res) => {
     const projectId = req.params.id
 
     const [testCaseRows, bugRows, coverageRows, trendRows, requirementCoverageRows] = await Promise.all([
+      // Sourced from real execution history, not test_cases.status — that
+      // column is deliberately independent of execution results (see the
+      // schema comment on execution_run_test_cases in migrate.js), so it
+      // never reflected an actual run. This finds each test case's most
+      // recent real pass/fail/blocked result across every execution run in
+      // the project and aggregates from that instead.
       query(`
+        WITH latest_execution AS (
+          SELECT DISTINCT ON (erc.test_case_id) erc.test_case_id, erc.status
+          FROM execution_run_test_cases erc
+          JOIN execution_runs er ON er.id = erc.execution_run_id
+          WHERE er.project_id = $1 AND erc.status != 'not_run'
+          ORDER BY erc.test_case_id, erc.executed_at DESC NULLS LAST
+        )
         SELECT
           COUNT(DISTINCT tc.id)::int AS total,
-          COUNT(DISTINCT tc.id) FILTER (WHERE tc.status = 'pass')::int AS passed,
-          COUNT(DISTINCT tc.id) FILTER (WHERE tc.status = 'fail')::int AS failed,
-          COUNT(DISTINCT tc.id) FILTER (WHERE tc.status = 'not_run')::int AS "notRun"
+          COUNT(DISTINCT le.test_case_id) FILTER (WHERE le.status = 'pass')::int AS passed,
+          COUNT(DISTINCT le.test_case_id) FILTER (WHERE le.status = 'fail')::int AS failed,
+          COUNT(DISTINCT le.test_case_id) FILTER (WHERE le.status = 'blocked')::int AS blocked,
+          COUNT(DISTINCT tc.id) FILTER (WHERE le.test_case_id IS NULL)::int AS "notRun"
         FROM test_cases tc
+        LEFT JOIN latest_execution le ON le.test_case_id = tc.id
         WHERE tc.project_id = $1
       `, [projectId]),
       query(`
@@ -195,7 +222,7 @@ router.get('/:id/health', async (req, res) => {
     res.json({
       healthStatus,
       passRate,
-      testCases: { total: tc.total, passed: tc.passed, failed: tc.failed, notRun: tc.notRun },
+      testCases: { total: tc.total, passed: tc.passed, failed: tc.failed, blocked: tc.blocked, notRun: tc.notRun },
       bugsBySeverity,
       automationCoverage,
       automatedTestCases: cov.automated,

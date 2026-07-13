@@ -2,15 +2,19 @@ import { Router } from 'express'
 import Anthropic from '@anthropic-ai/sdk'
 import { query } from '../db/pool.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
+import { requireProjectAccess } from '../middleware/projectAccess.js'
 import { extractDocumentText } from '../lib/extractDocumentText.js'
 import { generateTestCasesForRequirements } from '../lib/generateTestCasesFromRequirements.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
-router.use(requireRole('qa_engineer', 'admin'))
+router.use(requireProjectAccess)
+
+const staffOnly = requireRole('qa_engineer', 'admin')
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
+// GET /projects/:id/requirements — staff + read-only clients who are project members
 router.get('/', async (req, res) => {
   try {
     const { rows } = await query(
@@ -28,7 +32,7 @@ router.get('/', async (req, res) => {
   }
 })
 
-router.post('/', async (req, res) => {
+router.post('/', staffOnly, async (req, res) => {
   const { title, description } = req.body
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
 
@@ -50,7 +54,7 @@ router.post('/', async (req, res) => {
 // against the current set instead of blindly adding duplicates, and returns
 // the diff for review — nothing is written to `requirements` in that case
 // until POST /apply-diff confirms it (Phase 3).
-router.post('/upload', async (req, res) => {
+router.post('/upload', staffOnly, async (req, res) => {
   const { filename, mimetype, data, text } = req.body
   if (!data && !text?.trim()) return res.status(400).json({ error: 'A file or pasted text is required' })
 
@@ -170,7 +174,7 @@ Rules:
 
 // POST /apply-diff — commits a user-reviewed diff from POST /upload. Only
 // items the user approved should be included; nothing here is inferred.
-router.post('/apply-diff', async (req, res) => {
+router.post('/apply-diff', staffOnly, async (req, res) => {
   const { documentId, modified = [], removed = [], added = [] } = req.body
 
   try {
@@ -212,7 +216,7 @@ router.post('/apply-diff', async (req, res) => {
 // a test case generated for it. Rejects (400) if it already has one — a
 // real server-side gate, not just a hidden button, so a stale page or a
 // direct API call can't create a duplicate.
-router.post('/:reqId/generate-test-case', async (req, res) => {
+router.post('/:reqId/generate-test-case', staffOnly, async (req, res) => {
   try {
     const { rows: reqRows } = await query(
       `SELECT r.id, r.title, r.description, COUNT(DISTINCT rtc.test_case_id)::int AS linked_test_case_count
@@ -253,7 +257,7 @@ router.post('/:reqId/generate-test-case', async (req, res) => {
 
 // POST /generate-test-cases — bulk: every active requirement with zero
 // linked test cases, in one batched AI call.
-router.post('/generate-test-cases', async (req, res) => {
+router.post('/generate-test-cases', staffOnly, async (req, res) => {
   try {
     const { rows: uncovered } = await query(
       `SELECT r.id, r.title, r.description
@@ -311,7 +315,7 @@ router.get('/:reqId/test-cases', async (req, res) => {
   }
 })
 
-router.post('/:reqId/test-cases', async (req, res) => {
+router.post('/:reqId/test-cases', staffOnly, async (req, res) => {
   const { test_case_ids } = req.body
   if (!Array.isArray(test_case_ids) || test_case_ids.length === 0) {
     return res.status(400).json({ error: 'test_case_ids is required' })
@@ -331,7 +335,7 @@ router.post('/:reqId/test-cases', async (req, res) => {
   }
 })
 
-router.delete('/:reqId/test-cases/:tcId', async (req, res) => {
+router.delete('/:reqId/test-cases/:tcId', staffOnly, async (req, res) => {
   try {
     await query(
       `DELETE FROM requirement_test_cases WHERE requirement_id=$1 AND test_case_id=$2`,
