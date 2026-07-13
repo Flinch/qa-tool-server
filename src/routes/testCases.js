@@ -1,13 +1,10 @@
 import { Router } from 'express'
-import Anthropic from '@anthropic-ai/sdk'
-import { query, pool } from '../db/pool.js'
+import { query } from '../db/pool.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
 router.use(requireRole('qa_engineer', 'admin'))
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 router.get('/', async (req, res) => {
   try {
@@ -56,105 +53,15 @@ router.get('/:tcId/bugs', async (req, res) => {
   }
 })
 
-router.post('/generate', async (req, res) => {
-  const { requirements, mode = 'mvp', replace = false } = req.body
-  if (!requirements?.trim()) return res.status(400).json({ error: 'Requirements are required' })
-
-  const automationGuidance = `- "automationCandidate": boolean — true if this test is a good candidate for test automation
-- "automationReasoning": string — one short sentence explaining the automationCandidate call
-
-Guidance for automationCandidate: mark true when the test has deterministic, scriptable steps and a clear pass/fail assertion — e.g. form submission, API/data validation, CRUD flows, navigation, repeated regression checks. Mark false when the test relies on subjective human judgment — e.g. visual/layout review, usability or copy review, CAPTCHA, one-off exploratory testing, or steps needing something automation can't easily do (email/SMS retrieval, third-party approvals, physical devices).`
-
-  const mvpPrompt = `You are a senior QA engineer. Given the following requirements, generate a focused MVP test suite.
-
-Return ONLY a valid JSON array with no preamble, no markdown, no explanation. Each object must have:
-- "title": string — clear, specific test case name
-- "type": one of "functional" | "integration" | "e2e"
-- "steps": array of strings — one action per step, in order. Do NOT prefix each string with a number or "Step N:" — the UI renders these in a numbered list already
-- "expected": string — the expected result
-${automationGuidance}
-
-Rules for MVP mode:
-- Cover the core happy path for each requirement
-- Include 1-2 edge cases or error conditions total
-- Aim for 4-8 test cases maximum
-- Prioritize what would catch the most critical bugs
-- No redundant or overlapping tests
-
-Requirements:
-${requirements}`
-
-  const comprehensivePrompt = `You are a senior QA engineer. Given the following requirements, generate a comprehensive test suite.
-
-Return ONLY a valid JSON array with no preamble, no markdown, no explanation. Each object must have:
-- "title": string — clear, specific test case name
-- "type": one of "functional" | "integration" | "e2e"
-- "steps": array of strings — one action per step, in order. Do NOT prefix each string with a number or "Step N:" — the UI renders these in a numbered list already
-- "expected": string — the expected result
-${automationGuidance}
-
-Cover happy paths, edge cases, error conditions, boundary values, and integration points. Aim for 12-20 test cases.
-
-Requirements:
-${requirements}`
-
+export async function deleteTestCase(req, res) {
   try {
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: mode === 'mvp' ? 2000 : 4000,
-      messages: [{ role: 'user', content: mode === 'mvp' ? mvpPrompt : comprehensivePrompt }]
-    })
-
-    const raw = message.content[0].text.trim()
-    const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
-    const generated = JSON.parse(cleaned)
-
-    // Parsing happens before any DB mutation either way, so a bad AI
-    // response never touches existing data. Replace mode additionally needs
-    // real transactional atomicity: the delete-then-insert has to be
-    // all-or-nothing, or a mid-loop failure would leave the project with no
-    // test cases at all — an ordinary loop of independent `query()` calls
-    // (each its own connection) can't guarantee that.
-    const inserted = []
-    if (replace) {
-      const client = await pool.connect()
-      try {
-        await client.query('BEGIN')
-        await client.query(`DELETE FROM test_cases WHERE project_id=$1`, [req.params.id])
-        for (const tc of generated) {
-          const { rows } = await client.query(
-            `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-            [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId]
-          )
-          inserted.push({ ...rows[0], bug_count: 0 })
-        }
-        await client.query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])
-        await client.query('COMMIT')
-      } catch (e) {
-        await client.query('ROLLBACK')
-        throw e
-      } finally {
-        client.release()
-      }
-    } else {
-      for (const tc of generated) {
-        const { rows } = await query(
-          `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-          [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId]
-        )
-        inserted.push({ ...rows[0], bug_count: 0 })
-      }
-      await query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])
-    }
-
-    res.status(201).json(inserted)
+    const { rowCount } = await query(`DELETE FROM test_cases WHERE id=$1`, [req.params.id])
+    if (rowCount === 0) return res.status(404).json({ error: 'Not found' })
+    res.status(204).end()
   } catch (e) {
-    console.error('Generation error:', e)
     res.status(500).json({ error: e.message })
   }
-})
+}
 
 export async function patchTestCase(req, res) {
   const { status, title, type, steps, expected, automationCandidate, automationReasoning } = req.body

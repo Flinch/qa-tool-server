@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { query } from '../db/pool.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
 import { extractDocumentText } from '../lib/extractDocumentText.js'
+import { generateTestCasesForRequirements } from '../lib/generateTestCasesFromRequirements.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
@@ -203,6 +204,94 @@ router.post('/apply-diff', async (req, res) => {
     res.json({ updated, removedIds: removed, inserted })
   } catch (e) {
     console.error('Requirement apply-diff error:', e)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// POST /:reqId/generate-test-case — the only way a single requirement gets
+// a test case generated for it. Rejects (400) if it already has one — a
+// real server-side gate, not just a hidden button, so a stale page or a
+// direct API call can't create a duplicate.
+router.post('/:reqId/generate-test-case', async (req, res) => {
+  try {
+    const { rows: reqRows } = await query(
+      `SELECT r.id, r.title, r.description, COUNT(DISTINCT rtc.test_case_id)::int AS linked_test_case_count
+       FROM requirements r
+       LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
+       WHERE r.id=$1 AND r.project_id=$2 AND r.status='active'
+       GROUP BY r.id`,
+      [req.params.reqId, req.params.id]
+    )
+    const requirement = reqRows[0]
+    if (!requirement) return res.status(404).json({ error: 'Requirement not found' })
+    if (requirement.linked_test_case_count > 0) {
+      return res.status(400).json({ error: 'This requirement already has a linked test case' })
+    }
+
+    const generated = await generateTestCasesForRequirements([requirement])
+
+    const inserted = []
+    for (const tc of generated) {
+      const { rows } = await query(
+        `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId]
+      )
+      await query(
+        `INSERT INTO requirement_test_cases (requirement_id, test_case_id) VALUES ($1,$2)`,
+        [requirement.id, rows[0].id]
+      )
+      inserted.push({ ...rows[0], bug_count: 0 })
+    }
+
+    res.status(201).json({ testCases: inserted, linked_test_case_count: inserted.length })
+  } catch (e) {
+    console.error('Requirement generate-test-case error:', e)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// POST /generate-test-cases — bulk: every active requirement with zero
+// linked test cases, in one batched AI call.
+router.post('/generate-test-cases', async (req, res) => {
+  try {
+    const { rows: uncovered } = await query(
+      `SELECT r.id, r.title, r.description
+       FROM requirements r
+       LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
+       WHERE r.project_id=$1 AND r.status='active'
+       GROUP BY r.id
+       HAVING COUNT(DISTINCT rtc.test_case_id) = 0`,
+      [req.params.id]
+    )
+    if (uncovered.length === 0) {
+      return res.status(400).json({ error: 'Every requirement already has a linked test case' })
+    }
+
+    const generated = await generateTestCasesForRequirements(uncovered)
+
+    const byRequirement = {}
+    for (const tc of generated) {
+      const { rows } = await query(
+        `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId]
+      )
+      await query(
+        `INSERT INTO requirement_test_cases (requirement_id, test_case_id) VALUES ($1,$2)`,
+        [tc.requirementId, rows[0].id]
+      )
+      ;(byRequirement[tc.requirementId] ||= []).push({ ...rows[0], bug_count: 0 })
+    }
+
+    const summary = uncovered.map(r => ({
+      requirementId: r.id,
+      testCases: byRequirement[r.id] || [],
+    }))
+
+    res.status(201).json({ generated: summary, totalTestCases: generated.length })
+  } catch (e) {
+    console.error('Requirement bulk generate-test-cases error:', e)
     res.status(500).json({ error: e.message })
   }
 })

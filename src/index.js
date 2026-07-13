@@ -3,7 +3,7 @@ import express from 'express'
 import cors from 'cors'
 import projectsRouter from './routes/projects.js'
 import testCasesRouter from './routes/testCases.js'
-import { patchTestCase } from './routes/testCases.js'
+import { patchTestCase, deleteTestCase } from './routes/testCases.js'
 import requirementsRouter from './routes/requirements.js'
 import { patchRequirement } from './routes/requirements.js'
 import bugsRouter from './routes/bugs.js'
@@ -45,8 +45,9 @@ app.use('/api/projects/:id/execution-runs', executionRunsRouter)
 app.use('/api/stats', statsRouter)
 app.use('/api/webhooks', webhooksRouter)
 
-// Standalone PATCH routes
+// Standalone PATCH/DELETE routes
 app.patch('/api/test-cases/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchTestCase)
+app.delete('/api/test-cases/:id', requireAuth, requireRole('qa_engineer', 'admin'), deleteTestCase)
 app.patch('/api/requirements/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchRequirement)
 app.patch('/api/bugs/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchBug)
 
