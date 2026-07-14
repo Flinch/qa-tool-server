@@ -29,19 +29,33 @@ function authHeader() {
 }
 
 // Projects the configured account can see — JIRA filters this server-side,
-// so no extra permission filtering is needed on our end.
+// so no extra permission filtering is needed on our end. /project/search is
+// paginated (100/page); a org with more than one page of projects would
+// silently lose everything past the first page if we only read page one, so
+// this walks every page via startAt/isLast rather than trusting maxResults
+// to be the whole list.
 export async function listJiraProjects() {
   assertJiraConfigured()
 
-  const res = await fetch(`${JIRA_BASE_URL}/rest/api/2/project/search?maxResults=100`, {
-    headers: { Authorization: authHeader(), Accept: 'application/json' },
-  })
-  if (!res.ok) {
-    const errText = (await res.text()).slice(0, 500)
-    throw new JiraError(502, `Couldn't list JIRA projects: ${errText}`)
+  const projects = []
+  let startAt = 0
+  const pageSize = 100
+
+  while (true) {
+    const res = await fetch(`${JIRA_BASE_URL}/rest/api/2/project/search?maxResults=${pageSize}&startAt=${startAt}`, {
+      headers: { Authorization: authHeader(), Accept: 'application/json' },
+    })
+    if (!res.ok) {
+      const errText = (await res.text()).slice(0, 500)
+      throw new JiraError(502, `Couldn't list JIRA projects: ${errText}`)
+    }
+    const data = await res.json()
+    projects.push(...(data.values || []))
+    if (data.isLast || !data.values?.length) break
+    startAt += pageSize
   }
-  const data = await res.json()
-  return (data.values || []).map(p => ({ key: p.key, name: p.name, id: p.id }))
+
+  return projects.map(p => ({ key: p.key, name: p.name, id: p.id }))
 }
 
 async function postIssue(fields) {
