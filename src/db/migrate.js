@@ -183,6 +183,13 @@ CREATE TABLE IF NOT EXISTS execution_run_suites (
 
 ALTER TABLE bugs ADD COLUMN IF NOT EXISTS execution_run_id INTEGER REFERENCES execution_runs(id) ON DELETE SET NULL;
 
+-- JIRA cross-post (optional, best-effort — see jiraClient.js and DECISIONS.md).
+-- jira_organization is stored for reference only; not yet linked to a real
+-- JIRA org via the API (see DECISIONS.md for why that was cut from v1).
+ALTER TABLE bugs ADD COLUMN IF NOT EXISTS jira_issue_key TEXT;
+ALTER TABLE bugs ADD COLUMN IF NOT EXISTS jira_issue_url TEXT;
+ALTER TABLE bugs ADD COLUMN IF NOT EXISTS jira_organization TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_execution_runs_project ON execution_runs(project_id);
 CREATE INDEX IF NOT EXISTS idx_execution_run_test_cases_run ON execution_run_test_cases(execution_run_id);
 CREATE INDEX IF NOT EXISTS idx_execution_run_suites_run ON execution_run_suites(execution_run_id);

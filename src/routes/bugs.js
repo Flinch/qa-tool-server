@@ -2,12 +2,36 @@ import { Router } from 'express'
 import { query } from '../db/pool.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
 import { requireProjectAccess } from '../middleware/projectAccess.js'
+import { JiraError, listJiraProjects, createJiraIssue, attachImageToJiraIssue } from '../lib/jiraClient.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
 router.use(requireProjectAccess)
 
 const staffOnly = requireRole('qa_engineer', 'admin')
+
+const SEVERITY_TO_PRIORITY = { critical: 'Highest', high: 'High', medium: 'Medium', low: 'Low' }
+
+function buildJiraDescription({ steps_to_reproduce, expected, actual, notes }) {
+  const parts = []
+  if (steps_to_reproduce) parts.push(`Steps to reproduce:\n${steps_to_reproduce}`)
+  if (expected) parts.push(`Expected result:\n${expected}`)
+  if (actual) parts.push(`Actual result:\n${actual}`)
+  if (notes) parts.push(`Notes:\n${notes}`)
+  return parts.join('\n\n') || '(No additional details provided.)'
+}
+
+// GET /projects/:id/bugs/jira/projects — staff only, populates the JIRA
+// project picker on the bug-creation form. A clean error here (not
+// configured, unreachable) is what lets the client disable the toggle
+// instead of showing a broken picker.
+router.get('/jira/projects', staffOnly, async (req, res) => {
+  try {
+    res.json(await listJiraProjects())
+  } catch (e) {
+    res.status(e instanceof JiraError ? e.status : 500).json({ error: e.message })
+  }
+})
 
 // GET /projects/:id/bugs — staff + read-only clients who are project members
 router.get('/', async (req, res) => {
@@ -27,20 +51,51 @@ router.get('/', async (req, res) => {
   }
 })
 
-// POST /projects/:id/bugs — staff only
+// POST /projects/:id/bugs — staff only. `post_to_jira`/`jira` are optional;
+// a JIRA failure never blocks the local bug from being created (fail-open,
+// see DECISIONS.md) — it's surfaced back as `jira_error` on the response.
 router.post('/', staffOnly, async (req, res) => {
-  const { title, severity, steps_to_reproduce, expected, actual, notes, test_case_id, execution_run_id } = req.body
+  const { title, severity, steps_to_reproduce, expected, actual, notes, test_case_id, execution_run_id, post_to_jira, jira } = req.body
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
 
   try {
     const { rows } = await query(
-      `INSERT INTO bugs (project_id, test_case_id, execution_run_id, title, severity, steps_to_reproduce, expected, actual, notes, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      `INSERT INTO bugs (project_id, test_case_id, execution_run_id, title, severity, steps_to_reproduce, expected, actual, notes, created_by, jira_organization)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
       [req.params.id, test_case_id || null, execution_run_id || null, title.trim(), severity || 'medium',
-       steps_to_reproduce || null, expected || null, actual || null, notes || null, req.userId]
+       steps_to_reproduce || null, expected || null, actual || null, notes || null, req.userId,
+       post_to_jira ? (jira?.organization?.trim() || null) : null]
     )
     await query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])
-    res.status(201).json(rows[0])
+    let bug = rows[0]
+
+    if (post_to_jira) {
+      try {
+        const issue = await createJiraIssue({
+          projectKey: jira?.projectKey,
+          summary: bug.title,
+          description: buildJiraDescription(bug),
+          priorityName: SEVERITY_TO_PRIORITY[bug.severity],
+        })
+        const { rows: updated } = await query(
+          `UPDATE bugs SET jira_issue_key=$1, jira_issue_url=$2 WHERE id=$3 RETURNING *`,
+          [issue.key, issue.url, bug.id]
+        )
+        bug = updated[0]
+
+        if (jira?.image) {
+          try {
+            await attachImageToJiraIssue(issue.key, jira.image)
+          } catch (attachErr) {
+            bug = { ...bug, jira_error: `Posted to JIRA (${issue.key}), but the image failed to attach: ${attachErr.message}` }
+          }
+        }
+      } catch (e) {
+        bug = { ...bug, jira_error: e.message }
+      }
+    }
+
+    res.status(201).json(bug)
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
