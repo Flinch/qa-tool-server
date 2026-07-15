@@ -103,17 +103,27 @@ router.get('/:runId', async (req, res) => {
       ORDER BY tc.created_at
     `, [req.params.runId])
 
+    // test_case_count (current suite membership) is separate from tr.total
+    // (how many tests the *last run* actually covered) — the two can drift
+    // if suite membership changed since the last run. Both are exposed so
+    // the client can decide which one a given number means (e.g. "total
+    // tests in this run" wants test_case_count even for a suite that
+    // hasn't executed yet, not the null-until-run tr.total).
     const { rows: suites } = await query(`
       SELECT es.id AS execution_suite_id, es.suite_id, es.latest_test_run_id,
         s.name AS suite_name, s.slug AS suite_slug,
+        COUNT(atc.id)::int AS test_case_count,
         tr.status AS latest_status, tr.total, tr.passed, tr.failed, tr.skipped,
         tr.duration_ms, tr.report_url, tr.github_run_url,
         tr.started_at AS latest_started_at, tr.completed_at AS latest_completed_at,
         tr.error_message AS latest_error_message
       FROM execution_run_suites es
       JOIN automation_suites s ON s.id = es.suite_id
+      LEFT JOIN automated_test_cases atc ON atc.suite_id = s.id
       LEFT JOIN test_runs tr ON tr.id = es.latest_test_run_id
       WHERE es.execution_run_id = $1
+      GROUP BY es.id, s.name, s.slug, tr.status, tr.total, tr.passed, tr.failed, tr.skipped,
+        tr.duration_ms, tr.report_url, tr.github_run_url, tr.started_at, tr.completed_at, tr.error_message
       ORDER BY s.name
     `, [req.params.runId])
 
