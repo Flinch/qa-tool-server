@@ -33,16 +33,21 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps
 
+      # AI-generated specs for a suite live in tests/generated/<slug>/, separate
+      # from the hand-written tests/<slug>/ folder — a suite run has to check
+      # both or generated tests are silently invisible to it. Passing a path
+      # that has no matching files is safe (Playwright just finds 0 tests for
+      # that arg, confirmed locally), so no existence check is needed here.
       - name: Determine suite
         id: suite
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "slug=${{ inputs.suite_slug }}" >> "$GITHUB_OUTPUT"
-            echo "path=tests/${{ inputs.suite_slug }}" >> "$GITHUB_OUTPUT"
+            SLUG="${{ inputs.suite_slug }}"
           else
-            echo "slug=smoke" >> "$GITHUB_OUTPUT"
-            echo "path=tests/smoke" >> "$GITHUB_OUTPUT"
+            SLUG="smoke"
           fi
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+          echo "path=tests/$SLUG tests/generated/$SLUG" >> "$GITHUB_OUTPUT"
 
       - name: Run Playwright tests
         continue-on-error: true
