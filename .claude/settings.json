@@ -39,7 +39,12 @@
       "mcp__playwright-test__generator_setup_page",
       "mcp__playwright-test__generator_write_test",
       "mcp__playwright-test__planner_setup_page",
-      "mcp__playwright-test__planner_save_plan"
+      "mcp__playwright-test__planner_save_plan",
+      "mcp__maestro__list_devices",
+      "mcp__maestro__inspect_screen",
+      "mcp__maestro__take_screenshot",
+      "mcp__maestro__run",
+      "mcp__maestro__cheat_sheet"
     ]
   }
 }

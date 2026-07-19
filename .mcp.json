@@ -6,6 +6,13 @@
         "playwright",
         "run-test-mcp-server"
       ]
+    },
+    "maestro": {
+      "command": "maestro",
+      "args": [
+        "mcp",
+        "--no-viewer"
+      ]
     }
   }
 }
