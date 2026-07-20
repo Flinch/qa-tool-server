@@ -1,0 +1,21 @@
+# scenario: Subtract two single-digit numbers
+# spec: specs/mobile-mobile-smoke-android.md
+appId: com.sec.android.app.popupcalculator
+---
+- launchApp:
+    clearState: true
+# 1. Tap "9"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_09"
+# 2. Tap "−"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_sub"
+# 3. Tap "4"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_04"
+# 4. Tap "=" — result field shows 5
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_equal"
+- assertVisible:
+    id: "com.sec.android.app.popupcalculator:id/calc_edt_formula"
+    text: "5.*"

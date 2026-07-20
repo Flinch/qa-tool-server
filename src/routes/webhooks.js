@@ -99,7 +99,7 @@ router.post('/test-runs', verifySecret, async (req, res) => {
 router.get('/generation-payload/:correlationId', verifySecret, async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT gr.*, s.slug AS suite_slug
+      `SELECT gr.*, s.slug AS suite_slug, s.platform AS suite_platform
        FROM generation_runs gr
        JOIN automation_suites s ON s.id = gr.suite_id
        WHERE gr.correlation_id = $1`,
@@ -114,12 +114,21 @@ router.get('/generation-payload/:correlationId', verifySecret, async (req, res) 
       broadcast(run.project_id, 'generation_progress', { generation_run_id: run.id, status: 'exploring' })
     }
 
+    // target_url (Playwright's baseURL) only makes sense for the web
+    // pipeline. Mobile has no equivalent binary-management yet (a known,
+    // flagged gap) — app_id is a stand-in env var default for now, same
+    // category as target_url's own hardcoded fallback.
+    const platformFields = run.suite_platform === 'web'
+      ? { target_url: process.env.TARGET_URL || 'https://service-desk-roan.vercel.app' }
+      : { app_id: process.env.MOBILE_TARGET_APP_ID || 'com.sec.android.app.popupcalculator' }
+
     res.json({
       project_id: run.project_id,
       suite_id: run.suite_id,
       suite_slug: run.suite_slug,
-      target_url: process.env.TARGET_URL || 'https://service-desk-roan.vercel.app',
-      plans: await exportPlansForTestCases(run.project_id, run.test_case_ids),
+      platform: run.suite_platform,
+      ...platformFields,
+      plans: await exportPlansForTestCases(run.project_id, run.test_case_ids, run.suite_platform),
     })
   } catch (e) {
     res.status(500).json({ error: e.message })

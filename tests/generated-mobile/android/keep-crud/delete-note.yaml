@@ -1,0 +1,30 @@
+# scenario: Delete a note and confirm it no longer appears in search
+# spec: specs/mobile-keep-crud.md
+#
+# Independent test: creates its own note, then deletes it. Selection mode's
+# overflow menu (top toolbar) is a standard Android toolbar, unlike the
+# Compose FAB — confirmed reliable via id/point, not the flaky FAB pattern.
+appId: com.google.android.keep
+---
+- launchApp
+- tapOn:
+    point: "85%,85%"
+- tapOn: "Text"
+- tapOn:
+    id: "com.google.android.keep:id/editable_title"
+- inputText: "QA-TEST-delete-scenario"
+- back
+- back
+- tapOn:
+    id: "com.google.android.keep:id/toolbar"
+- inputText: "QA-TEST-delete-scenario"
+- longPressOn:
+    id: "com.google.android.keep:id/browse_text_note"
+- tapOn:
+    point: "93%,7%"
+- tapOn: "Delete"
+# Deleting from selection mode returns to this same active search results
+# view (not the plain list) — re-tapping/re-typing the search here was
+# redundant and failed for real (the search field isn't the same "toolbar"
+# element in this state). The empty-results view is already the proof.
+- assertVisible: "No matching notes"

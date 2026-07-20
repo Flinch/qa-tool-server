@@ -42,7 +42,11 @@ export function planFilename(tc) {
 // One test case -> one plan document. Kept deliberately close to the shape
 // the planner agent itself produces (scenario heading, steps, expectations)
 // so verifying OUR plans feels identical to it as refining its own.
-export function buildPlanMarkdown(tc) {
+//
+// `platform` picks the starting-state line: web plans assume the `generated`
+// Playwright project's authenticated storageState; mobile has no equivalent
+// concept, just a freshly-launched app.
+export function buildPlanMarkdown(tc, platform = 'web') {
   const steps = Array.isArray(tc.steps) ? tc.steps.filter(s => String(s).trim()) : []
 
   const lines = []
@@ -58,9 +62,9 @@ export function buildPlanMarkdown(tc) {
   lines.push('')
   lines.push(`## Scenario: TC-${tc.id} — ${tc.title}`)
   lines.push('')
-  // Matches the seed spec: the `generated` Playwright project starts
-  // authenticated via storageState, so plans assume a logged-in start.
-  lines.push('Starting state: authenticated (storageState), on the dashboard.')
+  lines.push(platform === 'web'
+    ? 'Starting state: authenticated (storageState), on the dashboard.'
+    : 'Starting state: app freshly launched.')
   lines.push('')
   lines.push('Steps:')
   if (steps.length === 0) {
@@ -86,7 +90,7 @@ export function buildPlanMarkdown(tc) {
 // edited or un-flagged in the minutes between clicking Generate and CI
 // fetching the payload, and exporting a stale/ineligible TC would waste an
 // expensive agent run on it.
-export async function exportPlansForTestCases(projectId, testCaseIds) {
+export async function exportPlansForTestCases(projectId, testCaseIds, platform = 'web') {
   if (!Array.isArray(testCaseIds) || testCaseIds.length === 0) return []
 
   const { rows } = await query(
@@ -100,6 +104,6 @@ export async function exportPlansForTestCases(projectId, testCaseIds) {
   return rows.map(tc => ({
     tc_id: tc.id,
     filename: planFilename(tc),
-    markdown: buildPlanMarkdown(tc),
+    markdown: buildPlanMarkdown(tc, platform),
   }))
 }

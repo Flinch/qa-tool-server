@@ -90,3 +90,38 @@ stage catches it.
   policy above: `test.fixme()` with a `// POSSIBLE REGRESSION:` comment, never
   a rewritten assertion.
 - Apply the minimal fix. Never refactor passing tests during a heal.
+
+## Mobile tests (Maestro)
+
+Everything above this section is the web (Playwright) pipeline. Native
+mobile tests are a separate pipeline using
+[maestro-test-planner](.claude/agents/maestro-test-planner.md),
+[maestro-test-generator](.claude/agents/maestro-test-generator.md), and
+[maestro-test-healer](.claude/agents/maestro-test-healer.md) against the
+`maestro` MCP server (registered in `.mcp.json`) instead of `playwright-test`.
+Full detail and the real evidence behind the rules below is in
+`mobile-spike/FINDINGS.md`.
+
+- Generated flows: `tests/generated-mobile/<platform>/<suite-slug>/<scenario-name>.yaml`
+- Test plans: `specs/mobile-<suite-slug>.md`
+- Every selector — tap, type, or assert — must be confirmed against a real
+  `inspect_screen` call before it's used, never authored from a screenshot or
+  from what "should" be there. Two real, reproduced failure modes make this
+  non-negotiable: hidden/extra text (Maestro's raw hierarchy can carry text
+  not visible on screen) and full-string regex matching (`text: "4"` will
+  not match real text `"4 Calculation result"` — needs `text: "4.*"`).
+- Prefer `id:`-scoped selectors (real `resource-id` from `inspect_screen`)
+  over bare `text:` assertions whenever there's any chance of the same text
+  appearing elsewhere on screen (numeric keypads, counters, repeated
+  labels). An unscoped `assertVisible: "4"` will false-positive against a
+  permanently-visible "4" digit key even if the actual result never updated
+  — this was reproduced, not hypothetical, in the Phase 0 spike.
+- Behavior mismatch policy is the same idea as the web pipeline's, adapted
+  to YAML (no `test.fixme()` equivalent exists): add a `# POSSIBLE
+  REGRESSION: <expected vs. actual>` comment above the mismatched step, and
+  add `tags: [flagged-regression]` to the flow's frontmatter so it's
+  committed and reviewable but excluded from normal runs.
+- No AI-generated code should exist outside `tests/generated-mobile/` —
+  hand-written mobile flows (if any) get their own top-level folder, same
+  separation the web pipeline already keeps between `tests/<slug>/` and
+  `tests/generated/<slug>/`.

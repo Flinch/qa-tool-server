@@ -1,0 +1,18 @@
+# scenario: Percentage of a single-digit number
+# spec: specs/mobile-mobile-smoke-android.md
+appId: com.sec.android.app.popupcalculator
+---
+- launchApp:
+    clearState: true
+# 1. Tap "5"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_05"
+# 2. Tap "%"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_percentage"
+# 3. Tap "=" — result field shows 0.05
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_equal"
+- assertVisible:
+    id: "com.sec.android.app.popupcalculator:id/calc_edt_formula"
+    text: "0.05.*"

@@ -15,9 +15,15 @@ const anyProjectMember = [requireAuth, requireProjectAccess]
 router.get('/suites', ...anyProjectMember, async (req, res) => {
   try {
     await reconcileStaleRuns(req.params.id)
+    // test_case_count prefers the latest run's actual total over the
+    // automated_test_cases roster — that roster is insert-only (webhooks.js
+    // adds a title the first time it's seen but never removes one for a
+    // renamed/deleted test), so it only ever grows and drifts from reality.
+    // The last real run's count doesn't have that problem. Roster count is
+    // still the fallback for a suite that's never actually run yet.
     const { rows } = await query(`
       SELECT s.*,
-        COUNT(atc.id)::int AS test_case_count,
+        COALESCE(latest.total, COUNT(atc.id)::int) AS test_case_count,
         latest.status AS latest_status,
         latest.passed AS latest_passed,
         latest.failed AS latest_failed,
@@ -33,7 +39,7 @@ router.get('/suites', ...anyProjectMember, async (req, res) => {
         LIMIT 1
       ) latest ON true
       WHERE s.project_id = $1
-      GROUP BY s.id, latest.status, latest.passed, latest.failed, latest.started_at, latest.completed_at, latest.error_message
+      GROUP BY s.id, latest.total, latest.status, latest.passed, latest.failed, latest.started_at, latest.completed_at, latest.error_message
       ORDER BY latest.completed_at DESC NULLS LAST, s.name
     `, [req.params.id])
     res.json(rows)

@@ -1,0 +1,37 @@
+# scenario: Update an existing note's content
+# spec: specs/mobile-keep-crud.md
+#
+# Independent test (per AGENTS.md's test-independence convention, applied to
+# mobile too): creates its own note first via the FAB speed-dial's "Text"
+# option, then edits it, rather than depending on create-note.yaml having
+# run first.
+appId: com.google.android.keep
+---
+- launchApp
+- tapOn:
+    point: "85%,85%"
+- tapOn: "Text"
+- tapOn:
+    id: "com.google.android.keep:id/editable_title"
+- inputText: "QA-TEST-update-scenario"
+- tapOn:
+    id: "com.google.android.keep:id/edit_note_text"
+- inputText: "Original content."
+- back
+- back
+# Open it back up via search rather than assuming its position in the grid.
+- tapOn:
+    id: "com.google.android.keep:id/toolbar"
+- inputText: "QA-TEST-update-scenario"
+# A bare text tapOn here is ambiguous — it matched the search bar's own
+# typed query instead of the result card below it, confirmed by a real
+# failed run. Scoping to the result card's real resource-id fixes it.
+- tapOn:
+    id: "com.google.android.keep:id/browse_text_note"
+- tapOn:
+    id: "com.google.android.keep:id/edit_note_text"
+- inputText: " [UPDATED]"
+- back
+- back
+- assertVisible:
+    text: "Original content. \\[UPDATED\\]"

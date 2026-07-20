@@ -1,0 +1,144 @@
+// Runs `maestro test` for real against whatever device is connected, parses
+// its JUnit output, and POSTs into the exact same webhook contract
+// .github/scripts/report-results.js already uses for the web pipeline
+// (POST /webhooks/test-runs) — proving the endpoint really is hosting-
+// agnostic: it doesn't matter whether the run happened locally (this
+// script), a self-hosted runner, Device Farm, or Maestro Cloud, as long as
+// something produces this same payload shape.
+//
+// Local-only for now, run by hand — not wired into a GitHub Actions
+// workflow yet (see DECISIONS.md, Phase 6: the CI/hosting layer is
+// deliberately deferred).
+//
+// Usage:
+//   node scripts/report-mobile-results.js <flows-dir> <suite-slug> <project-id>
+//
+// Required env: WEBHOOK_BASE_URL, WEBHOOK_SECRET (same as the web pipeline's
+// GitHub Actions secrets — read from a local .env for manual runs).
+
+import 'dotenv/config'
+import fs from 'fs'
+import path from 'path'
+import { execFileSync } from 'child_process'
+import { XMLParser } from 'fast-xml-parser'
+import https from 'https'
+import http from 'http'
+
+const [, , flowsDir, suiteSlug, projectIdArg] = process.argv
+const { WEBHOOK_BASE_URL, WEBHOOK_SECRET } = process.env
+
+if (!flowsDir || !suiteSlug || !projectIdArg) {
+  console.error('Usage: node scripts/report-mobile-results.js <flows-dir> <suite-slug> <project-id>')
+  process.exit(1)
+}
+if (!WEBHOOK_BASE_URL || !WEBHOOK_SECRET) {
+  console.error('WEBHOOK_BASE_URL and WEBHOOK_SECRET are required')
+  process.exit(1)
+}
+
+const projectId = Number(projectIdArg)
+const junitPath = path.join('/tmp', `maestro-${suiteSlug}-results.xml`)
+
+function sendWebhook(payload) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(payload)
+    const url = new URL(`${WEBHOOK_BASE_URL}/test-runs`)
+    const lib = url.protocol === 'https:' ? https : http
+    const req = lib.request(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-webhook-secret': WEBHOOK_SECRET,
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, res => {
+      let data = ''
+      res.on('data', c => data += c)
+      res.on('end', () => {
+        console.log(`Webhook responded ${res.statusCode}: ${data}`)
+        res.statusCode >= 400 ? reject(new Error(`Webhook returned ${res.statusCode}: ${data}`)) : resolve(JSON.parse(data))
+      })
+    })
+    req.on('error', reject)
+    req.write(body)
+    req.end()
+  })
+}
+
+// Real status values confirmed by hand against this session's device:
+// passing testcases are self-closing with status="SUCCESS"; failing ones
+// have status="ERROR" (not "FAILED") and a <failure> child with the message
+// as text content. No <skipped> case observed yet — Maestro's tag exclusion
+// appears to omit excluded flows from the report entirely rather than
+// marking them skipped, but mapped defensively below in case that's
+// version-dependent.
+function statusToResult(status) {
+  if (status === 'SUCCESS') return 'passed'
+  if (status === 'SKIPPED') return 'skipped'
+  return 'failed'
+}
+
+console.log(`Running maestro test against ${flowsDir}...`)
+try {
+  execFileSync('maestro', ['test', flowsDir, '--format', 'junit', '--output', junitPath], {
+    stdio: 'inherit',
+    env: { ...process.env, PATH: `${process.env.HOME}/.maestro/bin:/opt/homebrew/opt/openjdk/bin:${process.env.PATH}` },
+  })
+} catch {
+  // maestro test exits non-zero when flows fail — that's expected and not a
+  // script error; the JUnit file is still written. Only a missing output
+  // file below means something actually went wrong (e.g. no device).
+}
+
+if (!fs.existsSync(junitPath)) {
+  const message = `maestro test did not produce a results file at ${junitPath} — no device connected, or the run crashed before producing output`
+  console.error(message)
+  await sendWebhook({
+    correlation_id: null,
+    project_id: projectId,
+    suite_slug: suiteSlug,
+    trigger_type: 'manual',
+    status: 'failed',
+    error_message: message,
+    results: [],
+  }).catch(err => console.error('Webhook request failed:', err.message))
+  process.exit(1)
+}
+
+const xml = fs.readFileSync(junitPath, 'utf-8')
+const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_', textNodeName: '#text' })
+const parsed = parser.parse(xml)
+
+const suite = parsed.testsuites?.testsuite
+const rawCases = suite ? (Array.isArray(suite.testcase) ? suite.testcase : suite.testcase ? [suite.testcase] : []) : []
+
+const results = rawCases.map(tc => {
+  const status = tc['@_status']
+  const failureNode = tc.failure
+  const errorMessage = failureNode != null
+    ? (typeof failureNode === 'string' ? failureNode : failureNode['#text'] || null)
+    : null
+  return {
+    test_title: tc['@_name'],
+    status: statusToResult(status),
+    duration_ms: tc['@_time'] != null ? Math.round(Number(tc['@_time']) * 1000) : null,
+    error_message: errorMessage,
+  }
+})
+
+const payload = {
+  correlation_id: null, // manual local run, not tied to a pending CI-dispatched row
+  project_id: projectId,
+  suite_slug: suiteSlug,
+  trigger_type: 'manual',
+  status: 'completed',
+  total: results.length,
+  passed: results.filter(r => r.status === 'passed').length,
+  failed: results.filter(r => r.status === 'failed').length,
+  skipped: results.filter(r => r.status === 'skipped').length,
+  duration_ms: suite?.['@_time'] != null ? Math.round(Number(suite['@_time']) * 1000) : null,
+  results,
+}
+
+console.log('Reporting:', JSON.stringify(payload, null, 2))
+await sendWebhook(payload)

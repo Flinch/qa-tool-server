@@ -366,6 +366,15 @@ CREATE INDEX IF NOT EXISTS idx_requirement_documents_project ON requirement_docu
 -- dependency).
 ALTER TABLE requirements ADD COLUMN IF NOT EXISTS
   document_id INTEGER REFERENCES requirement_documents(id) ON DELETE SET NULL;
+
+-- Mobile test automation (Phase 6, see DECISIONS.md). Additive: existing
+-- suites default to 'web' with no engine set, so nothing already in
+-- automation_suites changes meaning. 'engine' is nullable — a 'web' suite
+-- has always implicitly meant Playwright and doesn't need it stated.
+ALTER TABLE automation_suites ADD COLUMN IF NOT EXISTS platform TEXT NOT NULL DEFAULT 'web'
+  CHECK (platform IN ('web','ios','android'));
+ALTER TABLE automation_suites ADD COLUMN IF NOT EXISTS engine TEXT
+  CHECK (engine IN ('playwright','maestro','appium'));
 `
 
 async function migrate() {

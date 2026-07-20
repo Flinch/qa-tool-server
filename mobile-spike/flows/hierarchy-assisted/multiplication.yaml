@@ -1,0 +1,15 @@
+appId: com.sec.android.app.popupcalculator
+---
+- launchApp:
+    clearState: true
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_06"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_mul"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_07"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_equal"
+- assertVisible:
+    id: "com.sec.android.app.popupcalculator:id/calc_edt_formula"
+    text: "42.*"

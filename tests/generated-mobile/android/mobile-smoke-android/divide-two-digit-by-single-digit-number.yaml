@@ -1,0 +1,24 @@
+# scenario: Divide a two-digit number by a single-digit number
+# spec: specs/mobile-mobile-smoke-android.md
+appId: com.sec.android.app.popupcalculator
+---
+- launchApp:
+    clearState: true
+# 1. Tap "3"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_03"
+# 2. Tap "6"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_06"
+# 3. Tap "÷"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_div"
+# 4. Tap "6"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_06"
+# 5. Tap "=" — result field shows 6
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_equal"
+- assertVisible:
+    id: "com.sec.android.app.popupcalculator:id/calc_edt_formula"
+    text: "6.*"
