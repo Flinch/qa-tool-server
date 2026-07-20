@@ -1,0 +1,49 @@
+# AWS Device Farm Custom Test Environment spec for running Maestro flows.
+#
+# NOT YET VALIDATED against a live Device Farm run — no AWS account existed
+# during this spike (see mobile-spike/FINDINGS.md). Written carefully against
+# AWS's documented Custom Test Environment format, but the framework/upload
+# enum values below (APPIUM_NODE_TEST_SPEC etc., set in device-farm-run.js)
+# and this file's exact behavior on Device Farm's host image should be
+# double-checked against current AWS docs the first time this actually runs
+# — see mobile-spike/AWS-SETUP-RUNBOOK.md step 5.
+#
+# Device Farm's Custom Test Environment works by choosing any Appium
+# framework as the nominal "test type" and then completely overriding its
+# behavior with this spec — the framework choice doesn't matter since none of
+# its default runner is used, only these phases are.
+
+version: 0.1
+
+phases:
+  install:
+    commands:
+      # Device Farm's host image is Amazon Linux based and doesn't ship a
+      # JDK. Try Amazon Linux's package manager first, fall back to apt in
+      # case the underlying image changes.
+      - sudo yum install -y java-17-amazon-corretto-headless || sudo apt-get update && sudo apt-get install -y openjdk-17-jre-headless
+      - curl -Ls "https://get.maestro.mobile.dev" | bash
+      - export PATH="$PATH:$HOME/.maestro/bin"
+      - maestro --version
+
+  pre_test:
+    commands:
+      # $DEVICEFARM_DEVICE_UDID is set by Device Farm for the device under
+      # test; adb is already configured to talk to it in this environment.
+      - adb devices -l
+
+  test:
+    commands:
+      # $DEVICEFARM_TEST_PACKAGE_PATH is where the uploaded test package
+      # (the flows/ directory, zipped) is extracted. Maestro's own JUnit
+      # reporter writes a report we can convert to this project's existing
+      # webhook contract in the post_test phase.
+      - export PATH="$PATH:$HOME/.maestro/bin"
+      - maestro test "$DEVICEFARM_TEST_PACKAGE_PATH/flows" --format junit --output "$DEVICEFARM_LOG_DIR/maestro-results.xml" || true
+
+  post_test:
+    commands:
+      - echo "Maestro run complete, results at $DEVICEFARM_LOG_DIR/maestro-results.xml"
+
+artifacts:
+  - $DEVICEFARM_LOG_DIR

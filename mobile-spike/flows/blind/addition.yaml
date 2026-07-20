@@ -1,0 +1,9 @@
+appId: com.sec.android.app.popupcalculator
+---
+- launchApp:
+    clearState: true
+- tapOn: "2"
+- tapOn: "+"
+- tapOn: "2"
+- tapOn: "="
+- assertVisible: "4"

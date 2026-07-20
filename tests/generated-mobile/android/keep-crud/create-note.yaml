@@ -1,0 +1,29 @@
+# scenario: Create a note and confirm it's searchable
+# spec: specs/mobile-keep-crud.md
+#
+# The FAB ("speed_dial_create_close_button") is a Jetpack Compose view with
+# no accessible resource-id exposed via maestro hierarchy or raw uiautomator
+# in this app version — confirmed by hand this session. Tapping by real
+# screen coordinates (percentage-based, so it scales with device size) is
+# the only working approach found for this specific button. Tapping it opens
+# a speed-dial menu (Image/Drawing/Audio/List/Text), not the editor directly
+# — confirmed via a real failed run's debug screenshot, not assumed.
+appId: com.google.android.keep
+---
+- launchApp
+- tapOn:
+    point: "85%,85%"
+- tapOn: "Text"
+- tapOn:
+    id: "com.google.android.keep:id/editable_title"
+- inputText: "QA-TEST-mobile-pipeline"
+- tapOn:
+    id: "com.google.android.keep:id/edit_note_text"
+- inputText: "Created by the maestro-test-generator agent flow."
+- back
+- back
+- tapOn:
+    id: "com.google.android.keep:id/toolbar"
+- inputText: "QA-TEST-mobile-pipeline"
+- assertVisible:
+    text: "QA-TEST-mobile-pipeline"

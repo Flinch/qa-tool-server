@@ -9,6 +9,14 @@ const GITHUB_WORKFLOW_ID = process.env.GITHUB_WORKFLOW_ID // e.g. "playwright.ym
 // Separate workflow file for test GENERATION (agents -> PR). Kept as its own
 // env var so the two pipelines can evolve independently.
 const GITHUB_GENERATION_WORKFLOW_ID = process.env.GITHUB_GENERATION_WORKFLOW_ID // e.g. "generate-tests.yml"
+// Mobile generation runs on a self-hosted runner against a real device, so it
+// gets its own workflow file rather than sharing the web one.
+const GITHUB_MOBILE_GENERATION_WORKFLOW_ID = process.env.GITHUB_MOBILE_GENERATION_WORKFLOW_ID // e.g. "generate-mobile-tests.yml"
+// workflow_dispatch only finds a workflow file that already exists on the
+// ref being dispatched against. Defaults to 'master' like every other
+// dispatch here; override while the mobile workflow file lives on a branch
+// that hasn't merged yet.
+const GITHUB_MOBILE_GENERATION_REF = process.env.GITHUB_MOBILE_GENERATION_REF || 'master'
 
 // A run that's been sitting in pending/running this long almost certainly
 // means CI never reported back (crashed runner, workflow misconfigured,
@@ -46,6 +54,15 @@ export async function triggerSuiteRun({ projectId, suiteId, userId }) {
   )
   if (!suiteRows[0]) throw new TriggerError(404, 'Suite not found')
   const suite = suiteRows[0]
+
+  // GITHUB_WORKFLOW_ID always points at the web Playwright workflow — there's
+  // no mobile equivalent wired up yet (see DECISIONS.md, Phase 6). Without
+  // this check, running a mobile suite would silently dispatch the web
+  // workflow against a suite_slug it has no tests for, reporting back a
+  // misleading empty 0-test run instead of a clear error.
+  if (suite.platform !== 'web') {
+    throw new TriggerError(400, `Running "${suite.platform}" suites isn't wired up yet — only web suites can be run from here`)
+  }
 
   const correlationId = crypto.randomUUID()
 
@@ -98,7 +115,7 @@ export async function triggerSuiteRun({ projectId, suiteId, userId }) {
 // GET /api/webhooks/generation-payload/:correlationId to fetch the plans.
 // Single source of truth stays in Postgres; CI pulls what it needs.
 export async function triggerGenerationRun({ projectId, suiteId, testCaseIds, userId }) {
-  if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO || !GITHUB_GENERATION_WORKFLOW_ID) {
+  if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
     throw new TriggerError(500, 'Test generation workflow is not configured on the server')
   }
   if (!Array.isArray(testCaseIds) || testCaseIds.length === 0) {
@@ -117,6 +134,14 @@ export async function triggerGenerationRun({ projectId, suiteId, testCaseIds, us
     [suiteId, projectId]
   )
   if (!suiteRows[0]) throw new TriggerError(404, 'Suite not found')
+
+  // Route to the right generation workflow by platform — each engine's agents
+  // and target (URL vs. device+app) are different enough to need their own
+  // CI workflow, same reasoning as triggerSuiteRun's per-platform dispatch.
+  const workflowId = suiteRows[0].platform === 'web' ? GITHUB_GENERATION_WORKFLOW_ID : GITHUB_MOBILE_GENERATION_WORKFLOW_ID
+  if (!workflowId) {
+    throw new TriggerError(500, `No generation workflow configured for "${suiteRows[0].platform}" suites`)
+  }
 
   // Validate the selection server-side: every id must be a real TC in THIS
   // project AND flagged as an automation candidate. Never trust the client's
@@ -149,7 +174,7 @@ export async function triggerGenerationRun({ projectId, suiteId, testCaseIds, us
   )
 
   const ghRes = await fetch(
-    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${GITHUB_GENERATION_WORKFLOW_ID}/dispatches`,
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${workflowId}/dispatches`,
     {
       method: 'POST',
       headers: {
@@ -158,7 +183,7 @@ export async function triggerGenerationRun({ projectId, suiteId, testCaseIds, us
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        ref: 'master',
+        ref: suiteRows[0].platform === 'web' ? 'master' : GITHUB_MOBILE_GENERATION_REF,
         inputs: {
           correlation_id: correlationId,
         },

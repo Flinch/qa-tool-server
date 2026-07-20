@@ -1,0 +1,21 @@
+# scenario: Multiply two single-digit numbers
+# spec: specs/mobile-mobile-smoke-android.md
+appId: com.sec.android.app.popupcalculator
+---
+- launchApp:
+    clearState: true
+# 1. Tap "6"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_06"
+# 2. Tap "×"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_mul"
+# 3. Tap "8"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_08"
+# 4. Tap "=" — result field shows 48
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_equal"
+- assertVisible:
+    id: "com.sec.android.app.popupcalculator:id/calc_edt_formula"
+    text: "48.*"

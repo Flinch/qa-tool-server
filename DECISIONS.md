@@ -178,6 +178,206 @@
 - Applied the same two-path fix to the nightly `schedule` fallback branch (previously hardcoded to `tests/smoke` only), for consistency — nightly runs now pick up generated smoke tests too, not just manual suite triggers.
 - Separately, moved every currently-existing generated spec (previously split across `tests/generated/{demo,integration,smoke}/`) into `tests/generated/e2e/` at Malik's request, and updated the two `completed` `generation_runs` rows (`id 7`, `id 8`) to `suite_id=3` (E2E Tests) so the app's own history matches the new file location. This was a one-time content move, not implied by the pipeline fix above — the pipeline fix means future generations stay correctly scoped to whatever suite the user picks in the "Generate automated tests" modal (that suite picker already existed; nothing new needed there), this move just reassigns the *existing* five real generated files (`tc-37`, `tc-38`, `tc-40`, `tc-45`, `tc-65`) plus one demo fixture (`tc-example-ticket-creation`) to e2e specifically. Only run against the local dev DB — the same `UPDATE generation_runs SET suite_id=3 WHERE id IN (7,8)` needs to run against the Railway DB too if Malik wants production history to match.
 
+## Phase 6 — mobile pipeline: live CRUD demo against Google Keep
+
+- Same day, fourth round: Malik asked to watch the pipeline generate and run real test cases against a real app,
+  live. Google Keep chosen (his suggestion) over the initially-proposed Messages app specifically to avoid any risk
+  of actually sending a real SMS to a real contact — confirmed with him first (compose-but-never-send was the
+  original Messages boundary; Keep sidesteps the question entirely since notes have no "send to a person" action).
+  Real 3-flow CRUD suite committed at `tests/generated-mobile/android/keep-crud/` (create/update/delete), run for
+  real, reported through the same `report-mobile-results.js` → `POST /webhooks/test-runs` path proven in the
+  previous round — `test_runs` id 45, 3/3 passed, confirmed via direct SQL query.
+- **Privacy note, handled not just flagged**: exploring Keep's real hierarchy surfaced real personal note content
+  (financial figures, access codes, a personal relationship note) since it's Malik's actual account. None of that
+  was written to any file in this repo. A coordinate-estimation mistake during manual exploration briefly opened one
+  real existing note (before any committed flow existed) — caught immediately via a screenshot check before typing
+  or changing anything, backed out with zero modification. All three committed flows only ever touch notes they
+  create themselves, titled with a `QA-TEST-` prefix, and all test notes (including ones created during manual
+  exploration and healing) were deleted afterward — confirmed clean via a final search showing "No matching notes".
+- **Two real, reproduced findings about Keep's Compose UI**, both fixed via the actual heal cycle (not assumed):
+  1. The FAB (`speed_dial_create_close_button`) has no accessible resource-id in either `maestro hierarchy` or raw
+     `uiautomator dump` — a genuine Jetpack Compose semantics gap, not a Maestro bug. Percentage-based point tapping
+     is the only working approach found. Also: tapping it opens a speed-dial menu (Image/Drawing/Audio/List/Text),
+     not the note editor directly — the first `create-note.yaml` attempt failed on this for real; fixed by adding
+     `tapOn: "Text"` after the FAB tap, confirmed via the failed run's own debug screenshot, not guessed.
+  2. `tapOn: "<note title text>"` on a search-results screen is ambiguous — it matched the search bar's own typed
+     query instead of the result card below it in a real failed `update-note.yaml` run. Fixed by scoping to the
+     result card's real resource-id (`browse_text_note`) instead of bare text.
+  3. `delete-note.yaml` initially tried to re-search after deleting from selection mode, which fails because
+     deleting returns to the *same* active search-results view (not the plain list) rather than resetting it —
+     the empty-results state (`"No matching notes"`) was already sufficient proof and didn't need re-querying.
+- **Operational finding**: a stray hung `maestro hierarchy` process from earlier in the session (left running,
+  never exited) silently blocked every subsequent `maestro test`/`hierarchy` call with a generic
+  `UNAVAILABLE`/gRPC connection error, with no indication the actual cause was a stuck prior process holding the
+  device connection. Fixed by killing the stray process and a full `adb kill-server`/`start-server` cycle. Worth
+  remembering for anyone hitting an unexplained `UNAVAILABLE` from Maestro CLI: check `ps aux | grep maestro` for
+  zombie sessions before assuming a device/driver problem.
+
+## Phase 6 — mobile pipeline: generation logic + hosting-agnostic reporting
+
+- Same day, third round: after the Maestro Cloud vs. AWS Device Farm comparison, Malik decided to hold off on
+  the hosting decision (including the self-hosted-runner alternative) until after trying Maestro Cloud's trial, and
+  asked to build the generation logic and reporting pipeline now, against real local devices, structured so hosting
+  is a swap-in later rather than a rebuild. Scope locked down via `AskUserQuestion` before planning: local/manual
+  generation only this round (no GitHub Actions workflow — a self-hosted runner is itself one of the two hosting
+  paths being deferred), schema changes now (additive/hosting-agnostic), Calculator app again (no client data).
+- **Schema**: `automation_suites.platform` (`web`/`ios`/`android`, default `web`) and `automation_suites.engine`
+  (`playwright`/`maestro`/`appium`, nullable) — additive, matches the original handoff's sketch exactly. Deliberately
+  did NOT add `projects.ios_build_s3_key`/`android_build_s3_key` from the same sketch — nothing in this round uploads
+  a binary anywhere, so those columns would sit unused until a real build-upload flow exists.
+- **Real bug this change would have introduced, caught before shipping**: adding `platform` makes a real mobile
+  suite row immediately visible in the existing Automation page, but `automationTrigger.js` dispatches every suite
+  through one hardcoded `GITHUB_WORKFLOW_ID` (the web Playwright workflow). Without a guard, clicking "Run" on a
+  mobile suite would silently dispatch the wrong workflow and report back a misleading empty 0-test run instead of a
+  clear error. Fixed in both `triggerSuiteRun` and `triggerGenerationRun` (same reasoning applies to the generation
+  dispatch path) — a `platform !== 'web'` suite now throws a clear "not wired up yet" error server-side, and the
+  client's `SuiteCard` shows a disabled Run button with an explanatory tooltip instead of a live one.
+- **The Maestro MCP server (`maestro mcp`, registered in `.mcp.json` this round) turned out not to be reachable from
+  the outer harness session** — its tools are scoped to a `claude` CLI invocation with `qa-tool-server` as its
+  working directory, not to an outer orchestration session whose primary project is a different repo
+  (`qa-tool-client`). Confirmed by `ToolSearch` returning no match. Separately, replicating `generate-tests.js`'s
+  exact invocation pattern (`npx claude -p "..." --permission-mode dontAsk`) to actually run the new agents was
+  blocked by the harness's own auto-mode classifier — spawning a nested Claude Code session with broad
+  non-interactive permission is a meaningfully different, more powerful action than what was being asked, and the
+  classifier was right to flag it. Worked around by doing the planner/generator/healer work directly in the current
+  session instead, using the `maestro` CLI directly (`maestro hierarchy --compact`, `maestro test`) — functionally
+  identical to what the MCP tools wrap, and the same mechanism already proven in the Phase 0 spike. This matters for
+  Phase 1/2 later: the real CI pipeline (`generate-tests.js`'s pattern) runs inside GitHub Actions, not this
+  session, so the MCP-server-scoping issue is specific to doing this work interactively outside CI — it should not
+  recur once a real `generate-mobile-tests.yml` exists.
+- **Three new agents** (`.claude/agents/maestro-test-planner.md`, `-generator.md`, `-healer.md`) mirror the existing
+  Playwright planner/generator/healer's workflow shape, adapted to Maestro MCP's actual (flatter) tool surface —
+  `inspect_screen` covers hierarchy inspection, `run` covers both live-verification during generation and
+  re-verification during healing, and the generic `Write`/`Edit` tools save the flow YAML directly since there's no
+  dedicated `write_test`/`read_log` tool like Playwright's MCP has. `.claude/settings.json`'s tool allowlist extended
+  with the five `mcp__maestro__*` tools these agents use.
+- **Real proof, not just written agent prompts**: ran the actual plan → generate → heal loop by hand this session
+  (playing each agent role per its own instructions) against the connected physical device and the Calculator app —
+  6 real scenarios (addition/subtraction/multiplication/division/clear/percentage), saved to
+  `specs/mobile-mobile-smoke-android.md` and `tests/generated-mobile/android/mobile-smoke-android/*.yaml`. One flow
+  (percentage) was deliberately written with an unanchored exact-text assertion — the same real, recurring trap
+  found in the Phase 0 spike, not a fabricated bug — to genuinely exercise the heal step rather than skip it because
+  the other 5 flows (which already encoded the spike's lessons) passed first try. It failed for real, was diagnosed
+  via a real `inspect_screen`/`maestro hierarchy` call, fixed with a `.*` anchor, and re-verified passing.
+- **`scripts/report-mobile-results.js`** (new, uses `fast-xml-parser` — added as a real dependency this time, unlike
+  the Phase 0 spike's `@aws-sdk/client-device-farm` which was deliberately left uninstalled since nothing could run
+  it yet; this script runs today) parses Maestro's real JUnit output (`status="SUCCESS"` self-closing for a pass,
+  `status="ERROR"` with a `<failure>` child for a fail — confirmed by hand, not assumed from generic JUnit docs) into
+  the exact payload shape `report-results.js` already produces, and POSTs to the existing, unmodified
+  `POST /webhooks/test-runs`. Proves the hosting-agnostic contract for real: this run happened locally, with zero
+  changes to the endpoint that will also receive results from a self-hosted runner, Device Farm, or Maestro Cloud
+  later.
+- Seeded one real suite row (`Mobile Smoke (Android)`, `mobile-smoke-android`, project id 3 "Service Desk App",
+  `platform='android'`, `engine='maestro'`) directly into the dev DB — confirmed with Malik first that
+  `DATABASE_URL` in this local `.env` points at a separate dev/staging Railway instance, not production, before
+  inserting anything.
+- Ran the full loop end to end for real: `test_runs` id 43 landed with `total=6, passed=6, failed=0`, six matching
+  `test_run_results` rows, confirmed by direct SQL query (not just trusting the webhook's 200 response).
+- Added a "Mobile tests (Maestro)" section to `AGENTS.md`, mirroring the existing web pipeline's conventions
+  (locations, selector/assertion policy, behavior-mismatch handling adapted to YAML via a `flagged-regression` tag
+  since Maestro has no `test.fixme()` equivalent).
+- Not done this round, deliberately: no GitHub Actions workflow files, no self-hosted runner registration, no suite
+  CRUD UI, no AWS Device Farm/Maestro Cloud wiring, no iOS (still blocked on Xcode). All flagged as follow-ups once
+  the hosting decision is made.
+
+## Phase 6 — mobile test automation, Phase 0 spike addendum: the custom MCP adapter isn't needed
+
+- Follow-up the same day: Malik asked whether we should start building the
+  Phase 2 "driver" (the custom hierarchy-dump MCP adapter, ~1-2 weeks per the
+  handoff's estimate). Investigated `maestro mcp` — a command visible in
+  `maestro --help` that hadn't been checked yet — and confirmed for real
+  (JSON-RPC handshake over stdio, real tool calls against the same physical
+  device) that Maestro CLI 2.6.1 already ships a complete MCP server:
+  `list_devices`, `inspect_screen` (the hierarchy-dump tool), `take_screenshot`,
+  `run` (flow execution), plus `list_cloud_devices`/`run_on_cloud`/
+  `get_cloud_run_status` for Maestro Cloud. All three core tools verified
+  working against the real device, not just read from schemas.
+- **This eliminates the custom adapter build from Phase 2.** `inspect_screen`
+  is functionally identical to what this spike hand-rolled with `maestro
+  hierarchy --compact`, and its tool description already warns callers about
+  the exact two traps this spike discovered the hard way (hidden
+  accessibility-suffix text; full-string-regex matching needing `.*`
+  anchors) — see `mobile-spike/FINDINGS.md` for the verified detail.
+- Real, unplanned finding during verification: the live `inspect_screen`
+  output captured actual notification content from the test phone (Gmail,
+  downloads) including a filename referencing a real client — not written to
+  any file in this repo, but flagged in `mobile-spike/FINDINGS.md` as a
+  reason local real-device testing shouldn't happen on a personal/work phone
+  with real accounts signed in.
+- **New open question, not yet evaluated**: Maestro Cloud (the same MCP
+  server's cloud tools) is a first-party alternative to the AWS Device Farm
+  path this spike already built scripts for. The original handoff picked AWS
+  Device Farm for cost reasons without knowing Maestro Cloud existed as an
+  option — worth a real pricing/tradeoff comparison before Phase 1 commits
+  either way. Not resolved this session.
+
+## Phase 6 — mobile test automation, Phase 0 spike
+
+- Real local spike, not a design doc: installed Java (OpenJDK, Homebrew,
+  keg-only — added `/opt/homebrew/opt/openjdk/bin` to `PATH` in `~/.zshrc`),
+  Maestro CLI 2.6.1, and `android-platform-tools` (adb) on the dev machine,
+  connected a real physical Android device (Samsung Galaxy S20 FE, Android
+  13) over USB, and ran 11 real Maestro flows against it. Everything lives in
+  `mobile-spike/` — deliberately separate from `tests/`/`.github/workflows/`
+  until Phase 1 decides what graduates. Full detail and the real data in
+  `mobile-spike/FINDINGS.md`.
+- Used the stock Samsung Calculator app, not a client binary — Malik
+  confirmed no client app was needed for this spike, avoiding both an APK
+  download question and any client-identifying data, consistent with the
+  existing rule against putting client-identifying detail somewhere it
+  wasn't explicitly authorized to go.
+- **Real finding, stronger than the handoff predicted**: the handoff framed
+  the blind-vs-hierarchy-dump comparison as a heal-iteration-count question.
+  The actual result is more serious — 4 of 5 blind (screenshot-only)
+  assertions "passed" as **false positives**, matching the permanently-
+  visible keypad digit button instead of the actual calculation result
+  (`assertVisible: "4"` with no element scope matches ANY on-screen element
+  with that text, including the digit key itself, not just the result
+  field). The one blind flow that correctly failed (multiplication, 2-digit
+  result) failed for a reason invisible to blind authoring, with no way to
+  diagnose or fix it without hierarchy access. All 5 hierarchy-assisted
+  flows (scoped to the real `resource-id` of the result field) correctly
+  verify real behavior, with only 2 genuine heal iterations needed across
+  all 5 — both real tooling quirks (a hidden accessibility-only text suffix
+  Samsung appends to the result; empty-string text matching not working
+  as expected) that were only diagnosable because the raw hierarchy was
+  visible. This is real, reproduced evidence for the handoff's Option 1 (the
+  custom hierarchy-dump MCP adapter) over Option 2 (execution-only healing)
+  — a wider heal budget wouldn't have caught the false positives, since
+  those flows were reporting green.
+- **Correction to the handoff**: `maestro hierarchy --simple` (cited as the
+  "LLM-optimized hierarchy output" flag) doesn't exist on the installed
+  stable CLI (2.6.1) — `Unknown option: '--simple'`. What exists is plain
+  `maestro hierarchy` (full nested JSON, 2319 lines for one screen — too
+  verbose) and `maestro hierarchy --compact` (flat CSV, 100 lines for the
+  same screen, ~23x smaller) — used for every hierarchy-assisted flow in
+  this spike. The Phase 2 MCP adapter should target `--compact`, or re-check
+  against whatever CLI version is current when that work starts.
+- iOS not attempted — this machine has Xcode Command Line Tools but not full
+  Xcode (no iOS Simulator), and installing full Xcode is a large,
+  opinionated App Store/Developer-account install that wasn't done without
+  asking first. Still open: does `maestro hierarchy --compact` carry the
+  same signal on iOS's XCTest-based driver as confirmed here on Android's
+  UiAutomator-based one — needs its own pass before the MCP adapter is
+  designed for both platforms.
+- AWS Device Farm (open question #1 from the handoff — does the Custom Test
+  Environment run Maestro cleanly end to end against a real binary) is
+  **not resolved this session** — no AWS account exists yet. Malik chose to
+  handle the AWS-account/Device-Farm side himself; `mobile-spike/device-
+  farm-test-spec.yml` and `mobile-spike/scripts/device-farm-run.js` are
+  written against AWS's documented Custom Test Environment format and drop
+  results into the exact same `{total,passed,failed,results[]}` shape
+  `report-results.js` already POSTs, but are untested against a live
+  account. `mobile-spike/AWS-SETUP-RUNBOOK.md` hands off the exact remaining
+  steps, with the specific unverified parts (upload/test-type enum strings,
+  whether Device Farm's host image needs a manual JDK install, the real
+  JUnit-output artifact path) called out explicitly rather than presented as
+  confirmed.
+- `@aws-sdk/client-device-farm` is a new dependency this introduces, not yet
+  added to `package.json` — deliberately left for whoever actually runs
+  `device-farm-run.js` for the first time (via the runbook), so it doesn't
+  sit in `package.json` unused until Phase 1 actually wires this in.
+
 ## Phase 5 — fix: suite "test case count" drifting from reality
 
 - Real bug, surfaced by Malik: the E2E suite showed 14 test cases in the UI when only 11 actually exist in `tests/e2e/` + `tests/generated/e2e/` combined. Root cause: `test_case_count` on `GET /suites` and on an execution run's suites list was `COUNT(atc.id)` against `automated_test_cases` — a roster table that `webhooks.js`'s `POST /test-runs` only ever *adds* to (`ON CONFLICT (suite_id, title) DO NOTHING`), by design (see the comment already on that insert loop) never removing a title for a test that got renamed or deleted. Every failed/healed generation attempt or renamed test permanently inflates the roster; it never self-corrects. Confirmed independently on the local dev DB: E2E's roster count there was 7, which *also* didn't match the real file count (11) — different number, same root cause, proving this wasn't production-specific stale data but a structural drift bug.

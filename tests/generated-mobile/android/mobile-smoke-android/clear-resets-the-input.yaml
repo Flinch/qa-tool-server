@@ -1,0 +1,18 @@
+# scenario: Clear resets the input
+# spec: specs/mobile-mobile-smoke-android.md
+appId: com.sec.android.app.popupcalculator
+---
+- launchApp:
+    clearState: true
+# 1. Tap "7"
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_07"
+# 2. Tap "C" (Clear) — the pre-clear value ("7") must no longer be shown.
+# Not asserting on empty text directly: confirmed during the Phase 0 spike
+# that an empty-string regex match against this element doesn't behave as
+# expected, so absence of the old value is the reliable check.
+- tapOn:
+    id: "com.sec.android.app.popupcalculator:id/calc_keypad_btn_clear"
+- assertNotVisible:
+    id: "com.sec.android.app.popupcalculator:id/calc_edt_formula"
+    text: "7.*"

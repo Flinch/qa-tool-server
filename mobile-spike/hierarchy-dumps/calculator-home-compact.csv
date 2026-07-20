@@ -1,0 +1,100 @@
+
+element_num,depth,attributes,parent_num
+0,0,"",
+1,1,"",0
+2,2,"resource-id=com.android.systemui:id/navigation_bar_frame; bounds=[0,2265][1080,2400]; enabled=true; class=android.widget.FrameLayout; important-for-accessibility=true; enabled=true",1
+3,3,"resource-id=com.android.systemui:id/navigation_bar_view; bounds=[0,2265][1080,2400]; enabled=true; class=android.widget.FrameLayout; important-for-accessibility=true; enabled=true",2
+4,4,"resource-id=com.android.systemui:id/navigation_inflater; bounds=[0,2265][1080,2400]; enabled=true; class=android.widget.FrameLayout; enabled=true",3
+5,5,"resource-id=com.android.systemui:id/horizontal; bounds=[0,2265][1080,2400]; enabled=true; class=android.widget.FrameLayout; enabled=true",4
+6,6,"resource-id=com.android.systemui:id/nav_buttons; bounds=[0,2265][1080,2400]; enabled=true; class=android.widget.FrameLayout; enabled=true",5
+7,7,"resource-id=com.android.systemui:id/ends_group; bounds=[0,2265][1080,2400]; enabled=true; class=android.widget.LinearLayout; enabled=true",6
+8,8,"accessibilityText=Recents; resource-id=com.android.systemui:id/recent_apps; clickable=true; bounds=[118,2265][357,2400]; enabled=true; class=android.widget.ImageView; important-for-accessibility=true; clickable=true; enabled=true",7
+9,8,"accessibilityText=Back; resource-id=com.android.systemui:id/back; clickable=true; bounds=[723,2265][962,2400]; enabled=true; class=android.widget.ImageView; important-for-accessibility=true; clickable=true; enabled=true",7
+10,7,"resource-id=com.android.systemui:id/nav_bar_widget; bounds=[0,2265][1080,2400]; enabled=true; class=android.widget.LinearLayout; enabled=true",6
+11,7,"resource-id=com.android.systemui:id/center_group; bounds=[420,2265][659,2400]; enabled=true; class=android.widget.LinearLayout; enabled=true",6
+12,8,"accessibilityText=Home; resource-id=com.android.systemui:id/home; clickable=true; bounds=[420,2265][659,2400]; enabled=true; class=android.widget.ImageView; important-for-accessibility=true; clickable=true; enabled=true",11
+13,2,"bounds=[0,0][1080,88]; enabled=true; class=android.widget.FrameLayout; important-for-accessibility=true; enabled=true",1
+14,3,"resource-id=com.android.systemui:id/status_bar_launch_animation_container; bounds=[0,0][1080,88]; enabled=true; class=android.widget.FrameLayout; enabled=true",13
+15,3,"resource-id=com.android.systemui:id/container; bounds=[0,0][1080,88]; enabled=true; class=android.widget.FrameLayout; enabled=true",13
+16,3,"resource-id=com.android.systemui:id/status_bar_container; bounds=[0,0][1080,88]; enabled=true; class=android.widget.FrameLayout; enabled=true",13
+17,4,"resource-id=com.android.systemui:id/status_bar; bounds=[0,0][1080,88]; enabled=true; class=android.widget.FrameLayout; important-for-accessibility=true; enabled=true",16
+18,5,"resource-id=com.android.systemui:id/phone_status_bar_background; bounds=[0,0][1080,88]; enabled=true; class=android.widget.FrameLayout; enabled=true",17
+19,5,"resource-id=com.android.systemui:id/status_bar_area; bounds=[0,34][1080,88]; enabled=true; class=android.widget.FrameLayout; enabled=true",17
+20,6,"resource-id=com.android.systemui:id/status_bar_contents; bounds=[0,34][1080,88]; enabled=true; class=android.widget.RelativeLayout; enabled=true",19
+21,7,"resource-id=com.android.systemui:id/status_bar_left_side_container; bounds=[45,35][501,88]; enabled=true; class=android.widget.FrameLayout; enabled=true",20
+22,8,"resource-id=com.android.systemui:id/status_bar_left_side; bounds=[45,35][501,88]; enabled=true; class=android.widget.LinearLayout; enabled=true",21
+23,9,"resource-id=com.android.systemui:id/left_clock_container; bounds=[45,35][120,88]; enabled=true; class=android.widget.LinearLayout; enabled=true",22
+24,10,"text=8:53; accessibilityText=8:53 p.m.; resource-id=com.android.systemui:id/clock; bounds=[45,35][120,88]; enabled=true; class=android.widget.TextView; important-for-accessibility=true; enabled=true",23
+25,9,"resource-id=com.android.systemui:id/notification_icon_area; bounds=[128,35][501,88]; enabled=true; class=android.widget.FrameLayout; enabled=true",22
+26,10,"resource-id=com.android.systemui:id/notification_icon_area_inner; bounds=[128,35][501,88]; enabled=true; class=android.widget.LinearLayout; enabled=true",25
+27,11,"resource-id=com.android.systemui:id/notificationIcons; bounds=[128,35][501,88]; enabled=true; class=android.widget.FrameLayout; enabled=true",26
+28,12,"accessibilityText=Gmail notification: 50 new messages; bounds=[128,35][175,88]; enabled=true; class=android.widget.ImageView; important-for-accessibility=true; enabled=true",27
+29,12,"accessibilityText=Gmail notification: 50 new messages; bounds=[175,35][222,88]; enabled=true; class=android.widget.ImageView; important-for-accessibility=true; enabled=true",27
+30,12,"accessibilityText=Find Hub notification: Find your offline devices; bounds=[222,35][269,88]; enabled=true; class=android.widget.ImageView; important-for-accessibility=true; enabled=true",27
+31,12,"accessibilityText=Software update notification: Download paused; bounds=[269,35][316,88]; enabled=true; class=android.widget.ImageView; important-for-accessibility=true; enabled=true",27
+32,12,"accessibilityText=Download Manager notification: 4mb1; bounds=[289,35][336,88]; enabled=true; class=android.widget.ImageView; important-for-accessibility=true; enabled=true",27
+33,12,"accessibilityText=Download Manager notification: 1kb; bounds=[289,35][336,88]; enabled=true; class=android.widget.ImageView; important-for-accessibility=true; enabled=true",27
+34,12,"accessibilityText=Download Manager notification: plan-pdf; bounds=[289,35][336,88]; enabled=true; class=android.widget.ImageView; important-for-accessibility=true; enabled=true",27
+35,12,"accessibilityText=Android System notification: Permission requested by Google TV; bounds=[289,35][336,88]; enabled=true; class=android.widget.ImageView; important-for-accessibility=true; enabled=true",27
+37,12,"accessibilityText=Google Play services notification: New sign-in to your account; bounds=[289,35][336,88]; enabled=true; class=android.widget.ImageView; important-for-accessibility=true; enabled=true",27
+37,12,"accessibilityText=Google Play services notification: New sign-in to your account; bounds=[289,35][336,88]; enabled=true; class=android.widget.ImageView; important-for-accessibility=true; enabled=true",27
+38,7,"resource-id=com.android.systemui:id/system_icon_area; bounds=[769,35][1035,88]; enabled=true; class=android.widget.LinearLayout; enabled=true",20
+39,8,"bounds=[769,35][1035,88]; enabled=true; class=android.widget.FrameLayout; enabled=true",38
+40,9,"resource-id=com.android.systemui:id/system_icons; bounds=[769,35][1035,88]; enabled=true; class=android.widget.LinearLayout; enabled=true",39
+41,10,"resource-id=com.android.systemui:id/statusIcons; bounds=[769,35][913,88]; enabled=true; class=android.widget.LinearLayout; enabled=true",40
+42,11,"accessibilityText=Ringer silent.; bounds=[769,42][811,81]; enabled=true; class=android.widget.ImageView; important-for-accessibility=true; enabled=true",41
+43,11,"accessibilityText=Wi-Fi signal full.; resource-id=com.android.systemui:id/wifi_combo; bounds=[814,42][865,81]; enabled=true; class=android.widget.FrameLayout; important-for-accessibility=true; enabled=true",41
+44,12,"resource-id=com.android.systemui:id/wifi_group; bounds=[814,42][865,81]; enabled=true; class=android.widget.LinearLayout; enabled=true",43
+45,13,"resource-id=com.android.systemui:id/wifi_iconset; bounds=[814,42][865,81]; enabled=true; class=android.widget.FrameLayout; enabled=true",44
+46,14,"resource-id=com.android.systemui:id/wifi_activity; bounds=[814,42][865,81]; enabled=true; class=android.widget.ImageView; enabled=true",45
+47,14,"resource-id=com.android.systemui:id/wifi_signal; bounds=[814,42][862,81]; enabled=true; class=android.widget.ImageView; enabled=true",45
+48,11,"resource-id=com.android.systemui:id/mobile_combo; bounds=[865,42][906,81]; enabled=true; class=android.widget.FrameLayout; enabled=true",41
+49,12,"resource-id=com.android.systemui:id/mobile_group; bounds=[865,42][906,81]; enabled=true; class=android.widget.LinearLayout; enabled=true",48
+50,13,"resource-id=com.android.systemui:id/signal_combo; bounds=[865,42][906,81]; enabled=true; class=android.widget.FrameLayout; enabled=true",49
+51,14,"accessibilityText=Phone signal full.; resource-id=com.android.systemui:id/mobile_signal; bounds=[865,42][906,81]; enabled=true; class=android.widget.ImageView; important-for-accessibility=true; enabled=true",50
+52,10,"accessibilityText=Battery charging, 100 percent.; resource-id=com.android.systemui:id/battery; bounds=[913,35][1035,88]; enabled=true; class=android.widget.LinearLayout; important-for-accessibility=true; enabled=true",40
+53,11,"text=100%; resource-id=com.android.systemui:id/battery_percentage_view; bounds=[913,35][1008,88]; enabled=true; class=android.widget.TextView; enabled=true",52
+54,11,"bounds=[1014,44][1035,80]; enabled=true; class=android.widget.ImageView; enabled=true",52
+55,2,"bounds=[1013,418][1080,699]; enabled=true; class=android.widget.FrameLayout; important-for-accessibility=true; enabled=true",1
+56,3,"bounds=[1013,418][1080,699]; enabled=true; class=android.widget.LinearLayout; enabled=true",55
+57,4,"resource-id=android:id/content; bounds=[1013,418][1080,699]; enabled=true; class=android.widget.FrameLayout; enabled=true",56
+58,5,"bounds=[1013,418][1080,699]; enabled=true; class=android.widget.FrameLayout; enabled=true",57
+59,6,"accessibilityText=Edge panels; resource-id=com.samsung.android.app.cocktailbarservice:id/trigger_layout_container; clickable=true; bounds=[1013,418][1080,699]; enabled=true; class=android.widget.RelativeLayout; important-for-accessibility=true; clickable=true; enabled=true",58
+60,7,"accessibilityText=Edge panels; resource-id=com.samsung.android.app.cocktailbarservice:id/trigger_layout; bounds=[1065,418][1080,699]; enabled=true; class=android.widget.FrameLayout; important-for-accessibility=true; enabled=true",59
+61,8,"resource-id=com.samsung.android.app.cocktailbarservice:id/default_trigger; bounds=[1065,418][1080,699]; enabled=true; class=android.widget.ImageView; enabled=true",60
+62,8,"resource-id=com.samsung.android.app.cocktailbarservice:id/default_trigger_stroke; bounds=[1065,418][1080,699]; enabled=true; class=android.widget.ImageView; enabled=true",60
+63,2,"bounds=[0,0][1080,2400]; enabled=true; class=android.widget.FrameLayout; important-for-accessibility=true; enabled=true",1
+64,3,"bounds=[0,0][1080,2265]; enabled=true; class=android.widget.LinearLayout; enabled=true",63
+65,4,"bounds=[0,88][1080,2265]; enabled=true; class=android.widget.FrameLayout; enabled=true",64
+66,5,"resource-id=com.sec.android.app.popupcalculator:id/action_bar_root; bounds=[0,88][1080,2265]; enabled=true; class=android.widget.LinearLayout; enabled=true",65
+67,6,"resource-id=android:id/content; bounds=[0,88][1080,2265]; enabled=true; class=android.widget.FrameLayout; enabled=true",66
+68,7,"resource-id=com.sec.android.app.popupcalculator:id/calc_layout_main_group; bounds=[0,88][1080,2265]; enabled=true; class=android.widget.LinearLayout; enabled=true",67
+69,8,"resource-id=com.sec.android.app.popupcalculator:id/calc_edt_formula; clickable=true; bounds=[107,88][1007,548]; enabled=true; focused=true; class=android.widget.EditText; important-for-accessibility=true; clickable=true; enabled=true; focused=true",68
+70,8,"accessibilityText=Result preview; resource-id=com.sec.android.app.popupcalculator:id/calc_tv_result; bounds=[107,548][973,778]; enabled=true; class=android.widget.TextView; important-for-accessibility=true; enabled=true",68
+71,8,"resource-id=com.sec.android.app.popupcalculator:id/calc_handle; bounds=[0,778][1080,1008]; enabled=true; class=android.widget.RelativeLayout; important-for-accessibility=true; enabled=true",68
+72,9,"accessibilityText=History Button; resource-id=com.sec.android.app.popupcalculator:id/calc_handle_btn_history; bounds=[107,836][220,949]; class=android.view.ViewGroup; important-for-accessibility=true",71
+73,9,"accessibilityText=Unit converter Button; resource-id=com.sec.android.app.popupcalculator:id/calc_handle_btn_converter; clickable=true; bounds=[276,836][389,949]; enabled=true; class=android.view.ViewGroup; important-for-accessibility=true; clickable=true; enabled=true",71
+74,9,"accessibilityText=Scientific mode Button; resource-id=com.sec.android.app.popupcalculator:id/calc_handle_btn_rotation; clickable=true; bounds=[445,836][558,949]; enabled=true; class=android.view.ViewGroup; important-for-accessibility=true; clickable=true; enabled=true",71
+75,9,"accessibilityText=Backspace Button; resource-id=com.sec.android.app.popupcalculator:id/calc_handle_btn_delete; clickable=true; bounds=[861,836][974,949]; class=android.view.ViewGroup; important-for-accessibility=true; clickable=true",71
+76,8,"bounds=[56,1008][1024,1011]; enabled=true; class=android.view.View; enabled=true",68
+77,8,"resource-id=com.sec.android.app.popupcalculator:id/calc_keypad; bounds=[0,1011][1080,2265]; enabled=true; class=android.widget.RelativeLayout; important-for-accessibility=true; enabled=true",68
+78,9,"text=C; accessibilityText=Clear; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_clear; clickable=true; bounds=[59,1099][267,1307]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+79,9,"text=( ); accessibilityText=Brackets; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_parenthesis; clickable=true; bounds=[311,1099][519,1307]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+80,9,"text=%; accessibilityText=Percentage; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_percentage; clickable=true; bounds=[563,1099][771,1307]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+81,9,"text=÷; accessibilityText=Division; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_div; clickable=true; bounds=[815,1099][1023,1307]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+82,9,"text=7; accessibilityText=7; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_07; clickable=true; bounds=[59,1329][267,1537]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+83,9,"text=8; accessibilityText=8; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_08; clickable=true; bounds=[311,1329][519,1537]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+84,9,"text=9; accessibilityText=9; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_09; clickable=true; bounds=[563,1329][771,1537]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+85,9,"text=×; accessibilityText=Multiplication; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_mul; clickable=true; bounds=[815,1329][1023,1537]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+86,9,"text=4; accessibilityText=4; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_04; clickable=true; bounds=[59,1559][267,1767]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+87,9,"text=5; accessibilityText=5; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_05; clickable=true; bounds=[311,1559][519,1767]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+88,9,"text=6; accessibilityText=6; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_06; clickable=true; bounds=[563,1559][771,1767]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+89,9,"text=−; accessibilityText=Minus; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_sub; clickable=true; bounds=[815,1559][1023,1767]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+90,9,"text=1; accessibilityText=1; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_01; clickable=true; bounds=[59,1789][267,1997]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+91,9,"text=2; accessibilityText=2; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_02; clickable=true; bounds=[311,1789][519,1997]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+92,9,"text=3; accessibilityText=3; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_03; clickable=true; bounds=[563,1789][771,1997]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+93,9,"text=+; accessibilityText=Plus; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_add; clickable=true; bounds=[815,1789][1023,1997]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+94,9,"text=+/−; accessibilityText=Switch between plus and minus; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_plusminus; clickable=true; bounds=[59,2019][267,2227]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+95,9,"text=0; accessibilityText=0; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_00; clickable=true; bounds=[311,2019][519,2227]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+96,9,"text=.; accessibilityText=Decimal point; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_dot; clickable=true; bounds=[563,2019][771,2227]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
+97,9,"text==; accessibilityText=Equal; resource-id=com.sec.android.app.popupcalculator:id/calc_keypad_btn_equal; clickable=true; bounds=[815,2019][1023,2227]; enabled=true; class=android.widget.Button; important-for-accessibility=true; clickable=true; enabled=true",77
