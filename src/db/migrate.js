@@ -375,6 +375,25 @@ ALTER TABLE automation_suites ADD COLUMN IF NOT EXISTS platform TEXT NOT NULL DE
   CHECK (platform IN ('web','ios','android'));
 ALTER TABLE automation_suites ADD COLUMN IF NOT EXISTS engine TEXT
   CHECK (engine IN ('playwright','maestro','appium'));
+
+-- Auto-filed bugs from failed automated test runs (web or mobile — both post
+-- through the same POST /webhooks/test-runs contract). 'origin' distinguishes
+-- these from hand-logged bugs in the UI; created_by stays NULL for them since
+-- there's no user in the loop. SET NULL on both FKs, same reasoning as
+-- execution_run_id/test_case_id above: these are provenance, not a lifecycle
+-- dependency — deleting a suite or run shouldn't delete the bug it found.
+ALTER TABLE bugs ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'manual'
+  CHECK (origin IN ('manual','automated'));
+ALTER TABLE bugs ADD COLUMN IF NOT EXISTS suite_id INTEGER REFERENCES automation_suites(id) ON DELETE SET NULL;
+ALTER TABLE bugs ADD COLUMN IF NOT EXISTS test_run_id INTEGER REFERENCES test_runs(id) ON DELETE SET NULL;
+ALTER TABLE bugs ALTER COLUMN created_by DROP NOT NULL;
+-- Failure screenshot captured at the moment of failure (Maestro auto-saves
+-- one per failed flow; Playwright's screenshot:'only-on-failure' does the
+-- same) — base64 data URL, same format bug_comments.image_data already uses.
+ALTER TABLE bugs ADD COLUMN IF NOT EXISTS screenshot_data TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_bugs_suite ON bugs(suite_id);
+CREATE INDEX IF NOT EXISTS idx_bugs_test_run ON bugs(test_run_id);
 `
 
 async function migrate() {

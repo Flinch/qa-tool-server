@@ -44,6 +44,25 @@ const projectId = Number(projectIdArg)
 const correlationId = RUN_CORRELATION_ID || null
 const triggerType = TRIGGER_TYPE || 'manual'
 const junitPath = path.join('/tmp', `maestro-${suiteSlug}-results.xml`)
+// Fixed + flattened (not the default timestamped ~/.maestro/tests/<ts>/) so
+// this run's screenshots are unambiguous to find afterward — cleared first
+// so a stale file from a previous run can never be mistaken for this one's.
+const debugOutputDir = path.join('/tmp', `maestro-debug-${suiteSlug}`)
+fs.rmSync(debugOutputDir, { recursive: true, force: true })
+fs.mkdirSync(debugOutputDir, { recursive: true })
+
+// Maestro auto-saves a screenshot at the moment of failure, named
+// screenshot-❌-<timestamp>-(<flow name>).png — no extra flags needed beyond
+// pointing --debug-output somewhere we can find it.
+function findScreenshotBase64(testTitle) {
+  try {
+    const match = fs.readdirSync(debugOutputDir)
+      .find(f => f.startsWith('screenshot-') && f.endsWith(`(${testTitle}).png`))
+    return match ? fs.readFileSync(path.join(debugOutputDir, match)).toString('base64') : null
+  } catch {
+    return null
+  }
+}
 
 function sendWebhook(payload) {
   return new Promise((resolve, reject) => {
@@ -86,7 +105,11 @@ function statusToResult(status) {
 
 console.log(`Running maestro test against ${flowsDir}...`)
 try {
-  execFileSync('maestro', ['test', flowsDir, '--format', 'junit', '--output', junitPath], {
+  execFileSync('maestro', [
+    'test', flowsDir,
+    '--format', 'junit', '--output', junitPath,
+    '--debug-output', debugOutputDir, '--flatten-debug-output',
+  ], {
     stdio: 'inherit',
     env: { ...process.env, PATH: `${process.env.HOME}/.maestro/bin:/opt/homebrew/opt/openjdk/bin:${process.env.PATH}` },
   })
@@ -121,15 +144,17 @@ const rawCases = suite ? (Array.isArray(suite.testcase) ? suite.testcase : suite
 
 const results = rawCases.map(tc => {
   const status = tc['@_status']
+  const resultStatus = statusToResult(status)
   const failureNode = tc.failure
   const errorMessage = failureNode != null
     ? (typeof failureNode === 'string' ? failureNode : failureNode['#text'] || null)
     : null
   return {
     test_title: tc['@_name'],
-    status: statusToResult(status),
+    status: resultStatus,
     duration_ms: tc['@_time'] != null ? Math.round(Number(tc['@_time']) * 1000) : null,
     error_message: errorMessage,
+    screenshot_base64: resultStatus === 'failed' ? findScreenshotBase64(tc['@_name']) : null,
   }
 })
 
@@ -148,5 +173,8 @@ const payload = {
   results,
 }
 
-console.log('Reporting:', JSON.stringify(payload, null, 2))
+console.log('Reporting:', JSON.stringify({
+  ...payload,
+  results: payload.results.map(r => ({ ...r, screenshot_base64: r.screenshot_base64 ? `<${r.screenshot_base64.length} chars>` : null })),
+}, null, 2))
 await sendWebhook(payload)

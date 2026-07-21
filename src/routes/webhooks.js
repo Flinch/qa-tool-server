@@ -3,6 +3,7 @@ import crypto from 'crypto'
 import { query } from '../db/pool.js'
 import { broadcast } from '../lib/sse.js'
 import { exportPlansForTestCases } from '../lib/planExport.js'
+import { describeFailure } from '../lib/describeFailure.js'
 
 const GENERATION_STATUSES = ['pending', 'exploring', 'generating', 'healing', 'opening_pr', 'completed', 'failed']
 
@@ -82,6 +83,93 @@ router.post('/test-runs', verifySecret, async (req, res) => {
          VALUES ($1, $2)
          ON CONFLICT (suite_id, title) DO NOTHING`,
         [suiteId, r.test_title]
+      )
+    }
+
+    // Auto-file a bug for any failed result — same contract for web and
+    // mobile, so this covers both. Deliberately separate from the healer's
+    // regression-flag path (see DECISIONS.md): this fires on any failure in
+    // a normal run, not specifically a flagged regression.
+    for (const r of results) {
+      if (r.status !== 'failed') continue
+
+      // Mobile Maestro's JUnit test name is the flow filename (e.g.
+      // "tc-75-browse-catalog-and-add-product-to-cart"); web Playwright
+      // titles follow the "TC-<id>: ..." convention from planExport.js.
+      // Both start with tc-<digits>, so one case-insensitive prefix match
+      // resolves either back to a real test case — falls back to null
+      // (title-only bug) if there's no match or it's not a real TC in this
+      // project.
+      const tcMatch = /^tc-(\d+)/i.exec(r.test_title)
+      let testCase = null
+      if (tcMatch) {
+        const { rows: tcRows } = await query(
+          `SELECT id, title, expected, steps FROM test_cases WHERE id=$1 AND project_id=$2`,
+          [Number(tcMatch[1]), project_id]
+        )
+        testCase = tcRows[0] || null
+      }
+
+      const bugTitle = `Automated failure: ${testCase ? testCase.title : r.test_title}`
+
+      // Dedup against repeat failures of the same test in the same suite —
+      // a nightly cron failing every night shouldn't file a fresh bug each
+      // time it hits the exact same problem. Only matches while an existing
+      // one is still open/in_progress; once resolved, a new failure files a
+      // new bug. A match gets refreshed (latest screenshot/description/run),
+      // not silently ignored — otherwise the evidence on an old open bug
+      // goes stale forever while the same failure keeps recurring.
+      const { rows: existing } = await query(
+        `SELECT id FROM bugs WHERE suite_id=$1 AND title=$2 AND origin='automated' AND status != 'resolved'`,
+        [suiteId, bugTitle]
+      )
+
+      const stepsText = testCase
+        ? (Array.isArray(testCase.steps) ? testCase.steps.join('\n') : testCase.steps)
+        : `Run automation suite "${suite_slug}"`
+
+      // Rewrite the raw assertion failure into a plain-language description a
+      // QA analyst would write for a developer — falls back to the raw
+      // message if no API key is configured or the call fails (fail-open,
+      // same idiom as jiraClient.js).
+      const description = await describeFailure({
+        scenarioTitle: bugTitle.replace(/^Automated failure: /, ''),
+        steps: stepsText,
+        expected: testCase?.expected || null,
+        errorMessage: r.error_message,
+        screenshotBase64: r.screenshot_base64 || null,
+      })
+
+      const actual = description || r.error_message || null
+      const notes = `Auto-filed from test run #${runId} (${trigger_type || 'manual'})${github_run_url ? ` — CI: ${github_run_url}` : ''}` +
+        (description && r.error_message ? `\n\nRaw failure detail: ${r.error_message}` : '')
+      const screenshotData = r.screenshot_base64 ? `data:image/png;base64,${r.screenshot_base64}` : null
+
+      if (existing[0]) {
+        await query(
+          `UPDATE bugs SET test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, updated_at=NOW() WHERE id=$5`,
+          [runId, actual, notes, screenshotData, existing[0].id]
+        )
+        continue
+      }
+
+      await query(
+        `INSERT INTO bugs
+           (project_id, test_case_id, suite_id, test_run_id, title, severity,
+            steps_to_reproduce, expected, actual, notes, origin, created_by, screenshot_data)
+         VALUES ($1,$2,$3,$4,$5,'medium',$6,$7,$8,$9,'automated',NULL,$10)`,
+        [
+          project_id,
+          testCase?.id || null,
+          suiteId,
+          runId,
+          bugTitle,
+          stepsText,
+          testCase?.expected || null,
+          actual,
+          notes,
+          screenshotData,
+        ]
       )
     }
 

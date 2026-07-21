@@ -7,16 +7,32 @@ const {
   REPORT_URL, GITHUB_RUN_URL, WEBHOOK_URL, WEBHOOK_SECRET,
 } = process.env
 
+// Playwright's screenshot:'only-on-failure' (playwright.config.js) writes a
+// PNG per failed test, referenced in the JSON reporter's own attachments
+// array rather than a predictable path — read straight from there instead
+// of guessing a test-results/ layout.
+function readScreenshotBase64(result) {
+  const attachment = result.attachments?.find(a => a.name === 'screenshot' && a.path)
+  if (!attachment) return null
+  try {
+    return fs.readFileSync(attachment.path).toString('base64')
+  } catch {
+    return null
+  }
+}
+
 function walkSuites(suites, out) {
   for (const suite of suites || []) {
     for (const spec of suite.specs || []) {
       for (const test of spec.tests || []) {
         const result = test.results?.[test.results.length - 1] || {}
+        const status = result.status === 'passed' ? 'passed' : result.status === 'skipped' ? 'skipped' : 'failed'
         out.push({
           test_title: spec.title,
-          status: result.status === 'passed' ? 'passed' : result.status === 'skipped' ? 'skipped' : 'failed',
+          status,
           duration_ms: Math.round(result.duration || 0),
           error_message: result.error?.message || null,
+          screenshot_base64: status === 'failed' ? readScreenshotBase64(result) : null,
         })
       }
     }

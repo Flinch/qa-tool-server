@@ -213,6 +213,53 @@
   remembering for anyone hitting an unexplained `UNAVAILABLE` from Maestro CLI: check `ps aux | grep maestro` for
   zombie sessions before assuming a device/driver problem.
 
+## Phase 6 — mobile pipeline: real CI-triggered generation, proven end to end
+
+- Sixth round, next day: Malik asked what's left before the mobile pipeline is "practically done." Answer given:
+  hosting is one of three gaps, not the last one — generation needs a live, interactive device connection
+  regardless of what gets picked for AWS/Maestro Cloud/self-hosted execution later, since neither device farm
+  supports mid-authoring interaction the way `generate-tests.js` already does for web (a real headless browser in
+  the CI runner itself, not a "browser farm"). He asked to prove that specific piece for real.
+- Registered this Mac as a GitHub Actions self-hosted runner (`mobile-gen-runner`, labels `self-hosted,mobile`),
+  foreground-only per Malik's choice (no persistent `launchd` service) — stopped at the end of this round.
+- `triggerGenerationRun` (`src/lib/automationTrigger.js`) now routes by suite platform instead of rejecting
+  non-web outright: web → `GITHUB_GENERATION_WORKFLOW_ID`, mobile → new `GITHUB_MOBILE_GENERATION_WORKFLOW_ID`.
+  `GET /generation-payload/:correlationId` (`webhooks.js`) and `buildPlanMarkdown`/`exportPlansForTestCases`
+  (`planExport.js`) are now platform-aware too — mobile gets `app_id` (env var default, same category as the
+  existing `target_url` fallback) instead of `target_url`, and a mobile-appropriate "Starting state" line.
+- New `.github/workflows/generate-mobile-tests.yml` + `.github/scripts/generate-mobile-tests.js`, mirroring the
+  web pipeline closely: `runs-on: [self-hosted, mobile]`, an explicit `GITHUB_PATH` append for Maestro/Java (a
+  self-hosted runner's job environment isn't guaranteed to inherit an interactive shell's PATH), a device-connected
+  sanity check, then the same fetch-payload → plan/generate/heal (via `maestro-test-*` agents) → PR → report-
+  completion shape as `generate-tests.yml`.
+- **Real, structural discovery**: GitHub's `workflow_dispatch` API only recognizes a workflow file that already
+  exists on the repository's *default branch* — pushing it to a feature branch and dispatching against that ref
+  does not work, confirmed via a live 404 and `GET /actions/workflows` simply not listing the new file at all.
+  This forced an explicit conversation with Malik about pushing to master (his standing rule is no pushes without
+  asking) — he authorized it for this specific case once the constraint was clear.
+- **Real operational lesson, worth remembering**: switching local git branches (`git checkout master`) while
+  several files had *uncommitted* local edits silently discarded those edits back to master's last-committed
+  content for this local checkout — not a bug, just normal git behavior colliding with a session that had been
+  running for many hours with a lot of uncommitted state. Recovered cleanly: the PR merge on GitHub's side already
+  carried the equivalent content, `git stash` + `git pull` reconciled the rest without any real loss, but this cost
+  real time. Lesson for future long sessions: commit or stash before any branch switch once uncommitted changes
+  have piled up, even when not intending to push yet.
+- **First real run failed for a mundane, correct reason**: the physical device had disconnected (screen doze /
+  session length, not a runner-specific bug) — the planner agent, running as a real non-interactive subagent
+  dispatch inside `claude -p`, correctly detected via `list_devices` that no Android device was connected and
+  stopped cleanly rather than guessing, reporting exactly why. No file was written, no false success. Confirmed via
+  the real Claude Code session transcript on disk (`~/.claude/projects/<runner-workspace-hash>/*.jsonl`) — a real,
+  readable audit trail for diagnosing headless agent runs, worth remembering for future debugging.
+- **Second real run succeeded completely**: `generation_runs` id 12 reached `status='completed'` with a real
+  `pr_url`. The planner independently rediscovered — live, unprompted, with no memory of the earlier interactive
+  session — the exact same two traps found by hand in Round 1 (the hidden `"Calculation result"` text suffix on
+  `calc_edt_formula`; the false-positive risk of an unscoped digit assertion matching the permanently-visible
+  keypad) and documented them in the updated plan file. The generator then produced a correctly `id`-scoped,
+  `.*`-anchored flow using them. Real PR: `github.com/Flinch/qa-tool-server/pull/17`.
+- This closes out the last structurally unverified piece of the mobile pipeline. What's left is genuinely just the
+  hosting decision (Maestro Cloud trial), the frontend (suite creation UI, enabling the already-guarded Run/
+  Generate buttons), binary/app management (still nobody's built this), and iOS (still untested, no Xcode).
+
 ## Phase 6 — mobile pipeline: generation logic + hosting-agnostic reporting
 
 - Same day, third round: after the Maestro Cloud vs. AWS Device Farm comparison, Malik decided to hold off on
