@@ -1,0 +1,77 @@
+# scenario: TC-76 — User login and logout
+# spec: specs/tc-76-user-login-and-logout.md
+appId: com.saucelabs.mydemoapp.android
+---
+- launchApp:
+    clearState: true
+
+# 1. Open the menu drawer from the catalog screen by tapping the hamburger icon
+# in the header (a11y: "View menu", resource-id: menuIV). This opens the drawer
+# (resource-id: drawerMenu) listing menu items including "Catalog", "WebView",
+# and, at the bottom, an auth toggle item that reads "Log In" when logged out.
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/menuIV"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/drawerMenu"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/itemTV"
+    text: "Log In"
+
+# 2. Tap the "Log In" menu item to open the Login screen.
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/itemTV"
+    text: "Log In"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/loginTV"
+    text: "Login"
+
+# 3. Enter valid demo credentials into the username field (resource-id: nameET)
+# and password field (resource-id: passwordET), then tap the "Login" button
+# (resource-id: loginBtn). Using the first listed demo credential:
+# "bod@example.com" / "10203040" (verbatim from the app UI).
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/nameET"
+- inputText: "bod@example.com"
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/passwordET"
+- inputText: "10203040"
+- hideKeyboard
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/loginBtn"
+
+# 4. Confirm the logged-in state: the app returns to the Products catalog
+# screen, and re-opening the menu drawer shows the auth toggle item now reads
+# "Log Out" instead of "Log In". Tap "Log Out".
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/productTV"
+    text: "Products"
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/menuIV"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/itemTV"
+    text: "Log Out"
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/itemTV"
+    text: "Log Out"
+
+# 5. A native confirmation dialog appears ("Are you sure you want to logout")
+# with CANCEL (android:id/button2) and LOGOUT (android:id/button1) buttons.
+# Tap LOGOUT to confirm.
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/alertTitle"
+    text: "Log Out"
+- assertVisible:
+    id: "android:id/button2"
+    text: "CANCEL"
+- assertVisible:
+    id: "android:id/button1"
+    text: "LOGOUT"
+- tapOn:
+    id: "android:id/button1"
+
+# Expect: after confirming the logout dialog, the app navigates to the Login
+# screen (not merely back to the catalog with the item reverted to "Log In"),
+# confirming a logged-out state.
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/loginTV"
+    text: "Login"

@@ -1,0 +1,125 @@
+# scenario: TC-77 — Add product to cart and complete checkout
+# spec: specs/tc-77-add-product-to-cart-and-complete-checkout.md
+appId: com.saucelabs.mydemoapp.android
+---
+- launchApp:
+    clearState: true
+
+# 1. From the catalog screen, tap a product image (the first product, "Sauce Labs Backpack") to open its detail screen.
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/productIV"
+    index: 0
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/productTV"
+    text: "Sauce Labs Backpack"
+
+# 2. On the product detail screen, tap "Add to cart". The cart badge should update to "1".
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/cartBt"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/cartTV"
+    text: "1"
+
+# 3. Tap "View cart" icon in the header to open the cart. Verify title, item and totals.
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/cartRL"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/productTV"
+    text: "My Cart"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/itemsTV"
+    text: "1 Items"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/totalPriceTV"
+    text: "\\$ 29.99"
+
+# 4. Tap "Proceed To Checkout" at the bottom of the cart screen.
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/cartBt"
+
+# 5. Login is required at this point. A "Login" screen appears instead of a checkout form.
+#    Tap the sample username "bod@example.com" to auto-populate credentials, then tap "Login".
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/loginTV"
+    text: "Login"
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/username1TV"
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/loginBtn"
+
+# 6. After login, the "Checkout" (shipping address) screen appears. Fill in each required field.
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/checkoutTitleTV"
+    text: "Checkout"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/enterShippingAddressTV"
+    text: "Enter a shipping address"
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/fullNameET"
+- inputText: "John Tester"
+- hideKeyboard
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/address1ET"
+- inputText: "123 Main St"
+- hideKeyboard
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/cityET"
+- inputText: "San Francisco"
+- hideKeyboard
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/zipET"
+- inputText: "94105"
+- hideKeyboard
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/countryET"
+- inputText: "United States"
+- hideKeyboard
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/paymentBtn"
+
+# 7. The "Checkout" payment screen appears. Fill in required payment fields; billing checkbox is checked by default.
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/enterPaymentMethodTV"
+    text: "Enter a payment method"
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/nameET"
+- inputText: "John Tester"
+- hideKeyboard
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/cardNumberET"
+- inputText: "4111111111111111"
+- hideKeyboard
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/expirationDateET"
+- inputText: "12/28"
+- hideKeyboard
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/securityCodeET"
+- inputText: "456"
+- hideKeyboard
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/billingAddressCB"
+    checked: true
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/paymentBtn"
+
+# 8. The "Review your order" screen appears, showing the cart item, delivery address, and total. Tap "Place Order".
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/enterShippingAddressTV"
+    text: "Review your order"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/totalAmountTV"
+    text: "\\$ 35.98"
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/paymentBtn"
+
+# Expect: The order completes and a confirmation screen is shown.
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/completeTV"
+    text: "Checkout Complete"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/thankYouTV"
+    text: "Thank you for your order"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/shoopingBt"
+    text: "Continue Shopping"
