@@ -6,15 +6,19 @@
 // script), a self-hosted runner, Device Farm, or Maestro Cloud, as long as
 // something produces this same payload shape.
 //
-// Local-only for now, run by hand — not wired into a GitHub Actions
-// workflow yet (see DECISIONS.md, Phase 6: the CI/hosting layer is
-// deliberately deferred).
+// Callable two ways: by hand locally (positional args only, no
+// RUN_CORRELATION_ID/TRIGGER_TYPE/GITHUB_RUN_URL set — results land as a
+// fresh INSERT per webhooks.js), or from .github/workflows/maestro-run.yml
+// on the self-hosted runner (same positional args, plus those three env
+// vars set so the result UPDATEs the pending row triggerSuiteRun inserted).
 //
 // Usage:
 //   node scripts/report-mobile-results.js <flows-dir> <suite-slug> <project-id>
 //
 // Required env: WEBHOOK_BASE_URL, WEBHOOK_SECRET (same as the web pipeline's
 // GitHub Actions secrets — read from a local .env for manual runs).
+// Optional env: RUN_CORRELATION_ID, TRIGGER_TYPE (defaults to 'manual'),
+// GITHUB_RUN_URL.
 
 import 'dotenv/config'
 import fs from 'fs'
@@ -25,7 +29,7 @@ import https from 'https'
 import http from 'http'
 
 const [, , flowsDir, suiteSlug, projectIdArg] = process.argv
-const { WEBHOOK_BASE_URL, WEBHOOK_SECRET } = process.env
+const { WEBHOOK_BASE_URL, WEBHOOK_SECRET, RUN_CORRELATION_ID, TRIGGER_TYPE, GITHUB_RUN_URL } = process.env
 
 if (!flowsDir || !suiteSlug || !projectIdArg) {
   console.error('Usage: node scripts/report-mobile-results.js <flows-dir> <suite-slug> <project-id>')
@@ -37,6 +41,8 @@ if (!WEBHOOK_BASE_URL || !WEBHOOK_SECRET) {
 }
 
 const projectId = Number(projectIdArg)
+const correlationId = RUN_CORRELATION_ID || null
+const triggerType = TRIGGER_TYPE || 'manual'
 const junitPath = path.join('/tmp', `maestro-${suiteSlug}-results.xml`)
 
 function sendWebhook(payload) {
@@ -94,10 +100,11 @@ if (!fs.existsSync(junitPath)) {
   const message = `maestro test did not produce a results file at ${junitPath} — no device connected, or the run crashed before producing output`
   console.error(message)
   await sendWebhook({
-    correlation_id: null,
+    correlation_id: correlationId,
     project_id: projectId,
     suite_slug: suiteSlug,
-    trigger_type: 'manual',
+    trigger_type: triggerType,
+    github_run_url: GITHUB_RUN_URL,
     status: 'failed',
     error_message: message,
     results: [],
@@ -127,10 +134,11 @@ const results = rawCases.map(tc => {
 })
 
 const payload = {
-  correlation_id: null, // manual local run, not tied to a pending CI-dispatched row
+  correlation_id: correlationId, // null for a manual local run, real for a CI-dispatched one
   project_id: projectId,
   suite_slug: suiteSlug,
-  trigger_type: 'manual',
+  trigger_type: triggerType,
+  github_run_url: GITHUB_RUN_URL,
   status: 'completed',
   total: results.length,
   passed: results.filter(r => r.status === 'passed').length,

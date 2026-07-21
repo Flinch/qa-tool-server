@@ -1,0 +1,55 @@
+name: Run Mobile Suite
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite_slug:
+        description: 'Which mobile suite to run (matches tests/generated-mobile/<platform>/<slug>)'
+        required: true
+        type: string
+      platform:
+        description: 'android or ios — picks the flows directory'
+        required: true
+        type: string
+      project_id:
+        description: 'Project id the suite belongs to (passed explicitly, unlike the web pipeline single QA_TOOL_PROJECT_ID repo var — mobile already has more than one project)'
+        required: true
+        type: string
+      run_correlation_id:
+        description: 'Correlation ID linking this run back to a pending test_runs row'
+        required: false
+        type: string
+
+jobs:
+  run:
+    # Self-hosted, same reasoning as generate-mobile-tests.yml: executing a
+    # Maestro flow needs a real attached device. Unlike generation, this job
+    # runs no agents at all — it's just `maestro test` against already-
+    # authored, already-reviewed flows, so it needs no ANTHROPIC_API_KEY and
+    # no cost cap, and finishes much faster.
+    runs-on: [self-hosted, mobile]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add Maestro/Java to PATH
+        run: |
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+          echo "/opt/homebrew/opt/openjdk/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Confirm a device is connected
+        run: |
+          adb devices -l
+          maestro --version
+
+      - name: Run suite and report results
+        env:
+          RUN_CORRELATION_ID: ${{ inputs.run_correlation_id }}
+          TRIGGER_TYPE: manual
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+        run: node scripts/report-mobile-results.js "tests/generated-mobile/${{ inputs.platform }}/${{ inputs.suite_slug }}" "${{ inputs.suite_slug }}" "${{ inputs.project_id }}"

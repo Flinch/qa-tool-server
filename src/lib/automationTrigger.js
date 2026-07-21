@@ -17,6 +17,12 @@ const GITHUB_MOBILE_GENERATION_WORKFLOW_ID = process.env.GITHUB_MOBILE_GENERATIO
 // dispatch here; override while the mobile workflow file lives on a branch
 // that hasn't merged yet.
 const GITHUB_MOBILE_GENERATION_REF = process.env.GITHUB_MOBILE_GENERATION_REF || 'master'
+// Mobile suite EXECUTION (running already-generated, already-reviewed Maestro
+// flows — not authoring them) gets its own workflow too, separate from
+// GITHUB_MOBILE_GENERATION_WORKFLOW_ID, same reasoning as the web/mobile split
+// above: no agents, no cost cap, just `maestro test` against a real device.
+const GITHUB_MOBILE_WORKFLOW_ID = process.env.GITHUB_MOBILE_WORKFLOW_ID // e.g. "maestro-run.yml"
+const GITHUB_MOBILE_REF = process.env.GITHUB_MOBILE_REF || 'master'
 
 // A run that's been sitting in pending/running this long almost certainly
 // means CI never reported back (crashed runner, workflow misconfigured,
@@ -44,7 +50,7 @@ class TriggerError extends Error {
 // pending test_runs row. Shared by the Automation page's "Run suite" action
 // and by Execution Runs triggering a suite from inside a session.
 export async function triggerSuiteRun({ projectId, suiteId, userId }) {
-  if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO || !GITHUB_WORKFLOW_ID) {
+  if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
     throw new TriggerError(500, 'GitHub Actions is not configured on the server')
   }
 
@@ -55,13 +61,11 @@ export async function triggerSuiteRun({ projectId, suiteId, userId }) {
   if (!suiteRows[0]) throw new TriggerError(404, 'Suite not found')
   const suite = suiteRows[0]
 
-  // GITHUB_WORKFLOW_ID always points at the web Playwright workflow — there's
-  // no mobile equivalent wired up yet (see DECISIONS.md, Phase 6). Without
-  // this check, running a mobile suite would silently dispatch the web
-  // workflow against a suite_slug it has no tests for, reporting back a
-  // misleading empty 0-test run instead of a clear error.
-  if (suite.platform !== 'web') {
-    throw new TriggerError(400, `Running "${suite.platform}" suites isn't wired up yet — only web suites can be run from here`)
+  // Route to the right execution workflow by platform, same reasoning as
+  // triggerGenerationRun's routing below.
+  const workflowId = suite.platform === 'web' ? GITHUB_WORKFLOW_ID : GITHUB_MOBILE_WORKFLOW_ID
+  if (!workflowId) {
+    throw new TriggerError(500, `No run workflow configured for "${suite.platform}" suites`)
   }
 
   const correlationId = crypto.randomUUID()
@@ -72,8 +76,18 @@ export async function triggerSuiteRun({ projectId, suiteId, userId }) {
     [projectId, suiteId, correlationId, userId]
   )
 
+  // Web dispatch inputs must match playwright.yml's declared inputs exactly
+  // (workflow_dispatch rejects undeclared ones) — project_id isn't one of
+  // them there, since the web pipeline still relies on the single
+  // QA_TOOL_PROJECT_ID repo variable. Mobile already spans more than one
+  // project, so maestro-run.yml takes project_id and platform explicitly.
+  const ref = suite.platform === 'web' ? 'master' : GITHUB_MOBILE_REF
+  const inputs = suite.platform === 'web'
+    ? { suite_slug: suite.slug, run_correlation_id: correlationId }
+    : { suite_slug: suite.slug, platform: suite.platform, project_id: String(projectId), run_correlation_id: correlationId }
+
   const ghRes = await fetch(
-    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW_ID}/dispatches`,
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${workflowId}/dispatches`,
     {
       method: 'POST',
       headers: {
@@ -81,13 +95,7 @@ export async function triggerSuiteRun({ projectId, suiteId, userId }) {
         Accept: 'application/vnd.github+json',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        ref: 'master',
-        inputs: {
-          suite_slug: suite.slug,
-          run_correlation_id: correlationId,
-        },
-      }),
+      body: JSON.stringify({ ref, inputs }),
     }
   )
 
