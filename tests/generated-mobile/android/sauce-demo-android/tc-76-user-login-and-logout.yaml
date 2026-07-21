@@ -1,0 +1,45 @@
+# scenario: TC-76 — User login and logout
+# spec: specs/tc-76-user-login-and-logout.md
+appId: com.sec.android.app.popupcalculator
+tags: [flagged-regression]
+---
+# POSSIBLE REGRESSION: Expected the target app to present a catalog screen with a menu
+# drawer containing a Login/Sign In entry, allow entering demo credentials to reach a
+# logged-in state, and expose a logout action in that same menu. The actual app under
+# test is Samsung's built-in Calculator (com.sec.android.app.popupcalculator), which has
+# no catalog, menu drawer, account, session, or login/logout concept whatsoever. A live
+# inspect_screen on fresh launch shows only: an editable formula field
+# (calc_edt_formula), a result preview (calc_tv_result), a handle row with
+# History/Unit converter/Scientific mode/Backspace buttons, and a numeric keypad. There
+# is no hamburger/drawer icon and no text or resource-id referencing login, sign in,
+# account, or logout anywhere in the hierarchy. This scenario cannot be executed against
+# this app.
+
+- launchApp:
+    clearState: true
+
+# Confirm what is actually on screen: the Calculator's formula/result fields, not a
+# catalog with a login-capable menu drawer.
+- assertVisible:
+    id: "com.sec.android.app.popupcalculator:id/calc_edt_formula"
+- assertVisible:
+    id: "com.sec.android.app.popupcalculator:id/calc_tv_result"
+
+# 1. Open the menu drawer from the catalog screen
+# POSSIBLE REGRESSION: There is no catalog screen and no hamburger/drawer icon in this
+# app. Only a formula field, result field, handle row (History/Converter/Scientific/
+# Backspace), and numeric keypad exist. This step cannot be performed.
+
+# 2. Tap Login/Sign In
+# POSSIBLE REGRESSION: No Login/Sign In element exists anywhere in the app's hierarchy;
+# there is no drawer to have opened in the previous step either. This step cannot be
+# performed.
+
+# 3. Enter valid demo credentials and submit
+# POSSIBLE REGRESSION: The app exposes no credential input fields or submit action —
+# calc_edt_formula only accepts numeric/operator input for calculations, not
+# username/password credentials. This step cannot be performed.
+
+# 4. Confirm the logged-in state, then open the menu drawer and log out
+# POSSIBLE REGRESSION: The app has no session/logged-in state and no logout action to
+# invoke, since there is no login concept at all. This step cannot be performed.

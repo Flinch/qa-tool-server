@@ -1,0 +1,39 @@
+# scenario: TC-75 — Browse catalog and add product to cart
+# spec: specs/tc-75-browse-catalog-and-add-product-to-cart.md
+appId: com.sec.android.app.popupcalculator
+tags: [flagged-regression]
+---
+# POSSIBLE REGRESSION: expected the app under test to present a Products catalog
+# screen, a product detail screen with an "Add To Cart" action, and a cart with an
+# item-count badge. The actual app installed and launched (com.sec.android.app.popupcalculator,
+# Samsung Calculator) is a calculator with a formula/result display
+# (calc_edt_formula, calc_tv_result), a numeric keypad, and handle buttons for
+# History, Unit converter, Scientific mode, and Backspace. It has no catalog,
+# product, or cart concept whatsoever. Verified live via inspect_screen on device
+# RFCR8026ZTJ on 2026-07-20 (see spec file for original finding).
+- launchApp:
+    clearState: true
+# Confirms the real screen shown after launch: the calculator's formula field,
+# not a Products catalog.
+- assertVisible:
+    id: "com.sec.android.app.popupcalculator:id/calc_edt_formula"
+
+# 1. Launch the app to the Products catalog screen
+# POSSIBLE REGRESSION: there is no Products catalog screen. inspect_screen shows
+# only calc_edt_formula, calc_tv_result, a numeric keypad, and calc_handle_btn_*
+# (history/converter/rotation/delete) — no product list, product cards, or
+# navigation to any catalog.
+
+# 2. Tap a product to open its detail screen
+# POSSIBLE REGRESSION: no product elements exist to tap, and there is no product
+# detail screen. The keypad buttons (calc_keypad_btn_00-09, calc_keypad_btn_add/
+# sub/mul/div/equal/clear/parenthesis/percentage/dot/plusminus) are calculator
+# digits and operators, not products, so tapping one would not exercise this step.
+
+# 3. Tap Add To Cart
+# POSSIBLE REGRESSION: no "Add To Cart" action or resource-id exists anywhere in
+# the view hierarchy for this app.
+
+# 4. Return to the catalog and open the cart
+# POSSIBLE REGRESSION: no catalog screen or cart screen exists to return to or
+# open; there is no cart icon or item-count badge anywhere in the view hierarchy.

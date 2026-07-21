@@ -1,0 +1,35 @@
+# scenario: TC-77 — Add product to cart and complete checkout
+# spec: specs/tc-77-add-product-to-cart-and-complete-checkout.md
+appId: com.sec.android.app.popupcalculator
+tags: [flagged-regression]
+---
+# POSSIBLE REGRESSION: expected the app under test to expose a catalog/product-detail
+# screen, a cart, a checkout flow with required-information fields, and an
+# order-confirmation screen/message. Actual: the installed app is Samsung's built-in
+# Calculator (com.sec.android.app.popupcalculator). A fresh launch (launchApp with
+# clearState) and full inspect_screen confirm the screen only contains a formula
+# EditText (calc_edt_formula), a result TextView (calc_tv_result), handle buttons for
+# history/unit-converter/scientific-mode/backspace, and a numeric/operator keypad.
+# There is no product, cart, checkout, order, or payment concept anywhere in the app's
+# view hierarchy, so this scenario cannot be executed against the real app as written.
+- launchApp:
+    clearState: true
+# Confirm what is actually on screen: the Calculator's formula field, not a catalog/cart/checkout UI.
+- assertVisible:
+    id: "com.sec.android.app.popupcalculator:id/calc_edt_formula"
+
+# 1. Add a product to the cart from the catalog or detail screen
+# POSSIBLE REGRESSION: unexecutable — the app has no catalog or product-detail screen
+# and no "add to cart" concept; only a formula field, result field, and numeric keypad exist.
+
+# 2. Open the cart and proceed to checkout
+# POSSIBLE REGRESSION: unexecutable — there is no cart screen or checkout entry point
+# anywhere in the app's view hierarchy.
+
+# 3. Fill in required checkout information
+# POSSIBLE REGRESSION: unexecutable — there is no checkout form or any required-information
+# fields (e.g. shipping/payment) in the app; it only exposes calculator keypad buttons.
+
+# 4. Complete the order
+# POSSIBLE REGRESSION: unexecutable — there is no order or payment concept, so no order can
+# be completed and no confirmation screen/message can ever appear.
