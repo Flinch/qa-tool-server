@@ -1,0 +1,60 @@
+# scenario: TC-75 — Browse catalog and add product to cart
+# spec: specs/tc-75-browse-catalog-and-add-product-to-cart.md
+appId: com.saucelabs.mydemoapp.android
+tags: [flagged-regression]
+---
+# 1. Launch the app to the Products catalog screen
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/productTV"
+    text: "Products"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/cartRL"
+
+# 2. Tap a product to open its detail screen
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/productIV"
+    index: 0
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/productTV"
+    text: "Sauce Labs Backpack"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/cartBt"
+    text: "Add to cart"
+
+# 3. Tap the "Add to cart" button
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/cartBt"
+# Header badge on the detail screen correctly reflects the new item.
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/cartTV"
+    text: "1"
+
+# 4. Return to the catalog and open the cart via the "View cart" icon in the header
+- back
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/productTV"
+    text: "Products"
+# POSSIBLE REGRESSION: expected an accurate item count/badge ("1") on the catalog
+# screen's "View cart" icon after adding a product and navigating back, per the
+# plan's Expect. Actual: the badge (cartCircleRL/cartTV) is absent from the
+# catalog header entirely after returning via back — even though the cart itself
+# still correctly holds the item (confirmed below). Reproduced twice from a clean
+# launch.
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/cartTV"
+    text: "1"
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/cartRL"
+
+# Expect: The cart shows the added product with an accurate item count/badge.
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/titleTV"
+    text: "Sauce Labs Backpack"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/itemsTV"
+    text: "1 Items"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/cartTV"
+    text: "1"
