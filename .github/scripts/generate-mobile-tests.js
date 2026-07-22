@@ -130,7 +130,7 @@ async function main() {
   try {
     const plannerList = entries.map(e => `- specs/${e.filename}`).join('\n')
     await runAgent(
-      `Use the maestro-test-planner agent to verify and refine EACH of the following plans against app id "${appId}" on the connected device, following AGENTS.md's "Mobile tests (Maestro)" conventions. Update each file in place only if changes are needed. Process every plan in this list before finishing:\n${plannerList}\n\nIf a plan's stated Expect: outcome turns out to be genuinely contradicted by the app's real behavior (not a wording issue — the app actually does something different from what's described), do NOT keep retrying or waiting for the expected state to appear. Note it directly in the plan file with a BEHAVIOR MISMATCH comment describing expected vs actual, and move on to the next plan.`
+      `Use the maestro-test-planner agent to verify and refine EACH of the following plans against app id "${appId}" on the connected device, following AGENTS.md's "Mobile tests (Maestro)" conventions. Update each file in place only if changes are needed. Process every plan in this list before finishing, ONE AT A TIME IN SEQUENCE — do not dispatch multiple planner sub-agents concurrently. There is only one connected device/simulator; the Maestro driver's local bridge connection cannot handle two simultaneous automation sessions against it and will break under that contention (confirmed: this has caused real, hard-to-diagnose "Failed to connect" errors for both TCs when run in parallel). Finish verifying one plan completely before starting the next:\n${plannerList}\n\nIf a plan's stated Expect: outcome turns out to be genuinely contradicted by the app's real behavior (not a wording issue — the app actually does something different from what's described), do NOT keep retrying or waiting for the expected state to appear. Note it directly in the plan file with a BEHAVIOR MISMATCH comment describing expected vs actual, and move on to the next plan.`
     )
   } catch (err) {
     if (err instanceof CostCapExceededError) throw err
@@ -146,7 +146,7 @@ async function main() {
   try {
     const generatorList = entries.map(e => `- specs/${e.filename} -> ${e.specPath}`).join('\n')
     await runAgent(
-      `Use the maestro-test-generator agent to implement EACH of the following plans as its corresponding Maestro flow YAML file, following AGENTS.md's "Mobile tests (Maestro)" conventions. Process every entry in this list:\n${generatorList}`
+      `Use the maestro-test-generator agent to implement EACH of the following plans as its corresponding Maestro flow YAML file, following AGENTS.md's "Mobile tests (Maestro)" conventions. Process every entry in this list, ONE AT A TIME IN SEQUENCE — do not dispatch multiple generator sub-agents concurrently. There is only one connected device/simulator; the Maestro driver's local bridge connection cannot handle two simultaneous automation sessions against it and will break under that contention (confirmed: this has caused real "Failed to connect" errors and produced zero output for either TC when run in parallel). Finish implementing and confirming one flow completely before starting the next:\n${generatorList}`
     )
   } catch (err) {
     if (err instanceof CostCapExceededError || err instanceof AgentTimeoutError) skipHealing = true
@@ -178,7 +178,7 @@ async function main() {
     for (let attempt = 1; attempt <= 3 && !clean; attempt++) {
       console.log(`Heal attempt ${attempt}/3`)
       await runAgent(
-        `Use the maestro-test-healer agent to fix any failing flows in ${suiteDir}, following AGENTS.md's "Mobile tests (Maestro)" conventions. Do not weaken assertions — if a failure means app behavior changed rather than the flow being wrong, add a "# POSSIBLE REGRESSION" comment and a flagged-regression tag instead of forcing it to pass.`
+        `Use the maestro-test-healer agent to fix any failing flows in ${suiteDir}, following AGENTS.md's "Mobile tests (Maestro)" conventions. If there is more than one failing flow, fix them ONE AT A TIME IN SEQUENCE, not concurrently — there is only one connected device/simulator, and its Maestro driver bridge connection cannot handle two simultaneous automation sessions (confirmed: this breaks the connection outright, not just slows it down). Do not weaken assertions — if a failure means app behavior changed rather than the flow being wrong, add a "# POSSIBLE REGRESSION" comment and a flagged-regression tag instead of forcing it to pass.`
       )
       clean = await runMaestroTest(suiteDir)
     }
