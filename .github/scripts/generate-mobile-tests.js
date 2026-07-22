@@ -9,7 +9,7 @@ const {
   WEBHOOK_BASE_URL,
   WEBHOOK_SECRET,
   GENERATION_COST_CAP_USD = '5',
-  AGENT_TIMEOUT_MS = String(15 * 60 * 1000), // 15 min default per call
+  AGENT_TIMEOUT_MS = String(25 * 60 * 1000), // 25 min default per call — bumped from 15 after a real iOS checkout verification (shipping+payment+review, 4 screens) ran out of clock time on legitimate work, not a stall
 } = process.env
 
 const COST_CAP = Number(GENERATION_COST_CAP_USD)
