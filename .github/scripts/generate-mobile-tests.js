@@ -106,14 +106,21 @@ async function runAgent(prompt) {
   return result
 }
 
-// Mobile equivalent of generate-tests.js's runPlaywrightTest — runs the whole
-// suite dir for real against the connected device and reports pass/fail.
-function runMaestroTest(targetDir) {
-  return new Promise(resolve => {
-    execFile('maestro', ['test', targetDir], (error) => {
-      resolve(!error) // true = all passed, false = at least one failure
+// Mobile equivalent of generate-tests.js's runPlaywrightTest — runs each flow
+// file as its OWN `maestro test` invocation rather than the whole dir in one
+// batch call. Returns per-file pass/fail. One invocation per flow the same
+// reasoning as main()'s per-TC agent loop below — see that comment.
+async function runMaestroTest(targetDir) {
+  const files = fs.readdirSync(targetDir).filter(f => /\.ya?ml$/.test(f))
+  const status = {}
+  for (const file of files) {
+    status[file] = await new Promise(resolve => {
+      execFile('maestro', ['test', path.join(targetDir, file)], (error) => {
+        resolve(!error) // true = passed, false = failed
+      })
     })
-  })
+  }
+  return status
 }
 
 async function main() {
@@ -127,14 +134,33 @@ async function main() {
     specPath: path.join(suiteDir, plan.filename.replace(/\.md$/, '.yaml')),
   }))
 
-  try {
-    const plannerList = entries.map(e => `- specs/${e.filename}`).join('\n')
-    await runAgent(
-      `Use the maestro-test-planner agent to verify and refine EACH of the following plans against app id "${appId}" on the connected device, following AGENTS.md's "Mobile tests (Maestro)" conventions. Update each file in place only if changes are needed. Process every plan in this list before finishing, ONE AT A TIME IN SEQUENCE — do not dispatch multiple planner sub-agents concurrently. There is only one connected device/simulator; the Maestro driver's local bridge connection cannot handle two simultaneous automation sessions against it and will break under that contention (confirmed: this has caused real, hard-to-diagnose "Failed to connect" errors for both TCs when run in parallel). Finish verifying one plan completely before starting the next:\n${plannerList}\n\nIf a plan's stated Expect: outcome turns out to be genuinely contradicted by the app's real behavior (not a wording issue — the app actually does something different from what's described), do NOT keep retrying or waiting for the expected state to appear. Note it directly in the plan file with a BEHAVIOR MISMATCH comment describing expected vs actual, and move on to the next plan.`
-    )
-  } catch (err) {
-    if (err instanceof CostCapExceededError) throw err
-    const msg = `Planner batch failed, no TCs could be verified: ${err.message}`
+  // Planner: one `claude -p` process PER test case, not one process handling
+  // the whole list via internal sub-agent dispatch (the old approach). Each
+  // top-level `claude -p` call spawns its own `maestro mcp` server (per
+  // .mcp.json) and therefore its own fresh XCUITest driver. This sidesteps a
+  // confirmed upstream bug (maestro-org/maestro#3368, #3318, #3254): the iOS
+  // driver process can die mid-session and is never restarted or reconnected
+  // — list_devices keeps reporting connected:true the whole time (it only
+  // checks simulator OS boot state), while every driver-mediated call
+  // (inspect_screen/run/launchApp/take_screenshot) fails against the same
+  // dead port for the rest of the session. One TC per process means a dead
+  // driver can only ever take down that one TC, not the whole batch — and
+  // Node's serial `for` loop already prevents the concurrent-dispatch issue
+  // the old prompt text used to warn against, so that instruction is gone too.
+  const plannerOk = new Set()
+  for (const entry of entries) {
+    try {
+      await runAgent(
+        `Use the maestro-test-planner agent to verify and refine the plan at specs/${entry.filename} against app id "${appId}" on the connected device, following AGENTS.md's "Mobile tests (Maestro)" conventions. Update the file in place only if changes are needed.\n\nIf the plan's stated Expect: outcome turns out to be genuinely contradicted by the app's real behavior (not a wording issue — the app actually does something different from what's described), do NOT keep retrying or waiting for the expected state to appear. Note it directly in the plan file with a BEHAVIOR MISMATCH comment describing expected vs actual.`
+      )
+      plannerOk.add(entry.tc_id)
+    } catch (err) {
+      if (err instanceof CostCapExceededError) throw err
+      console.error(`Planner failed for TC ${entry.tc_id}: ${err.message}`)
+    }
+  }
+  if (plannerOk.size === 0) {
+    const msg = `Planner failed for every TC: ${entries.map(e => e.tc_id).join(', ')}`
     await reportEvent('failed', { error_message: msg.slice(0, 2000) })
     console.error(msg)
     process.exit(1)
@@ -142,20 +168,25 @@ async function main() {
 
   await reportPhaseOnce('generating')
 
+  // Generator: same one-process-per-TC split as the planner above, and only
+  // for TCs the planner actually verified — no point generating code from an
+  // unverified plan.
   let skipHealing = false
-  try {
-    const generatorList = entries.map(e => `- specs/${e.filename} -> ${e.specPath}`).join('\n')
-    await runAgent(
-      `Use the maestro-test-generator agent to implement EACH of the following plans as its corresponding Maestro flow YAML file, following AGENTS.md's "Mobile tests (Maestro)" conventions. Process every entry in this list, ONE AT A TIME IN SEQUENCE — do not dispatch multiple generator sub-agents concurrently. There is only one connected device/simulator; the Maestro driver's local bridge connection cannot handle two simultaneous automation sessions against it and will break under that contention (confirmed: this has caused real "Failed to connect" errors and produced zero output for either TC when run in parallel). Finish implementing and confirming one flow completely before starting the next:\n${generatorList}`
-    )
-  } catch (err) {
-    if (err instanceof CostCapExceededError || err instanceof AgentTimeoutError) skipHealing = true
-    console.error('Generator batch reported an error, checking what actually got written:', err.message)
+  for (const entry of entries) {
+    if (!plannerOk.has(entry.tc_id)) continue
+    try {
+      await runAgent(
+        `Use the maestro-test-generator agent to implement the plan at specs/${entry.filename} as its corresponding Maestro flow YAML file at ${entry.specPath}, following AGENTS.md's "Mobile tests (Maestro)" conventions.`
+      )
+    } catch (err) {
+      if (err instanceof CostCapExceededError || err instanceof AgentTimeoutError) { skipHealing = true; break }
+      console.error(`Generator failed for TC ${entry.tc_id}: ${err.message}`)
+    }
   }
 
   const results = entries.map(e => fs.existsSync(e.specPath)
     ? { tc_id: e.tc_id, specPath: e.specPath, success: true }
-    : { tc_id: e.tc_id, specPath: e.specPath, success: false, error: 'generator did not produce this file' })
+    : { tc_id: e.tc_id, specPath: e.specPath, success: false, error: plannerOk.has(e.tc_id) ? 'generator did not produce this file' : 'skipped: planner did not verify this TC' })
 
   for (const r of results) {
     if (!r.success) console.error(`TC ${r.tc_id} failed to generate: ${r.error}`)
@@ -174,16 +205,27 @@ async function main() {
     console.warn(`Generation was cut short (cost cap or timeout) — skipping the heal loop. Proceeding to PR with ${succeeded.length}/${entries.length} test case(s) as generated (unhealed).`)
   } else {
     await reportPhaseOnce('healing')
-    let clean = await runMaestroTest(suiteDir)
-    for (let attempt = 1; attempt <= 3 && !clean; attempt++) {
-      console.log(`Heal attempt ${attempt}/3`)
-      await runAgent(
-        `Use the maestro-test-healer agent to fix any failing flows in ${suiteDir}, following AGENTS.md's "Mobile tests (Maestro)" conventions. If there is more than one failing flow, fix them ONE AT A TIME IN SEQUENCE, not concurrently — there is only one connected device/simulator, and its Maestro driver bridge connection cannot handle two simultaneous automation sessions (confirmed: this breaks the connection outright, not just slows it down). Do not weaken assertions — if a failure means app behavior changed rather than the flow being wrong, add a "# POSSIBLE REGRESSION" comment and a flagged-regression tag instead of forcing it to pass.`
-      )
-      clean = await runMaestroTest(suiteDir)
+    let statusByFile = await runMaestroTest(suiteDir)
+    let failingFiles = Object.entries(statusByFile).filter(([, ok]) => !ok).map(([f]) => f)
+    for (let attempt = 1; attempt <= 3 && failingFiles.length > 0; attempt++) {
+      console.log(`Heal attempt ${attempt}/3: ${failingFiles.join(', ')}`)
+      // One healer process per failing flow — same fresh-driver reasoning as
+      // the planner/generator loops above.
+      for (const file of failingFiles) {
+        try {
+          await runAgent(
+            `Use the maestro-test-healer agent to fix the failing flow at ${path.join(suiteDir, file)}, following AGENTS.md's "Mobile tests (Maestro)" conventions. Do not weaken assertions — if the failure means app behavior changed rather than the flow being wrong, add a "# POSSIBLE REGRESSION" comment and a flagged-regression tag instead of forcing it to pass.`
+          )
+        } catch (err) {
+          if (err instanceof CostCapExceededError) throw err
+          console.error(`Healer failed for ${file}: ${err.message}`)
+        }
+      }
+      statusByFile = await runMaestroTest(suiteDir)
+      failingFiles = Object.entries(statusByFile).filter(([, ok]) => !ok).map(([f]) => f)
     }
-    if (!clean) {
-      console.warn('Heal loop exhausted (3 attempts) with flows still failing — proceeding to PR anyway (a flagged failure is still reviewable).')
+    if (failingFiles.length > 0) {
+      console.warn(`Heal loop exhausted (3 attempts) with ${failingFiles.length} flow(s) still failing — proceeding to PR anyway (a flagged failure is still reviewable).`)
     }
   }
 
