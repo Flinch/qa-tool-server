@@ -7,6 +7,16 @@ import { describeFailure } from '../lib/describeFailure.js'
 
 const GENERATION_STATUSES = ['pending', 'exploring', 'generating', 'healing', 'opening_pr', 'completed', 'failed']
 
+// One app id per mobile platform, not a single shared var — a single
+// MOBILE_TARGET_APP_ID silently misdirected generation at whichever platform's
+// bundle id happened to be set last (real wasted CI runs from this). Mirrors
+// GITHUB_GENERATION_WORKFLOW_ID vs GITHUB_MOBILE_GENERATION_WORKFLOW_ID's
+// existing per-platform-var pattern.
+const MOBILE_APP_ID_BY_PLATFORM = {
+  android: process.env.MOBILE_TARGET_APP_ID_ANDROID || 'com.sec.android.app.popupcalculator',
+  ios: process.env.MOBILE_TARGET_APP_ID_IOS,
+}
+
 const router = Router()
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || ''
 
@@ -206,9 +216,12 @@ router.get('/generation-payload/:correlationId', verifySecret, async (req, res) 
     // pipeline. Mobile has no equivalent binary-management yet (a known,
     // flagged gap) — app_id is a stand-in env var default for now, same
     // category as target_url's own hardcoded fallback.
+    if (run.suite_platform !== 'web' && !MOBILE_APP_ID_BY_PLATFORM[run.suite_platform]) {
+      return res.status(500).json({ error: `No app id configured for "${run.suite_platform}" suites — set MOBILE_TARGET_APP_ID_${run.suite_platform.toUpperCase()}` })
+    }
     const platformFields = run.suite_platform === 'web'
       ? { target_url: process.env.TARGET_URL || 'https://service-desk-roan.vercel.app' }
-      : { app_id: process.env.MOBILE_TARGET_APP_ID || 'com.sec.android.app.popupcalculator' }
+      : { app_id: MOBILE_APP_ID_BY_PLATFORM[run.suite_platform] }
 
     res.json({
       project_id: run.project_id,
