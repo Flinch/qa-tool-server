@@ -1,0 +1,104 @@
+# scenario: TC-78 — Browse catalog and add product to cart (iOS)
+# spec: specs/tc-78-browse-catalog-and-add-product-to-cart-ios.md
+appId: com.saucelabs.mydemo.app.ios
+---
+# 1. On the Products catalog screen, confirm the product grid is visible —
+# each card is a ProductItem (e.g. "Sauce Labs Backpack - Black", "... - Green",
+# "... - Orange", "... - Red").
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "Catalog-screen"
+- assertVisible:
+    id: "ProductItem"
+    index: 0
+- assertVisible:
+    text: "Sauce Labs Backpack - Black"
+- assertVisible:
+    text: "Sauce Labs Backpack - Green"
+- assertVisible:
+    text: "Sauce Labs Backpack - Orange"
+- assertVisible:
+    text: "Sauce Labs Backpack - Red"
+
+# 2. Tap the first product card, "Sauce Labs Backpack - Black", to open its
+# detail screen. Confirm the product name, price ("$ 29.99"), and an
+# "Add To Cart" button are visible.
+- tapOn:
+    id: "ProductItem"
+    index: 0
+- assertVisible:
+    id: "ProductDetails-screen"
+- assertVisible:
+    text: "Sauce Labs Backpack - Black"
+- assertVisible:
+    id: "Price"
+    text: "\\$ 29.99"
+- assertVisible:
+    id: "AddToCart"
+
+# 3. Tap the "Add To Cart" button.
+- tapOn:
+    id: "AddToCart"
+
+# 4. Without navigating anywhere else, verify a cart item-count badge reading
+# "1" appears immediately on the bottom "Cart" tab. Note: a literal
+# `childOf: { id: "Cart-tab-item" }` selector does not work here — inspecting
+# the live hierarchy shows the badge's "1" accessibility node is a sibling of
+# the "Cart-tab-item" node within the tab's container, not its descendant, so
+# Maestro's childOf never matches it. Equivalent id-scoping is achieved
+# instead via `rightOf` the tab's own icon resource-id (verified against a
+# false positive: with an empty cart and the product-detail quantity stepper's
+# "1" on screen, this selector correctly reports not-visible).
+- assertVisible:
+    text: "1"
+    rightOf:
+      id: "AddToCartUnselected Icons"
+
+# 5. Tap the "Catalog" tab to return to the Products catalog screen. Confirm
+# the Cart tab badge still reads "1".
+- tapOn:
+    id: "Catalog-tab-item"
+- assertVisible:
+    id: "Catalog-screen"
+- assertVisible:
+    text: "1"
+    rightOf:
+      id: "AddToCartUnselected Icons"
+
+# 6. Tap the "Cart" tab to open the cart.
+- tapOn:
+    id: "Cart-tab-item"
+- assertVisible:
+    id: "Cart-screen"
+
+# Expect: The Cart screen ("My Cart") shows the added product ("Sauce Labs
+# Backpack - Black") with quantity "1", the footer reads "Total: 1 Items"
+# alongside a matching price ("$29.99"), and the bottom "Cart" tab badge
+# continues to read "1". The quantity "1" is scoped between "Color:" and
+# "Total:" to distinguish it from the tab-bar badge's own "1" (both are
+# technically "below" the product's color row, so that alone is ambiguous;
+# adding "above: Total:" excludes the badge, which sits below the footer).
+# The tab's icon resource-id changes to "AddToCart Icons" (selected state)
+# once the Cart tab is active, verified live, so the badge assertion here
+# anchors off that id rather than the catalog-screen variant.
+- assertVisible:
+    text: "My Cart"
+- assertVisible:
+    text: "Sauce Labs Backpack - Black"
+- assertVisible:
+    text: "1"
+    below:
+      text: "Color:"
+    above:
+      text: "Total:"
+- assertVisible:
+    text: "Total:"
+- assertVisible:
+    text: "1 Items"
+- assertVisible:
+    text: "\\$29.99"
+- assertVisible:
+    text: "1"
+    rightOf:
+      id: "AddToCart Icons"
