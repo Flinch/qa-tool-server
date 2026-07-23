@@ -43,6 +43,20 @@ if (!WEBHOOK_BASE_URL || !WEBHOOK_SECRET) {
 const projectId = Number(projectIdArg)
 const correlationId = RUN_CORRELATION_ID || null
 const triggerType = TRIGGER_TYPE || 'manual'
+
+// This runner handles both platforms, so an iOS Simulator and an Android
+// device/emulator can be connected at the same time. Without -p/--platform,
+// maestro's device auto-selection is ambiguous across the two and can pick
+// the wrong one outright (confirmed: an iOS flow run this way failed with
+// "Package ... is not installed" — not because it wasn't installed, but
+// because maestro had picked the connected Android device instead). Derived
+// from flowsDir (tests/generated-mobile/<platform>/<suite-slug>) rather than
+// adding a new required arg, so the existing by-hand usage keeps working.
+const platform = flowsDir.split('/').find((seg, i, arr) => arr[i - 1] === 'generated-mobile')
+if (!platform) {
+  console.error(`Could not determine platform from flows dir "${flowsDir}" (expected tests/generated-mobile/<platform>/<suite-slug>)`)
+  process.exit(1)
+}
 const junitPath = path.join('/tmp', `maestro-${suiteSlug}-results.xml`)
 // Fixed + flattened (not the default timestamped ~/.maestro/tests/<ts>/) so
 // this run's screenshots are unambiguous to find afterward — cleared first
@@ -103,9 +117,10 @@ function statusToResult(status) {
   return 'failed'
 }
 
-console.log(`Running maestro test against ${flowsDir}...`)
+console.log(`Running maestro test against ${flowsDir} (platform: ${platform})...`)
 try {
   execFileSync('maestro', [
+    '--platform', platform,
     'test', flowsDir,
     '--format', 'junit', '--output', junitPath,
     '--debug-output', debugOutputDir, '--flatten-debug-output',
