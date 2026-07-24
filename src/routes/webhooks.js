@@ -4,6 +4,7 @@ import { query } from '../db/pool.js'
 import { broadcast } from '../lib/sse.js'
 import { exportPlansForTestCases } from '../lib/planExport.js'
 import { describeFailure } from '../lib/describeFailure.js'
+import { classifyFailure } from '../lib/classifyFailure.js'
 
 const GENERATION_STATUSES = ['pending', 'exploring', 'generating', 'healing', 'opening_pr', 'completed', 'failed']
 
@@ -154,11 +155,12 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       const notes = `Auto-filed from test run #${runId} (${trigger_type || 'manual'})${github_run_url ? ` — CI: ${github_run_url}` : ''}` +
         (description && r.error_message ? `\n\nRaw failure detail: ${r.error_message}` : '')
       const screenshotData = r.screenshot_base64 ? `data:image/png;base64,${r.screenshot_base64}` : null
+      const isEnvironmental = classifyFailure(r.error_message)
 
       if (existing[0]) {
         await query(
-          `UPDATE bugs SET test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, updated_at=NOW() WHERE id=$5`,
-          [runId, actual, notes, screenshotData, existing[0].id]
+          `UPDATE bugs SET test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, is_environmental=$5, updated_at=NOW() WHERE id=$6`,
+          [runId, actual, notes, screenshotData, isEnvironmental, existing[0].id]
         )
         continue
       }
@@ -166,8 +168,8 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       await query(
         `INSERT INTO bugs
            (project_id, test_case_id, suite_id, test_run_id, title, severity,
-            steps_to_reproduce, expected, actual, notes, origin, created_by, screenshot_data)
-         VALUES ($1,$2,$3,$4,$5,'medium',$6,$7,$8,$9,'automated',NULL,$10)`,
+            steps_to_reproduce, expected, actual, notes, origin, created_by, screenshot_data, is_environmental)
+         VALUES ($1,$2,$3,$4,$5,'medium',$6,$7,$8,$9,'automated',NULL,$10,$11)`,
         [
           project_id,
           testCase?.id || null,
@@ -179,6 +181,7 @@ router.post('/test-runs', verifySecret, async (req, res) => {
           actual,
           notes,
           screenshotData,
+          isEnvironmental,
         ]
       )
     }

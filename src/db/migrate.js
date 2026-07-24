@@ -394,6 +394,13 @@ ALTER TABLE bugs ADD COLUMN IF NOT EXISTS screenshot_data TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_bugs_suite ON bugs(suite_id);
 CREATE INDEX IF NOT EXISTS idx_bugs_test_run ON bugs(test_run_id);
+
+-- Distinguishes an automated bug caused by infra/tooling (device unreachable,
+-- app not installed, connection refused — the test never really ran) from a
+-- genuine assertion failure. Set by classifyFailure.js at bug-creation time
+-- from the raw CI error message; always false for manual bugs, which have no
+-- such message to classify.
+ALTER TABLE bugs ADD COLUMN IF NOT EXISTS is_environmental BOOLEAN NOT NULL DEFAULT false;
 `
 
 async function migrate() {
