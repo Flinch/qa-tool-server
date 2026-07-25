@@ -12,11 +12,11 @@ router.use(requireRole('qa_engineer', 'admin'))
 // (bugs + execution-runs per project) instead of one query each.
 function bugEvent(b) {
   return b.status === 'resolved'
-    ? { kind: 'bug_resolved', text: `Bug #${b.id} "${b.title}" resolved`, projectName: b.project_name, time: b.updated_at }
-    : { kind: 'bug_reported', text: `Bug #${b.id} "${b.title}" reported`, severity: b.severity, projectName: b.project_name, time: b.created_at }
+    ? { kind: 'bug_resolved', text: `Bug #${b.id} "${b.title}" resolved`, bugId: b.id, projectId: b.project_id, projectName: b.project_name, time: b.updated_at }
+    : { kind: 'bug_reported', text: `Bug #${b.id} "${b.title}" reported`, severity: b.severity, bugId: b.id, projectId: b.project_id, projectName: b.project_name, time: b.created_at }
 }
 function runEvent(r) {
-  return { kind: 'execution_run', text: `Execution run "${r.name}" finished — ${r.passed}/${r.total} passed`, projectName: r.project_name, time: r.completed_at }
+  return { kind: 'execution_run', text: `Execution run "${r.name}" finished — ${r.passed}/${r.total} passed`, runId: r.id, projectId: r.project_id, projectName: r.project_name, time: r.completed_at }
 }
 
 router.get('/', async (req, res) => {
@@ -56,25 +56,25 @@ router.get('/', async (req, res) => {
         LEFT JOIN automated_test_cases atc ON atc.test_case_id = tc.id
       `),
       query(`
-        SELECT b.id, b.title, b.severity, b.status, b.created_at, b.updated_at, p.name AS project_name
+        SELECT b.id, b.project_id, b.title, b.severity, b.status, b.created_at, b.updated_at, p.name AS project_name
         FROM bugs b JOIN projects p ON p.id = b.project_id
         ORDER BY GREATEST(b.created_at, b.updated_at) DESC
         LIMIT 10
       `),
       query(`
-        SELECT er.id, er.name, er.completed_at, p.name AS project_name,
+        SELECT er.id, er.project_id, er.name, er.completed_at, p.name AS project_name,
           COUNT(erc.id) FILTER (WHERE erc.status='pass')::int AS passed,
           COUNT(erc.id) FILTER (WHERE erc.status IN ('pass','fail'))::int AS total
         FROM execution_runs er
         JOIN projects p ON p.id = er.project_id
         JOIN execution_run_test_cases erc ON erc.execution_run_id = er.id
         WHERE er.status = 'completed'
-        GROUP BY er.id, er.name, er.completed_at, p.name
+        GROUP BY er.id, er.project_id, er.name, er.completed_at, p.name
         ORDER BY er.completed_at DESC
         LIMIT 8
       `),
       query(`
-        SELECT b.id, b.title, b.severity, b.created_at, p.name AS project_name
+        SELECT b.id, b.project_id, b.title, b.severity, b.created_at, p.name AS project_name
         FROM bugs b JOIN projects p ON p.id = b.project_id
         WHERE b.status != 'resolved' AND b.severity IN ('critical','high')
         ORDER BY CASE b.severity WHEN 'critical' THEN 1 ELSE 2 END, b.created_at ASC
@@ -98,11 +98,11 @@ router.get('/', async (req, res) => {
     ].sort((a, b) => new Date(b.time) - new Date(a.time)).slice(0, 8)
 
     const recentRuns = recentRunRows.rows.slice(0, 5).map(r => ({
-      projectName: r.project_name, runName: r.name, passed: r.passed, total: r.total, completedAt: r.completed_at,
+      runId: r.id, projectId: r.project_id, projectName: r.project_name, runName: r.name, passed: r.passed, total: r.total, completedAt: r.completed_at,
     }))
 
     const needsAttention = attentionRows.rows.map(b => ({
-      id: b.id, title: b.title, severity: b.severity, projectName: b.project_name, createdAt: b.created_at,
+      id: b.id, projectId: b.project_id, title: b.title, severity: b.severity, projectName: b.project_name, createdAt: b.created_at,
     }))
 
     res.json({
