@@ -20,6 +20,9 @@ on:
         required: false
         type: string
 
+permissions:
+  contents: write # needed to push the report to the gh-pages branch
+
 jobs:
   run:
     # Self-hosted, same reasoning as generate-mobile-tests.yml: executing a
@@ -50,6 +53,19 @@ jobs:
           RUN_CORRELATION_ID: ${{ inputs.run_correlation_id }}
           TRIGGER_TYPE: manual
           GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Predictable ahead of the actual gh-pages deploy step below (URL
+          # shape only depends on run_id, not on the deploy having happened
+          # yet) — same ordering playwright.yml effectively relies on.
+          REPORT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/reports/${{ github.run_id }}/index.html
           WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
         run: node scripts/report-mobile-results.js "tests/generated-mobile/${{ inputs.platform }}/${{ inputs.suite_slug }}" "${{ inputs.suite_slug }}" "${{ inputs.project_id }}"
+
+      - name: Deploy report to GitHub Pages
+        if: always()
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: /tmp/maestro-report-${{ inputs.suite_slug }}
+          destination_dir: reports/${{ github.run_id }}
+          keep_files: true

@@ -174,6 +174,15 @@ async function main() {
   let skipHealing = false
   for (const entry of entries) {
     if (!plannerOk.has(entry.tc_id)) continue
+    // specPath lives under tests/generated-mobile/, which is git-tracked —
+    // a TC that's already been generated and merged (like TC-78) leaves that
+    // file present in every future checkout, including on a REtry. Without
+    // clearing it first, a generator that fails outright this run would
+    // still find the old, merged file below and falsely report success —
+    // same "trust a fixed path without confirming this run wrote it" mistake
+    // as the fixed runMaestroTest/junitPath bug, just for generation instead
+    // of execution.
+    fs.rmSync(entry.specPath, { force: true })
     try {
       await runAgent(
         `Use the maestro-test-generator agent to implement the plan at specs/${entry.filename} as its corresponding Maestro flow YAML file at ${entry.specPath}, following AGENTS.md's "Mobile tests (Maestro)" conventions.`

@@ -27,9 +27,10 @@ import { execFileSync } from 'child_process'
 import { XMLParser } from 'fast-xml-parser'
 import https from 'https'
 import http from 'http'
+import { buildHtmlReport } from './buildMobileReport.js'
 
 const [, , flowsDir, suiteSlug, projectIdArg] = process.argv
-const { WEBHOOK_BASE_URL, WEBHOOK_SECRET, RUN_CORRELATION_ID, TRIGGER_TYPE, GITHUB_RUN_URL } = process.env
+const { WEBHOOK_BASE_URL, WEBHOOK_SECRET, RUN_CORRELATION_ID, TRIGGER_TYPE, GITHUB_RUN_URL, REPORT_URL, REPORT_OUTPUT_DIR } = process.env
 
 if (!flowsDir || !suiteSlug || !projectIdArg) {
   console.error('Usage: node scripts/report-mobile-results.js <flows-dir> <suite-slug> <project-id>')
@@ -58,12 +59,26 @@ if (!platform) {
   process.exit(1)
 }
 const junitPath = path.join('/tmp', `maestro-${suiteSlug}-results.xml`)
+// Fixed path, reused across every run of this suite — cleared first so a run
+// that fails before maestro ever writes output (e.g. "0 devices connected")
+// can't silently report a PRIOR run's real results as if they were fresh.
+// Confirmed this happened for real: a run with no Android device attached
+// still reported "2 passed, 1 failed" — an old results file from an earlier,
+// device-attached run was still sitting at this path and got parsed as-is.
+fs.rmSync(junitPath, { force: true })
 // Fixed + flattened (not the default timestamped ~/.maestro/tests/<ts>/) so
 // this run's screenshots are unambiguous to find afterward — cleared first
 // so a stale file from a previous run can never be mistaken for this one's.
 const debugOutputDir = path.join('/tmp', `maestro-debug-${suiteSlug}`)
 fs.rmSync(debugOutputDir, { recursive: true, force: true })
 fs.mkdirSync(debugOutputDir, { recursive: true })
+
+// Directory (not a single file) so it can be handed straight to a static
+// host's publish step (mirrors playwright.yml's publish_dir) — same
+// clear-before-write reasoning as junitPath/debugOutputDir above.
+const reportDir = REPORT_OUTPUT_DIR || path.join('/tmp', `maestro-report-${suiteSlug}`)
+fs.rmSync(reportDir, { recursive: true, force: true })
+fs.mkdirSync(reportDir, { recursive: true })
 
 // Maestro auto-saves a screenshot at the moment of failure, named
 // screenshot-❌-<timestamp>-(<flow name>).png — no extra flags needed beyond
@@ -128,10 +143,14 @@ try {
     stdio: 'inherit',
     env: { ...process.env, PATH: `${process.env.HOME}/.maestro/bin:/opt/homebrew/opt/openjdk/bin:${process.env.PATH}` },
   })
-} catch {
+} catch (err) {
   // maestro test exits non-zero when flows fail — that's expected and not a
-  // script error; the JUnit file is still written. Only a missing output
-  // file below means something actually went wrong (e.g. no device).
+  // script error; the JUnit file is still written in that case. But it also
+  // exits non-zero for real infra failures (no device connected) that never
+  // write a file at all — log it so that distinction is visible instead of
+  // silently swallowed, which is exactly what let the stale-results bug
+  // above go unnoticed.
+  console.error('maestro test exited non-zero:', err.message)
 }
 
 if (!fs.existsSync(junitPath)) {
@@ -173,11 +192,18 @@ const results = rawCases.map(tc => {
   }
 })
 
+// Written locally either way (useful when running by hand); only reported
+// upward via report_url when REPORT_URL is set, i.e. when maestro-run.yml's
+// gh-pages deploy step is actually going to publish this directory.
+fs.writeFileSync(path.join(reportDir, 'index.html'), buildHtmlReport({ suiteSlug, platform, results }))
+console.log(`Wrote HTML report to ${path.join(reportDir, 'index.html')}`)
+
 const payload = {
   correlation_id: correlationId, // null for a manual local run, real for a CI-dispatched one
   project_id: projectId,
   suite_slug: suiteSlug,
   trigger_type: triggerType,
+  report_url: REPORT_URL || null,
   github_run_url: GITHUB_RUN_URL,
   status: 'completed',
   total: results.length,
