@@ -33,14 +33,15 @@ router.get('/', async (req, res) => {
 })
 
 router.post('/', staffOnly, async (req, res) => {
-  const { title, description } = req.body
+  const { title, description, platform } = req.body
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
+  if (platform !== undefined && !['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
 
   try {
     const { rows } = await query(
-      `INSERT INTO requirements (project_id, title, description, created_by)
-       VALUES ($1,$2,$3,$4) RETURNING *`,
-      [req.params.id, title.trim(), description || '', req.userId]
+      `INSERT INTO requirements (project_id, title, description, created_by, platform)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [req.params.id, title.trim(), description || '', req.userId, platform || 'web']
     )
     res.status(201).json({ ...rows[0], linked_test_case_count: 0 })
   } catch (e) {
@@ -55,8 +56,10 @@ router.post('/', staffOnly, async (req, res) => {
 // the diff for review — nothing is written to `requirements` in that case
 // until POST /apply-diff confirms it (Phase 3).
 router.post('/upload', staffOnly, async (req, res) => {
-  const { filename, mimetype, data, text } = req.body
+  const { filename, mimetype, data, text, platform } = req.body
   if (!data && !text?.trim()) return res.status(400).json({ error: 'A file or pasted text is required' })
+  if (platform !== undefined && !['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
+  const uploadPlatform = platform || 'web'
 
   try {
     const rawText = data ? await extractDocumentText({ filename, mimetype, data }) : text.trim()
@@ -106,9 +109,9 @@ ${rawText}`
       const inserted = []
       for (const r of parsed) {
         const { rows } = await query(
-          `INSERT INTO requirements (project_id, title, description, document_id, created_by)
-           VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-          [req.params.id, r.title, r.description || '', doc.id, req.userId]
+          `INSERT INTO requirements (project_id, title, description, document_id, created_by, platform)
+           VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+          [req.params.id, r.title, r.description || '', doc.id, req.userId, uploadPlatform]
         )
         inserted.push({ ...rows[0], linked_test_case_count: 0 })
       }
@@ -175,7 +178,8 @@ Rules:
 // POST /apply-diff — commits a user-reviewed diff from POST /upload. Only
 // items the user approved should be included; nothing here is inferred.
 router.post('/apply-diff', staffOnly, async (req, res) => {
-  const { documentId, modified = [], removed = [], added = [] } = req.body
+  const { documentId, modified = [], removed = [], added = [], platform } = req.body
+  if (platform !== undefined && !['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
 
   try {
     const updated = []
@@ -198,9 +202,9 @@ router.post('/apply-diff', staffOnly, async (req, res) => {
     const inserted = []
     for (const n of added) {
       const { rows } = await query(
-        `INSERT INTO requirements (project_id, title, description, document_id, created_by)
-         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-        [req.params.id, n.title, n.description || '', documentId, req.userId]
+        `INSERT INTO requirements (project_id, title, description, document_id, created_by, platform)
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+        [req.params.id, n.title, n.description || '', documentId, req.userId, platform || 'web']
       )
       inserted.push({ ...rows[0], linked_test_case_count: 0 })
     }
@@ -219,7 +223,7 @@ router.post('/apply-diff', staffOnly, async (req, res) => {
 router.post('/:reqId/generate-test-case', staffOnly, async (req, res) => {
   try {
     const { rows: reqRows } = await query(
-      `SELECT r.id, r.title, r.description, COUNT(DISTINCT rtc.test_case_id)::int AS linked_test_case_count
+      `SELECT r.id, r.title, r.description, r.platform, COUNT(DISTINCT rtc.test_case_id)::int AS linked_test_case_count
        FROM requirements r
        LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
        WHERE r.id=$1 AND r.project_id=$2 AND r.status='active'
@@ -237,9 +241,9 @@ router.post('/:reqId/generate-test-case', staffOnly, async (req, res) => {
     const inserted = []
     for (const tc of generated) {
       const { rows } = await query(
-        `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-        [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId]
+        `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by, platform)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId, requirement.platform]
       )
       await query(
         `INSERT INTO requirement_test_cases (requirement_id, test_case_id) VALUES ($1,$2)`,
@@ -260,7 +264,7 @@ router.post('/:reqId/generate-test-case', staffOnly, async (req, res) => {
 router.post('/generate-test-cases', staffOnly, async (req, res) => {
   try {
     const { rows: uncovered } = await query(
-      `SELECT r.id, r.title, r.description
+      `SELECT r.id, r.title, r.description, r.platform
        FROM requirements r
        LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
        WHERE r.project_id=$1 AND r.status='active'
@@ -273,13 +277,14 @@ router.post('/generate-test-cases', staffOnly, async (req, res) => {
     }
 
     const generated = await generateTestCasesForRequirements(uncovered)
+    const platformByRequirement = Object.fromEntries(uncovered.map(r => [r.id, r.platform]))
 
     const byRequirement = {}
     for (const tc of generated) {
       const { rows } = await query(
-        `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-        [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId]
+        `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by, platform)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId, platformByRequirement[tc.requirementId] || 'web']
       )
       await query(
         `INSERT INTO requirement_test_cases (requirement_id, test_case_id) VALUES ($1,$2)`,
@@ -322,6 +327,24 @@ router.post('/:reqId/test-cases', staffOnly, async (req, res) => {
   }
 
   try {
+    // Server-side half of the platform fix — LinkTestCasesModal already
+    // filters candidates client-side, but never trust the client alone: a
+    // stale page or a direct API call could still try to cross-link.
+    const { rows: reqRows } = await query(
+      `SELECT platform FROM requirements WHERE id=$1 AND project_id=$2`,
+      [req.params.reqId, req.params.id]
+    )
+    if (!reqRows[0]) return res.status(404).json({ error: 'Requirement not found' })
+    const { rows: tcRows } = await query(
+      `SELECT id FROM test_cases WHERE project_id=$1 AND id = ANY($2::int[]) AND platform = $3`,
+      [req.params.id, test_case_ids, reqRows[0].platform]
+    )
+    if (tcRows.length !== test_case_ids.length) {
+      const validIds = new Set(tcRows.map(r => r.id))
+      const rejected = test_case_ids.filter(id => !validIds.has(id))
+      return res.status(400).json({ error: `Test cases not found or not "${reqRows[0].platform}" platform: ${rejected.join(', ')}` })
+    }
+
     for (const tcId of test_case_ids) {
       await query(
         `INSERT INTO requirement_test_cases (requirement_id, test_case_id)
@@ -348,7 +371,7 @@ router.delete('/:reqId/test-cases/:tcId', staffOnly, async (req, res) => {
 })
 
 export async function patchRequirement(req, res) {
-  const { title, description, status } = req.body
+  const { title, description, status, platform } = req.body
 
   const fields = []
   const values = []
@@ -364,6 +387,10 @@ export async function patchRequirement(req, res) {
   if (status !== undefined) {
     if (!['active', 'removed'].includes(status)) return res.status(400).json({ error: 'Invalid status' })
     fields.push(`status=$${i++}`); values.push(status)
+  }
+  if (platform !== undefined) {
+    if (!['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
+    fields.push(`platform=$${i++}`); values.push(platform)
   }
 
   if (fields.length === 0) return res.status(400).json({ error: 'No fields to update' })

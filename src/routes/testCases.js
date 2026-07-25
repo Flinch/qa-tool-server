@@ -28,15 +28,16 @@ router.get('/', async (req, res) => {
 })
 
 router.post('/', staffOnly, async (req, res) => {
-  const { title, type, steps, expected } = req.body
+  const { title, type, steps, expected, platform } = req.body
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
   if (!['functional', 'integration', 'e2e'].includes(type)) return res.status(400).json({ error: 'Invalid type' })
+  if (platform !== undefined && !['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
 
   try {
     const { rows } = await query(
-      `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, created_by)
-       VALUES ($1,$2,$3,$4,$5,false,$6) RETURNING *`,
-      [req.params.id, title.trim(), type, JSON.stringify(steps || []), expected || '', req.userId]
+      `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, created_by, platform)
+       VALUES ($1,$2,$3,$4,$5,false,$6,$7) RETURNING *`,
+      [req.params.id, title.trim(), type, JSON.stringify(steps || []), expected || '', req.userId, platform || 'web']
     )
     await query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])
     res.status(201).json({ ...rows[0], bug_count: 0 })
@@ -68,7 +69,7 @@ export async function deleteTestCase(req, res) {
 }
 
 export async function patchTestCase(req, res) {
-  const { status, title, type, steps, expected, automationCandidate, automationReasoning } = req.body
+  const { status, title, type, steps, expected, automationCandidate, automationReasoning, platform } = req.body
 
   const fields = []
   const values = []
@@ -97,6 +98,10 @@ export async function patchTestCase(req, res) {
   }
   if (automationReasoning !== undefined) {
     fields.push(`automation_reasoning=$${i++}`); values.push(automationReasoning)
+  }
+  if (platform !== undefined) {
+    if (!['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
+    fields.push(`platform=$${i++}`); values.push(platform)
   }
 
   if (fields.length === 0) return res.status(400).json({ error: 'No fields to update' })

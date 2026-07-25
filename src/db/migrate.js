@@ -376,6 +376,22 @@ ALTER TABLE automation_suites ADD COLUMN IF NOT EXISTS platform TEXT NOT NULL DE
 ALTER TABLE automation_suites ADD COLUMN IF NOT EXISTS engine TEXT
   CHECK (engine IN ('playwright','maestro','appium'));
 
+-- Platform segmentation for manual QA content (test cases + requirements) —
+-- a separate, coarser concern from automation_suites.platform above: a suite
+-- routes to a specific CI workflow (needs web/ios/android precision), but
+-- one requirement can legitimately cover BOTH mobile OSes via separate
+-- test_case rows (confirmed against real data: project 4's Catalog
+-- browsing/Cart management/Authentication/Checkout requirements each link
+-- to both an Android and an iOS test case). Stays 2-way, not a copy of
+-- automation_suites' 3-way enum.
+ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS platform TEXT NOT NULL DEFAULT 'web'
+  CHECK (platform IN ('web','mobile'));
+ALTER TABLE requirements ADD COLUMN IF NOT EXISTS platform TEXT NOT NULL DEFAULT 'web'
+  CHECK (platform IN ('web','mobile'));
+
+CREATE INDEX IF NOT EXISTS idx_test_cases_platform ON test_cases(project_id, platform);
+CREATE INDEX IF NOT EXISTS idx_requirements_platform ON requirements(project_id, platform);
+
 -- Auto-filed bugs from failed automated test runs (web or mobile — both post
 -- through the same POST /webhooks/test-runs contract). 'origin' distinguishes
 -- these from hand-logged bugs in the UI; created_by stays NULL for them since

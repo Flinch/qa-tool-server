@@ -152,19 +152,26 @@ export async function triggerGenerationRun({ projectId, suiteId, testCaseIds, us
   }
 
   // Validate the selection server-side: every id must be a real TC in THIS
-  // project AND flagged as an automation candidate. Never trust the client's
-  // filter — a stale UI or a hand-crafted request could send anything.
+  // project, flagged as an automation candidate, AND tagged for the same
+  // platform category as the target suite. Never trust the client's filter —
+  // a stale UI or a hand-crafted request could send anything. test_cases.
+  // platform is coarse (web/mobile), unlike automation_suites.platform
+  // (web/ios/android) — both ios and android suites accept 'mobile' TCs; see
+  // migrate.js's platform-segmentation comment for why that's intentional,
+  // not a precision loss (a requirement can legitimately cover both mobile
+  // OSes via separate TC rows).
+  const suiteCategory = suiteRows[0].platform === 'web' ? 'web' : 'mobile'
   const { rows: tcRows } = await query(
     `SELECT id FROM test_cases
-     WHERE project_id=$1 AND id = ANY($2::int[]) AND automation_candidate = true`,
-    [projectId, testCaseIds]
+     WHERE project_id=$1 AND id = ANY($2::int[]) AND automation_candidate = true AND platform = $3`,
+    [projectId, testCaseIds, suiteCategory]
   )
   if (tcRows.length !== testCaseIds.length) {
     const validIds = new Set(tcRows.map(r => r.id))
     const rejected = testCaseIds.filter(id => !validIds.has(id))
     throw new TriggerError(
       400,
-      `Test cases not found in this project or not automation candidates: ${rejected.join(', ')}`
+      `Test cases not found, not automation candidates, or not "${suiteCategory}" platform: ${rejected.join(', ')}`
     )
   }
 

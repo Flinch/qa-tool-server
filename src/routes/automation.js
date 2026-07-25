@@ -40,7 +40,7 @@ router.get('/suites', ...anyProjectMember, async (req, res) => {
       ) latest ON true
       WHERE s.project_id = $1
       GROUP BY s.id, latest.total, latest.status, latest.passed, latest.failed, latest.started_at, latest.completed_at, latest.error_message
-      ORDER BY latest.completed_at DESC NULLS LAST, s.name
+      ORDER BY s.name
     `, [req.params.id])
     res.json(rows)
   } catch (e) {
