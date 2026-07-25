@@ -4,6 +4,7 @@ import { requireAuth, requireRole, verifyToken } from '../middleware/auth.js'
 import { requireProjectAccess } from '../middleware/projectAccess.js'
 import { subscribe, unsubscribe } from '../lib/sse.js'
 import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileStaleGenerationRuns } from '../lib/automationTrigger.js'
+import { getPrStatus } from '../lib/githubPrStatus.js'
 
 const router = Router({ mergeParams: true })
 
@@ -154,7 +155,16 @@ router.get('/generation-runs', ...anyProjectMember, async (req, res) => {
       ORDER BY gr.started_at DESC
       LIMIT 20
     `, [req.params.id])
-    res.json(rows)
+    // Live GitHub check per PR — cheap enough for ~20 rows, and avoids
+    // needing a pull_request webhook receiver (GitHub-side setup, not just
+    // code) just to know whether a PR landed. Runs in parallel, fails open
+    // per-row (see githubPrStatus.js) so one bad lookup can't 500 the panel.
+    const withPrStatus = await Promise.all(rows.map(async r => {
+      if (!r.pr_url) return r
+      const prStatus = await getPrStatus(r.pr_url)
+      return { ...r, pr_status: prStatus }
+    }))
+    res.json(withPrStatus)
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
