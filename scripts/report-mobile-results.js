@@ -154,7 +154,7 @@ try {
 }
 
 if (!fs.existsSync(junitPath)) {
-  const message = `maestro test did not produce a results file at ${junitPath} — no device connected, or the run crashed before producing output`
+  const message = 'No test results produced — no device connected, or the run crashed before producing output'
   console.error(message)
   await sendWebhook({
     correlation_id: correlationId,
