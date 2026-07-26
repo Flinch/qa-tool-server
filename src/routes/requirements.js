@@ -14,6 +14,24 @@ const staffOnly = requireRole('qa_engineer', 'admin')
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
+// Lookup-or-create by name — the AI upload flow proposes a feature_name
+// string (user-editable in review, not a numeric id), so this resolves it to
+// a real feature row, reusing an existing one under the same
+// UNIQUE(project_id, name) constraint rather than creating a duplicate.
+// Blank/omitted name just means no feature — not required here the way it is
+// for manual bug creation.
+async function resolveFeatureId(projectId, name, userId) {
+  const trimmed = name?.trim()
+  if (!trimmed) return null
+  await query(
+    `INSERT INTO features (project_id, name, created_by) VALUES ($1,$2,$3)
+     ON CONFLICT (project_id, name) DO NOTHING`,
+    [projectId, trimmed, userId]
+  )
+  const { rows } = await query(`SELECT id FROM features WHERE project_id=$1 AND name=$2`, [projectId, trimmed])
+  return rows[0]?.id || null
+}
+
 // GET /projects/:id/requirements — staff + read-only clients who are project members
 router.get('/', async (req, res) => {
   try {
@@ -33,15 +51,20 @@ router.get('/', async (req, res) => {
 })
 
 router.post('/', staffOnly, async (req, res) => {
-  const { title, description, platform } = req.body
+  const { title, description, platform, feature_id } = req.body
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
   if (platform !== undefined && !['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
 
   try {
+    if (feature_id) {
+      const { rows: fRows } = await query(`SELECT id FROM features WHERE id=$1 AND project_id=$2`, [feature_id, req.params.id])
+      if (!fRows[0]) return res.status(400).json({ error: 'Invalid feature' })
+    }
+
     const { rows } = await query(
-      `INSERT INTO requirements (project_id, title, description, created_by, platform)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [req.params.id, title.trim(), description || '', req.userId, platform || 'web']
+      `INSERT INTO requirements (project_id, title, description, created_by, platform, feature_id)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [req.params.id, title.trim(), description || '', req.userId, platform || 'web', feature_id || null]
     )
     res.status(201).json({ ...rows[0], linked_test_case_count: 0 })
   } catch (e) {
@@ -81,17 +104,35 @@ router.post('/upload', staffOnly, async (req, res) => {
       [req.params.id]
     )
 
+    // Existing feature names for this project, passed to the AI as context so
+    // it reuses a real feature instead of minting a near-duplicate when a
+    // requirement clearly belongs to one already tracked.
+    const { rows: existingFeatures } = await query(
+      `SELECT name FROM features WHERE project_id=$1 ORDER BY name`,
+      [req.params.id]
+    )
+    const featureContext = existingFeatures.length > 0
+      ? existingFeatures.map(f => f.name).join(', ')
+      : '(none yet — propose new ones)'
+
     if (existing.length === 0) {
-      const prompt = `You are a senior QA/product analyst. Given the following requirements document, break it down into a list of discrete, individually testable requirements.
+      // No writes here either, same as diff mode below — the AI's proposed
+      // requirements AND its suggested feature per requirement are both
+      // reviewed and editable before POST /apply-diff commits anything.
+      const prompt = `You are a senior QA/product analyst. Given the following requirements document, break it down into a list of discrete, individually testable requirements, and group them into a small number of coherent product features.
+
+Existing features already tracked for this project (reuse one of these names when a requirement clearly belongs to it, rather than inventing a near-duplicate): ${featureContext}
 
 Return ONLY a valid JSON array with no preamble, no markdown, no explanation. Each object must have:
 - "title": string — short, specific requirement name
 - "description": string — the full requirement detail, rewritten clearly if needed
+- "feature_name": string — a short, specific feature/module name this requirement belongs to (reuse an existing one above when it fits, otherwise propose a new concise name)
 
 Rules:
 - Split compound requirements into separate items when they describe genuinely different behavior
 - Do not invent requirements that aren't actually in the document
 - Aim for individually testable units, not a paragraph-by-paragraph copy
+- Keep the total number of distinct feature_name values small and coherent — group related requirements under the same feature rather than creating a new one for each
 
 Document:
 ${rawText}`
@@ -106,17 +147,13 @@ ${rawText}`
       const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
       const parsed = JSON.parse(cleaned)
 
-      const inserted = []
-      for (const r of parsed) {
-        const { rows } = await query(
-          `INSERT INTO requirements (project_id, title, description, document_id, created_by, platform)
-           VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-          [req.params.id, r.title, r.description || '', doc.id, req.userId, uploadPlatform]
-        )
-        inserted.push({ ...rows[0], linked_test_case_count: 0 })
-      }
+      const newItems = parsed.map(r => ({ title: r.title, description: r.description || '', feature_name: r.feature_name || '' }))
 
-      return res.status(201).json({ mode: 'created', document: doc, requirements: inserted })
+      return res.status(201).json({
+        mode: 'created',
+        document: doc,
+        diff: { modified: [], removed: [], new: newItems, unchangedCount: 0 },
+      })
     }
 
     // Diff mode — no writes to `requirements` here, just classification.
@@ -130,17 +167,19 @@ ${currentList}
 New document:
 ${rawText}
 
+Existing features already tracked for this project (reuse one of these names for a new requirement when it clearly belongs to it, rather than inventing a near-duplicate): ${featureContext}
+
 Return ONLY a valid JSON object with no preamble, no markdown, no explanation, with this exact shape:
 {
   "modified": [{"id": 12, "title": "...", "description": "..."}],
   "removed": [13, 15],
-  "new": [{"title": "...", "description": "..."}]
+  "new": [{"title": "...", "description": "...", "feature_name": "..."}]
 }
 
 Rules:
-- "modified": existing requirements (use their real id) whose actual meaning or behavior changed based on the new document — title/description are the updated versions. Only mark something modified if the meaning changed, not just wording.
+- "modified": existing requirements (use their real id) whose actual meaning or behavior changed based on the new document — title/description are the updated versions. Only mark something modified if the meaning changed, not just wording. Do not add "feature_name" to modified items — they keep whatever feature they already have.
 - "removed": ids of existing requirements no longer present in the new document at all.
-- "new": requirements described in the new document that don't correspond to any existing one.
+- "new": requirements described in the new document that don't correspond to any existing one. Each needs a "feature_name" — a short feature/module name (reuse an existing one above when it fits, otherwise propose a concise new one). Keep the total number of distinct feature_name values small and coherent.
 - Any existing requirement not mentioned in "modified" or "removed" is assumed unchanged — do not list unchanged ones anywhere.
 - Do not invent requirements that aren't actually in the document.`
 
@@ -201,10 +240,11 @@ router.post('/apply-diff', staffOnly, async (req, res) => {
 
     const inserted = []
     for (const n of added) {
+      const featureId = await resolveFeatureId(req.params.id, n.feature_name, req.userId)
       const { rows } = await query(
-        `INSERT INTO requirements (project_id, title, description, document_id, created_by, platform)
-         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-        [req.params.id, n.title, n.description || '', documentId, req.userId, platform || 'web']
+        `INSERT INTO requirements (project_id, title, description, document_id, created_by, platform, feature_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+        [req.params.id, n.title, n.description || '', documentId, req.userId, platform || 'web', featureId]
       )
       inserted.push({ ...rows[0], linked_test_case_count: 0 })
     }
@@ -223,7 +263,7 @@ router.post('/apply-diff', staffOnly, async (req, res) => {
 router.post('/:reqId/generate-test-case', staffOnly, async (req, res) => {
   try {
     const { rows: reqRows } = await query(
-      `SELECT r.id, r.title, r.description, r.platform, COUNT(DISTINCT rtc.test_case_id)::int AS linked_test_case_count
+      `SELECT r.id, r.title, r.description, r.platform, r.feature_id, COUNT(DISTINCT rtc.test_case_id)::int AS linked_test_case_count
        FROM requirements r
        LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
        WHERE r.id=$1 AND r.project_id=$2 AND r.status='active'
@@ -241,9 +281,9 @@ router.post('/:reqId/generate-test-case', staffOnly, async (req, res) => {
     const inserted = []
     for (const tc of generated) {
       const { rows } = await query(
-        `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by, platform)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId, requirement.platform]
+        `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by, platform, feature_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId, requirement.platform, requirement.feature_id]
       )
       await query(
         `INSERT INTO requirement_test_cases (requirement_id, test_case_id) VALUES ($1,$2)`,
@@ -264,7 +304,7 @@ router.post('/:reqId/generate-test-case', staffOnly, async (req, res) => {
 router.post('/generate-test-cases', staffOnly, async (req, res) => {
   try {
     const { rows: uncovered } = await query(
-      `SELECT r.id, r.title, r.description, r.platform
+      `SELECT r.id, r.title, r.description, r.platform, r.feature_id
        FROM requirements r
        LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
        WHERE r.project_id=$1 AND r.status='active'
@@ -278,13 +318,14 @@ router.post('/generate-test-cases', staffOnly, async (req, res) => {
 
     const generated = await generateTestCasesForRequirements(uncovered)
     const platformByRequirement = Object.fromEntries(uncovered.map(r => [r.id, r.platform]))
+    const featureByRequirement = Object.fromEntries(uncovered.map(r => [r.id, r.feature_id]))
 
     const byRequirement = {}
     for (const tc of generated) {
       const { rows } = await query(
-        `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by, platform)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId, platformByRequirement[tc.requirementId] || 'web']
+        `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by, platform, feature_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId, platformByRequirement[tc.requirementId] || 'web', featureByRequirement[tc.requirementId] || null]
       )
       await query(
         `INSERT INTO requirement_test_cases (requirement_id, test_case_id) VALUES ($1,$2)`,
@@ -371,7 +412,7 @@ router.delete('/:reqId/test-cases/:tcId', staffOnly, async (req, res) => {
 })
 
 export async function patchRequirement(req, res) {
-  const { title, description, status, platform } = req.body
+  const { title, description, status, platform, feature_id } = req.body
 
   const fields = []
   const values = []
@@ -392,6 +433,9 @@ export async function patchRequirement(req, res) {
     if (!['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
     fields.push(`platform=$${i++}`); values.push(platform)
   }
+  if (feature_id !== undefined) {
+    fields.push(`feature_id=$${i++}`); values.push(feature_id || null)
+  }
 
   if (fields.length === 0) return res.status(400).json({ error: 'No fields to update' })
 
@@ -399,6 +443,17 @@ export async function patchRequirement(req, res) {
   values.push(req.params.id)
 
   try {
+    if (feature_id) {
+      // No project_id in this route's params (mounted at /api/requirements/:id)
+      // — validate via the requirement's own project instead.
+      const { rows: fRows } = await query(
+        `SELECT f.id FROM features f JOIN requirements r ON r.project_id = f.project_id
+         WHERE f.id=$1 AND r.id=$2`,
+        [feature_id, req.params.id]
+      )
+      if (!fRows[0]) return res.status(400).json({ error: 'Invalid feature' })
+    }
+
     const { rows } = await query(
       `UPDATE requirements SET ${fields.join(', ')} WHERE id=$${i} RETURNING *`,
       values

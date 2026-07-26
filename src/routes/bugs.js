@@ -56,16 +56,23 @@ router.get('/', async (req, res) => {
 // a JIRA failure never blocks the local bug from being created (fail-open,
 // see DECISIONS.md) — it's surfaced back as `jira_error` on the response.
 router.post('/', staffOnly, async (req, res) => {
-  const { title, severity, steps_to_reproduce, expected, actual, notes, test_case_id, execution_run_id, post_to_jira, jira } = req.body
+  const { title, severity, steps_to_reproduce, expected, actual, notes, test_case_id, execution_run_id, post_to_jira, jira, feature_id } = req.body
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
+  // Required for manually-logged bugs (this is the only manual bug-creation
+  // route — automated bugs are inserted directly in webhooks.js and never
+  // hit this endpoint, so no exemption is needed here).
+  if (!feature_id) return res.status(400).json({ error: 'Feature is required' })
 
   try {
+    const { rows: fRows } = await query(`SELECT id FROM features WHERE id=$1 AND project_id=$2`, [feature_id, req.params.id])
+    if (!fRows[0]) return res.status(400).json({ error: 'Invalid feature' })
+
     const { rows } = await query(
-      `INSERT INTO bugs (project_id, test_case_id, execution_run_id, title, severity, steps_to_reproduce, expected, actual, notes, created_by, jira_organization)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      `INSERT INTO bugs (project_id, test_case_id, execution_run_id, title, severity, steps_to_reproduce, expected, actual, notes, created_by, jira_organization, feature_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
       [req.params.id, test_case_id || null, execution_run_id || null, title.trim(), severity || 'medium',
        steps_to_reproduce || null, expected || null, actual || null, notes || null, req.userId,
-       post_to_jira ? (jira?.organization?.trim() || null) : null]
+       post_to_jira ? (jira?.organization?.trim() || null) : null, feature_id]
     )
     await query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])
     let bug = rows[0]
@@ -104,7 +111,7 @@ router.post('/', staffOnly, async (req, res) => {
 
 // PATCH /bugs/:id — mounted at root in index.js
 export async function patchBug(req, res) {
-  const { status, title, severity, steps_to_reproduce, expected, actual, notes } = req.body
+  const { status, title, severity, steps_to_reproduce, expected, actual, notes, feature_id } = req.body
 
   const fields = []
   const values = []
@@ -134,6 +141,12 @@ export async function patchBug(req, res) {
   if (notes !== undefined) {
     fields.push(`notes=$${i++}`); values.push(notes)
   }
+  if (feature_id !== undefined) {
+    // Re-categorizing is fine, but a bug can't be edited back to featureless
+    // — that would undo the "manual bugs must belong to a feature" rule.
+    if (!feature_id) return res.status(400).json({ error: 'Feature is required' })
+    fields.push(`feature_id=$${i++}`); values.push(feature_id)
+  }
 
   if (fields.length === 0) return res.status(400).json({ error: 'No fields to update' })
 
@@ -141,6 +154,17 @@ export async function patchBug(req, res) {
   values.push(req.params.id)
 
   try {
+    if (feature_id) {
+      // No project_id in this route's params (mounted at /api/bugs/:id) —
+      // validate via the bug's own project instead.
+      const { rows: fRows } = await query(
+        `SELECT f.id FROM features f JOIN bugs b ON b.project_id = f.project_id
+         WHERE f.id=$1 AND b.id=$2`,
+        [feature_id, req.params.id]
+      )
+      if (!fRows[0]) return res.status(400).json({ error: 'Invalid feature' })
+    }
+
     const { rows } = await query(
       `UPDATE bugs SET ${fields.join(', ')} WHERE id=$${i} RETURNING *`,
       values

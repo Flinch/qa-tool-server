@@ -8,6 +8,8 @@ import requirementsRouter from './routes/requirements.js'
 import { patchRequirement } from './routes/requirements.js'
 import bugsRouter from './routes/bugs.js'
 import { patchBug } from './routes/bugs.js'
+import featuresRouter from './routes/features.js'
+import { patchFeature, deleteFeature } from './routes/features.js'
 import statsRouter from './routes/stats.js'
 import authRouter from './routes/auth.js'
 import automationRouter from './routes/automation.js'
@@ -40,6 +42,7 @@ app.use('/api/projects', projectsRouter)
 app.use('/api/projects/:id/test-cases', testCasesRouter)
 app.use('/api/projects/:id/requirements', requirementsRouter)
 app.use('/api/projects/:id/bugs', bugsRouter)
+app.use('/api/projects/:id/features', featuresRouter)
 app.use('/api/projects/:id/automation', automationRouter)
 app.use('/api/projects/:id/execution-runs', executionRunsRouter)
 app.use('/api/stats', statsRouter)
@@ -50,5 +53,7 @@ app.patch('/api/test-cases/:id', requireAuth, requireRole('qa_engineer', 'admin'
 app.delete('/api/test-cases/:id', requireAuth, requireRole('qa_engineer', 'admin'), deleteTestCase)
 app.patch('/api/requirements/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchRequirement)
 app.patch('/api/bugs/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchBug)
+app.patch('/api/features/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchFeature)
+app.delete('/api/features/:id', requireAuth, requireRole('qa_engineer', 'admin'), deleteFeature)
 
 app.listen(PORT, () => console.log(`QA Tool server running on port ${PORT}`))

@@ -417,6 +417,49 @@ CREATE INDEX IF NOT EXISTS idx_bugs_test_run ON bugs(test_run_id);
 -- from the raw CI error message; always false for manual bugs, which have no
 -- such message to classify.
 ALTER TABLE bugs ADD COLUMN IF NOT EXISTS is_environmental BOOLEAN NOT NULL DEFAULT false;
+
+-- ============================================================================
+-- Feature grouping — requirements/test cases/bugs by feature (Phase 10)
+-- ============================================================================
+
+-- Project-scoped grouping, deliberately its own table rather than a copy of
+-- platform's fixed enum — features are user-defined per project, not a known
+-- closed set. UNIQUE(project_id, name) below backs the AI upload flow's
+-- lookup-or-create-by-name resolution (see requirements.js's apply-diff).
+CREATE TABLE IF NOT EXISTS features (
+  id           SERIAL PRIMARY KEY,
+  project_id   INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  name         TEXT NOT NULL,
+  description  TEXT,
+  created_by   TEXT REFERENCES users(id),
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_features_project ON features(project_id);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'features_project_name_unique'
+  ) THEN
+    ALTER TABLE features
+      ADD CONSTRAINT features_project_name_unique UNIQUE (project_id, name);
+  END IF;
+END $$;
+
+-- SET NULL, not CASCADE, on all three — same reasoning as
+-- automated_test_cases.test_case_id above: a feature is a categorization, not
+-- a lifecycle dependency, so deleting one orphans tagged rows rather than
+-- deleting them. Additive and nullable: nothing existing gets a feature
+-- retroactively, this is opt-in going forward (same philosophy as platform).
+ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS feature_id INTEGER REFERENCES features(id) ON DELETE SET NULL;
+ALTER TABLE requirements ADD COLUMN IF NOT EXISTS feature_id INTEGER REFERENCES features(id) ON DELETE SET NULL;
+ALTER TABLE bugs ADD COLUMN IF NOT EXISTS feature_id INTEGER REFERENCES features(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_test_cases_feature ON test_cases(feature_id);
+CREATE INDEX IF NOT EXISTS idx_requirements_feature ON requirements(feature_id);
+CREATE INDEX IF NOT EXISTS idx_bugs_feature ON bugs(feature_id);
 `
 
 async function migrate() {

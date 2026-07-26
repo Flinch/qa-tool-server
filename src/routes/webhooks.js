@@ -85,15 +85,37 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       )
     }
 
-    // Keep the suite's known test roster in sync with what actually ran.
-    // New test titles get added automatically; renamed/removed ones just
-    // stop showing up in future runs rather than being deleted here.
+    // Keep the suite's known test roster in sync with what actually ran, and
+    // link each roster row back to the manual test case it automates.
+    // Mobile Maestro's JUnit test name is the flow filename (e.g.
+    // "tc-75-browse-catalog-and-add-product-to-cart"); web Playwright titles
+    // follow the "TC-<id>: ..." convention from planExport.js. Both start
+    // with tc-<digits>, so one case-insensitive prefix match resolves either
+    // back to a real test case — falls back to null if there's no match or
+    // it's not a real TC in this project. New test titles get added
+    // automatically; renamed/removed ones just stop showing up in future
+    // runs rather than being deleted here. DO UPDATE (not DO NOTHING) so a
+    // roster row inserted before this linking existed self-heals on its next
+    // real run instead of staying orphaned forever.
+    const testCasesByResult = new Map()
     for (const r of results) {
+      const tcMatch = /^tc-(\d+)/i.exec(r.test_title)
+      let testCase = null
+      if (tcMatch) {
+        const { rows: tcRows } = await query(
+          `SELECT id, title, expected, steps, feature_id FROM test_cases WHERE id=$1 AND project_id=$2`,
+          [Number(tcMatch[1]), project_id]
+        )
+        testCase = tcRows[0] || null
+      }
+      testCasesByResult.set(r, testCase)
+
       await query(
-        `INSERT INTO automated_test_cases (suite_id, title)
-         VALUES ($1, $2)
-         ON CONFLICT (suite_id, title) DO NOTHING`,
-        [suiteId, r.test_title]
+        `INSERT INTO automated_test_cases (suite_id, title, test_case_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (suite_id, title) DO UPDATE SET
+           test_case_id = COALESCE(automated_test_cases.test_case_id, EXCLUDED.test_case_id)`,
+        [suiteId, r.test_title, testCase?.id || null]
       )
     }
 
@@ -104,23 +126,7 @@ router.post('/test-runs', verifySecret, async (req, res) => {
     for (const r of results) {
       if (r.status !== 'failed') continue
 
-      // Mobile Maestro's JUnit test name is the flow filename (e.g.
-      // "tc-75-browse-catalog-and-add-product-to-cart"); web Playwright
-      // titles follow the "TC-<id>: ..." convention from planExport.js.
-      // Both start with tc-<digits>, so one case-insensitive prefix match
-      // resolves either back to a real test case — falls back to null
-      // (title-only bug) if there's no match or it's not a real TC in this
-      // project.
-      const tcMatch = /^tc-(\d+)/i.exec(r.test_title)
-      let testCase = null
-      if (tcMatch) {
-        const { rows: tcRows } = await query(
-          `SELECT id, title, expected, steps FROM test_cases WHERE id=$1 AND project_id=$2`,
-          [Number(tcMatch[1]), project_id]
-        )
-        testCase = tcRows[0] || null
-      }
-
+      const testCase = testCasesByResult.get(r)
       const bugTitle = `Automated failure: ${testCase ? testCase.title : r.test_title}`
 
       // Dedup against repeat failures of the same test in the same suite —
@@ -157,10 +163,15 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       const screenshotData = r.screenshot_base64 ? `data:image/png;base64,${r.screenshot_base64}` : null
       const isEnvironmental = classifyFailure(r.error_message)
 
+      // Best-effort only — inherited from the linked test case when it has
+      // one, never blocks bug-filing when it doesn't (unlike manual bug
+      // creation, where a feature is required).
+      const featureId = testCase?.feature_id || null
+
       if (existing[0]) {
         await query(
-          `UPDATE bugs SET test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, is_environmental=$5, updated_at=NOW() WHERE id=$6`,
-          [runId, actual, notes, screenshotData, isEnvironmental, existing[0].id]
+          `UPDATE bugs SET test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, is_environmental=$5, feature_id=COALESCE(feature_id, $6), updated_at=NOW() WHERE id=$7`,
+          [runId, actual, notes, screenshotData, isEnvironmental, featureId, existing[0].id]
         )
         continue
       }
@@ -168,8 +179,8 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       await query(
         `INSERT INTO bugs
            (project_id, test_case_id, suite_id, test_run_id, title, severity,
-            steps_to_reproduce, expected, actual, notes, origin, created_by, screenshot_data, is_environmental)
-         VALUES ($1,$2,$3,$4,$5,'medium',$6,$7,$8,$9,'automated',NULL,$10,$11)`,
+            steps_to_reproduce, expected, actual, notes, origin, created_by, screenshot_data, is_environmental, feature_id)
+         VALUES ($1,$2,$3,$4,$5,'medium',$6,$7,$8,$9,'automated',NULL,$10,$11,$12)`,
         [
           project_id,
           testCase?.id || null,
@@ -182,6 +193,7 @@ router.post('/test-runs', verifySecret, async (req, res) => {
           notes,
           screenshotData,
           isEnvironmental,
+          featureId,
         ]
       )
     }

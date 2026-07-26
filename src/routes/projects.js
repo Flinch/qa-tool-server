@@ -67,6 +67,12 @@ router.post('/', requireRole('admin'), async (req, res) => {
       `INSERT INTO projects (name, client_name, description, created_by) VALUES ($1,$2,$3,$4) RETURNING *`,
       [name.trim(), client_name?.trim() || null, description?.trim() || null, req.userId]
     )
+    // Every project needs a legitimate default bucket for feature tagging —
+    // same reasoning as the 'General' backfill for pre-existing projects.
+    await query(
+      `INSERT INTO features (project_id, name, created_by) VALUES ($1,'General',$2)`,
+      [rows[0].id, req.userId]
+    )
     res.status(201).json(rows[0])
   } catch (e) {
     res.status(500).json({ error: e.message })
