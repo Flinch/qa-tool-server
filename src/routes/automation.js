@@ -115,9 +115,10 @@ router.get('/runs/:runId', ...anyProjectMember, async (req, res) => {
 
 // GET /suites/:suiteId/test-cases — the suite's automated test case roster,
 // each row annotated with a GitHub link when a real generated file matches
-// its tc-<id> title prefix. Staff-only, same as Generation History's
-// PR/file links.
-router.get('/suites/:suiteId/test-cases', requireAuth, staffOnly, async (req, res) => {
+// its tc-<id> title prefix. Staff + read-only clients who are project
+// members (Malik confirmed clients should see the same view as staff here,
+// unlike Generation History's PR/file links which stayed staff-only).
+router.get('/suites/:suiteId/test-cases', ...anyProjectMember, async (req, res) => {
   try {
     const { rows: suiteRows } = await query(
       `SELECT * FROM automation_suites WHERE id=$1 AND project_id=$2`,
@@ -147,7 +148,9 @@ router.get('/suites/:suiteId/test-cases', requireAuth, staffOnly, async (req, re
 // GET /generated-test-cases — every AI-generated automated test case across
 // every suite in the project, for the "Generated test cases" cross-suite
 // view. Directory listing fetched once per distinct suite, not per row.
-router.get('/generated-test-cases', requireAuth, staffOnly, async (req, res) => {
+// Staff + read-only clients who are project members — same access level as
+// the suite-scoped roster route above.
+router.get('/generated-test-cases', ...anyProjectMember, async (req, res) => {
   try {
     const { rows } = await query(`
       SELECT atc.id, atc.title, atc.origin, atc.review_status, atc.test_case_id,
