@@ -110,12 +110,18 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       }
       testCasesByResult.set(r, testCase)
 
+      // origin mirrors test_case_id's own resolution exactly (same
+      // tc-<id> match) — a roster row only counts as "generated" once
+      // it's actually traceable back to a real manual test case, same bar
+      // as test_case_id. Only ever upgrades manual -> generated on
+      // conflict, never the reverse.
       await query(
-        `INSERT INTO automated_test_cases (suite_id, title, test_case_id)
-         VALUES ($1, $2, $3)
+        `INSERT INTO automated_test_cases (suite_id, title, test_case_id, origin)
+         VALUES ($1, $2, $3, $4)
          ON CONFLICT (suite_id, title) DO UPDATE SET
-           test_case_id = COALESCE(automated_test_cases.test_case_id, EXCLUDED.test_case_id)`,
-        [suiteId, r.test_title, testCase?.id || null]
+           test_case_id = COALESCE(automated_test_cases.test_case_id, EXCLUDED.test_case_id),
+           origin = CASE WHEN EXCLUDED.origin = 'generated' THEN 'generated' ELSE automated_test_cases.origin END`,
+        [suiteId, r.test_title, testCase?.id || null, testCase ? 'generated' : 'manual']
       )
     }
 

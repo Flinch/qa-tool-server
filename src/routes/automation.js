@@ -5,6 +5,7 @@ import { requireProjectAccess } from '../middleware/projectAccess.js'
 import { subscribe, unsubscribe } from '../lib/sse.js'
 import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileStaleGenerationRuns } from '../lib/automationTrigger.js'
 import { getPrStatus } from '../lib/githubPrStatus.js'
+import { listSuiteFiles, matchTestCaseToFile } from '../lib/githubSuiteFiles.js'
 
 const router = Router({ mergeParams: true })
 
@@ -107,6 +108,75 @@ router.get('/runs/:runId', ...anyProjectMember, async (req, res) => {
       [req.params.runId]
     )
     res.json({ ...rows[0], results })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// GET /suites/:suiteId/test-cases — the suite's automated test case roster,
+// each row annotated with a GitHub link when a real generated file matches
+// its tc-<id> title prefix. Staff-only, same as Generation History's
+// PR/file links.
+router.get('/suites/:suiteId/test-cases', requireAuth, staffOnly, async (req, res) => {
+  try {
+    const { rows: suiteRows } = await query(
+      `SELECT * FROM automation_suites WHERE id=$1 AND project_id=$2`,
+      [req.params.suiteId, req.params.id]
+    )
+    const suite = suiteRows[0]
+    if (!suite) return res.status(404).json({ error: 'Suite not found' })
+
+    const { rows } = await query(`
+      SELECT atc.id, atc.title, atc.origin, atc.review_status, atc.test_case_id,
+        tc.title AS linked_test_case_title
+      FROM automated_test_cases atc
+      LEFT JOIN test_cases tc ON tc.id = atc.test_case_id
+      WHERE atc.suite_id = $1
+      ORDER BY atc.title
+    `, [suite.id])
+
+    const files = await listSuiteFiles(suite)
+    const testCases = rows.map(r => ({ ...r, github_url: matchTestCaseToFile(r.title, files) }))
+
+    res.json({ suite, testCases })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// GET /generated-test-cases — every AI-generated automated test case across
+// every suite in the project, for the "Generated test cases" cross-suite
+// view. Directory listing fetched once per distinct suite, not per row.
+router.get('/generated-test-cases', requireAuth, staffOnly, async (req, res) => {
+  try {
+    const { rows } = await query(`
+      SELECT atc.id, atc.title, atc.origin, atc.review_status, atc.test_case_id,
+        tc.title AS linked_test_case_title,
+        s.id AS suite_id, s.name AS suite_name, s.slug AS suite_slug, s.platform AS suite_platform
+      FROM automated_test_cases atc
+      JOIN automation_suites s ON s.id = atc.suite_id
+      LEFT JOIN test_cases tc ON tc.id = atc.test_case_id
+      WHERE s.project_id = $1 AND atc.origin = 'generated'
+      ORDER BY s.name, atc.title
+    `, [req.params.id])
+
+    const suitesById = new Map()
+    for (const r of rows) {
+      if (!suitesById.has(r.suite_id)) {
+        suitesById.set(r.suite_id, { id: r.suite_id, name: r.suite_name, slug: r.suite_slug, platform: r.suite_platform })
+      }
+    }
+    const filesBySuite = new Map()
+    for (const suite of suitesById.values()) {
+      filesBySuite.set(suite.id, await listSuiteFiles(suite))
+    }
+
+    const testCases = rows.map(r => ({
+      ...r,
+      github_url: matchTestCaseToFile(r.title, filesBySuite.get(r.suite_id) || []),
+    }))
+
+    res.json({ testCases })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
