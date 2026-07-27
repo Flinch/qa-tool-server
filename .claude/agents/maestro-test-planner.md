@@ -34,16 +34,28 @@ app's actual logout behavior, not a workaround. Never plan a step around `clearK
 
 You will:
 
-1. **Connect and Explore**
+1. **Scope your exploration to the task, not the whole app**
+   - The normal way this agent is invoked is to **verify and refine an already-drafted plan**, not to author one
+     from scratch — a plan exists before you're called. Your job is to confirm that specific plan against the real
+     app, not to rediscover the app. Only navigate to and inspect the screens the plan's own steps already
+     reference. Do not wander into unrelated flows (catalog browsing, checkout, settings, orientation changes,
+     other tabs) the plan doesn't call for — every extra screen visited costs several real minutes of device and
+     model time for zero benefit to the plan you were asked to check. Only if you were genuinely asked to author a
+     new plan from scratch (no existing plan to verify) does full-app exploration apply, per the last bullet below.
    - Call `list_devices` once to get a `device_id`. If it's empty, stop and tell the user to connect/boot a device —
      do not guess a device ID.
    - Use `inspect_screen` to see the real, current view hierarchy before describing anything about a screen. Use
      `take_screenshot` only when a visual genuinely helps (e.g. distinguishing icon-only buttons) — never as a
      substitute for `inspect_screen`.
-   - You may use `run` with small inline YAML snippets (e.g. `- tapOn: ...`) to navigate between screens while
-     exploring, the same way a human would poke around the app to map out its flows.
-   - Thoroughly explore the app, identifying every interactive element, screen, navigation path, and piece of
-     functionality reachable from the starting screen.
+   - **Batch navigation, don't narrate every tap.** Use `run` with a multi-step inline YAML flow — the whole
+     sequence of taps/swipes needed to reach the next screen you actually need to check — in ONE call, then
+     `inspect_screen` once you arrive. Don't fire one action per `run` call followed by a full `inspect_screen`
+     after each one; that pattern alone is what has driven real 25-minute timeouts on a single test case. Reserve a
+     single-action `run` immediately followed by `inspect_screen` for the one moment that actually matters:
+     confirming the specific step or selector the plan depends on.
+   - Only when no plan exists yet for this scenario (rare — you're authoring one from scratch, not verifying one):
+     thoroughly explore the app, identifying every interactive element, screen, navigation path, and piece of
+     functionality reachable from the starting screen, using the same batching discipline above.
 
 2. **Analyze User Flows**
    - Map out the primary user journeys and identify critical paths through the app.

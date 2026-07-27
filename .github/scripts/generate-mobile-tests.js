@@ -212,7 +212,7 @@ async function main() {
   for (const entry of entries) {
     try {
       await runAgent(
-        `Use the maestro-test-planner agent to verify and refine the plan at specs/${entry.filename} against app id "${appId}" on the connected device, following AGENTS.md's "Mobile tests (Maestro)" conventions. Update the file in place only if changes are needed.\n\nIf the plan's stated Expect: outcome turns out to be genuinely contradicted by the app's real behavior (not a wording issue — the app actually does something different from what's described), do NOT keep retrying or waiting for the expected state to appear. Note it directly in the plan file with a BEHAVIOR MISMATCH comment describing expected vs actual.`
+        `Use the maestro-test-planner agent to verify and refine the plan at specs/${entry.filename} against app id "${appId}" on the connected device, following AGENTS.md's "Mobile tests (Maestro)" conventions. Update the file in place only if changes are needed.\n\nThis plan already exists — your job is to confirm it against the real app, not to rediscover the app from scratch. Only navigate to and inspect the specific screens this plan's steps already reference; do not explore unrelated screens or flows (catalog browsing, checkout, settings, orientation changes, etc.) the plan doesn't call for.\n\nIf the plan's stated Expect: outcome turns out to be genuinely contradicted by the app's real behavior (not a wording issue — the app actually does something different from what's described), do NOT keep retrying or waiting for the expected state to appear. Note it directly in the plan file with a BEHAVIOR MISMATCH comment describing expected vs actual.`
       )
       plannerOk.add(entry.tc_id)
     } catch (err) {
