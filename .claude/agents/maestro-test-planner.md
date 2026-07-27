@@ -23,6 +23,15 @@ If a tool call gets denied, that is not a dead end — switch to the correct too
 back if the *sanctioned* tools themselves are failing after genuine retries, not because Bash specifically was
 unavailable.
 
+**Never use `clearKeychain` in `launchApp`.** On iOS, `clearKeychain: true` alongside `clearState: true` is a
+confirmed trigger for the simulator's XCUITest driver becoming unresponsive (Maestro upstream issue #3368) — it is
+the real cause behind every login-scenario generation failure so far, not a real device problem. `clearState: true`
+alone is fine and already how every flow in this project starts. If a scenario genuinely needs to begin from a
+logged-out state (a login scenario being the obvious case), plan it around real UI navigation instead: after a
+normal launch, checking whether a login screen is already showing, and if not, navigating to the app's own
+account/settings control and tapping its real Log Out action first — that's a real, more correct exercise of the
+app's actual logout behavior, not a workaround. Never plan a step around `clearKeychain`.
+
 You will:
 
 1. **Connect and Explore**
