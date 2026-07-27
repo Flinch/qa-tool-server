@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
+import readline from 'readline'
 import https from 'https'
 import http from 'http'
 
@@ -62,14 +63,61 @@ let totalCostUsd = 0
 class CostCapExceededError extends Error {}
 class AgentTimeoutError extends Error {}
 
+function truncateForLog(value, max) {
+  const s = typeof value === 'string' ? value : JSON.stringify(value)
+  return s.length > max ? `${s.slice(0, max)}…` : s
+}
+
+// One line per stream-json event so the live GitHub Actions log actually
+// shows the agent's tool calls and reasoning as they happen, instead of
+// nothing until the whole multi-minute turn completes (the old buffered
+// --output-format json gave no visibility into what the agent was doing —
+// only a single result blob at the very end). Deliberately terse (one line
+// per block, hard-truncated) since this streams into a CI log meant for a
+// human watching live, not a full transcript archive.
+function printStreamEvent(event) {
+  if (event.type !== 'assistant' && event.type !== 'user') return
+  for (const block of event.message?.content || []) {
+    if (block.type === 'thinking' && block.thinking) {
+      console.log(`  🤔 ${truncateForLog(block.thinking, 200)}`)
+    } else if (block.type === 'tool_use') {
+      console.log(`  🔧 ${block.name}(${truncateForLog(block.input, 150)})`)
+    } else if (block.type === 'text' && block.text) {
+      console.log(`  💬 ${truncateForLog(block.text, 300)}`)
+    } else if (block.type === 'tool_result') {
+      const prefix = block.is_error ? 'ERROR: ' : ''
+      console.log(`  ↳ ${prefix}${truncateForLog(block.content, 200)}`)
+    }
+  }
+}
+
 // Identical process-tree-kill reasoning as generate-tests.js's runClaudeProcess
 // — a killed `claude` process can otherwise leave orphaned children alive.
-function runClaudeProcess(args, { timeout, maxBuffer }) {
+// Streams stdout line-by-line (stream-json is one JSON object per line)
+// instead of buffering the whole call like execFile did, printing each
+// event live as it arrives. The final `result` event carries the exact same
+// fields (total_cost_usd/is_error/permission_denials/result) the old
+// buffered `--output-format json` mode returned, so runAgent below barely
+// changes.
+function runClaudeProcess(args, { timeout }) {
   return new Promise((resolve, reject) => {
-    const child = execFile('npx', args, { maxBuffer, detached: true }, (error, stdout, stderr) => {
-      clearTimeout(timer)
-      if (error) return reject(Object.assign(error, { stdout, stderr }))
-      resolve({ stdout, stderr })
+    const child = spawn('npx', args, { detached: true })
+
+    let resultEvent = null
+    let stderr = ''
+    child.stderr.on('data', d => { stderr += d })
+
+    const rl = readline.createInterface({ input: child.stdout })
+    rl.on('line', line => {
+      if (!line.trim()) return
+      let event
+      try {
+        event = JSON.parse(line)
+      } catch {
+        return // a stray non-JSON line shouldn't kill the whole run
+      }
+      printStreamEvent(event)
+      if (event.type === 'result') resultEvent = event
     })
 
     const timer = setTimeout(() => {
@@ -80,17 +128,30 @@ function runClaudeProcess(args, { timeout, maxBuffer }) {
       }
       reject(new AgentTimeoutError(`Agent invocation timed out after ${timeout}ms and was killed.`))
     }, timeout)
+
+    child.on('error', err => {
+      clearTimeout(timer)
+      reject(err)
+    })
+    child.on('close', code => {
+      clearTimeout(timer)
+      if (!resultEvent) {
+        reject(Object.assign(new Error(`Agent process exited (code ${code}) without a result event`), { stderr }))
+        return
+      }
+      resolve(resultEvent)
+    })
   })
 }
 
 async function runAgent(prompt) {
-  const { stdout } = await runClaudeProcess([
+  const result = await runClaudeProcess([
     'claude', '-p', prompt,
     '--permission-mode', 'dontAsk',
-    '--output-format', 'json',
-  ], { maxBuffer: 1024 * 1024 * 50, timeout: AGENT_TIMEOUT })
+    '--output-format', 'stream-json',
+    '--verbose',
+  ], { timeout: AGENT_TIMEOUT })
 
-  const result = JSON.parse(stdout)
   if (typeof result.total_cost_usd === 'number') totalCostUsd += result.total_cost_usd
   console.log(`  cost this call: $${result.total_cost_usd ?? '?'}, running total: $${totalCostUsd.toFixed(4)}`)
 
