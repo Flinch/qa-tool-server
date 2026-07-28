@@ -23,6 +23,10 @@ const GITHUB_MOBILE_GENERATION_REF = process.env.GITHUB_MOBILE_GENERATION_REF ||
 // above: no agents, no cost cap, just `maestro test` against a real device.
 const GITHUB_MOBILE_WORKFLOW_ID = process.env.GITHUB_MOBILE_WORKFLOW_ID // e.g. "maestro-run.yml"
 const GITHUB_MOBILE_REF = process.env.GITHUB_MOBILE_REF || 'master'
+// "Diagnose and heal" a single already-existing failing test — its own
+// workflow per platform, same web/mobile split as every other pipeline here.
+const GITHUB_HEAL_WORKFLOW_ID = process.env.GITHUB_HEAL_WORKFLOW_ID // e.g. "heal-test.yml"
+const GITHUB_MOBILE_HEAL_WORKFLOW_ID = process.env.GITHUB_MOBILE_HEAL_WORKFLOW_ID // e.g. "heal-mobile-test.yml"
 
 // A run that's been sitting in pending/running this long almost certainly
 // means CI never reported back (crashed runner, workflow misconfigured,
@@ -265,6 +269,72 @@ export async function triggerGenerationRun({ projectId, suiteId, testCaseIds, us
         ref: suiteRows[0].platform === 'web' ? 'master' : GITHUB_MOBILE_GENERATION_REF,
         inputs: {
           correlation_id: correlationId,
+        },
+      }),
+    }
+  )
+
+  if (!ghRes.ok) {
+    const errText = (await ghRes.text()).slice(0, 500)
+    await query(
+      `UPDATE generation_runs SET status='failed', error_message=$2, completed_at=NOW() WHERE id=$1`,
+      [rows[0].id, `GitHub Actions dispatch failed: ${errText}`]
+    )
+    throw new TriggerError(502, `GitHub Actions dispatch failed: ${errText}`)
+  }
+
+  return rows[0]
+}
+
+// Dispatches a one-off "diagnose and heal" at a SINGLE already-existing
+// failing test file — not a batch generation run. Reuses the exact same
+// generation_runs table and generation-events webhook lifecycle as
+// triggerGenerationRun above (kind='heal' is the only real difference in the
+// row itself), so the client's existing generation-run live-progress
+// tracking picks this up for free. testCaseIds is best-effort (0 or 1
+// elements — a real linked test case if the failing result resolved to one,
+// empty if it's an orphan title with no tc-<id> match) since healing doesn't
+// require the stricter link triggerGenerationRun enforces.
+export async function triggerHealRun({ projectId, suiteId, testCaseIds, targetTitle, filePath, userId }) {
+  if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
+    throw new TriggerError(500, 'Test generation workflow is not configured on the server')
+  }
+
+  const { rows: suiteRows } = await query(
+    `SELECT * FROM automation_suites WHERE id=$1 AND project_id=$2`,
+    [suiteId, projectId]
+  )
+  if (!suiteRows[0]) throw new TriggerError(404, 'Suite not found')
+  const suite = suiteRows[0]
+
+  const workflowId = suite.platform === 'web' ? GITHUB_HEAL_WORKFLOW_ID : GITHUB_MOBILE_HEAL_WORKFLOW_ID
+  if (!workflowId) {
+    throw new TriggerError(500, `No heal workflow configured for "${suite.platform}" suites`)
+  }
+
+  const correlationId = crypto.randomUUID()
+
+  const { rows } = await query(
+    `INSERT INTO generation_runs (project_id, suite_id, correlation_id, status, kind, target_title, test_case_ids, created_by)
+     VALUES ($1,$2,$3,'pending','heal',$4,$5,$6) RETURNING *`,
+    [projectId, suiteId, correlationId, targetTitle, testCaseIds || [], userId]
+  )
+
+  const ref = suite.platform === 'web' ? 'master' : GITHUB_MOBILE_GENERATION_REF
+  const ghRes = await fetch(
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${workflowId}/dispatches`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ref,
+        inputs: {
+          correlation_id: correlationId,
+          file_path: filePath,
         },
       }),
     }

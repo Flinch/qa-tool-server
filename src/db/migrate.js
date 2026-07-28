@@ -281,6 +281,28 @@ CREATE TABLE IF NOT EXISTS generation_runs (
 CREATE INDEX IF NOT EXISTS idx_generation_runs_project ON generation_runs(project_id);
 CREATE INDEX IF NOT EXISTS idx_generation_runs_suite ON generation_runs(suite_id);
 
+-- 'heal' = a one-off "diagnose and heal" dispatch at a single already-
+-- existing failing file, triggered from a test execution run's failed
+-- result — as opposed to 'generate', a real batch authoring new tests from
+-- test case plans. Same generation_runs lifecycle/webhook contract either
+-- way (dispatch -> phases -> completed/failed with a PR url), just a
+-- narrower job with no planner/generator step.
+ALTER TABLE generation_runs ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'generate';
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'generation_runs_kind_check'
+  ) THEN
+    ALTER TABLE generation_runs ADD CONSTRAINT generation_runs_kind_check CHECK (kind IN ('generate','heal'));
+  END IF;
+END $$;
+
+-- Only set for kind='heal' runs — the failing test's title, captured once at
+-- trigger time from the test_run_results row that started the heal. Lets
+-- GenerationRunRow show "Healing: <real title>" without re-resolving
+-- anything after the fact.
+ALTER TABLE generation_runs ADD COLUMN IF NOT EXISTS target_title TEXT;
+
 -- automated_test_cases learns where each automated test came from and what
 -- review state it's in. Every generated test title starts with "TC-<id>:",
 -- which is how report-results.js will link rows here back to manual TCs.

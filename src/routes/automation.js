@@ -3,7 +3,7 @@ import { query } from '../db/pool.js'
 import { requireAuth, requireRole, verifyToken } from '../middleware/auth.js'
 import { requireProjectAccess } from '../middleware/projectAccess.js'
 import { subscribe, unsubscribe } from '../lib/sse.js'
-import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileStaleGenerationRuns, triggerTestCaseRerun } from '../lib/automationTrigger.js'
+import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileStaleGenerationRuns, triggerTestCaseRerun, triggerHealRun } from '../lib/automationTrigger.js'
 import { getPrStatus } from '../lib/githubPrStatus.js'
 import { listSuiteFiles, matchTestCaseToFile } from '../lib/githubSuiteFiles.js'
 
@@ -177,6 +177,59 @@ router.post('/runs/:runId/rerun', requireAuth, staffOnly, async (req, res) => {
       projectId: req.params.id,
       suiteId: run.suite_id,
       filePaths,
+      userId: req.userId,
+    })
+    res.status(202).json(newRun)
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message })
+  }
+})
+
+// POST /runs/:runId/heal — "diagnose and heal" ONE specific failed result
+// (the medic-cross button next to a single failing test, not a batch
+// action). Resolves the file the same way /rerun does, best-effort resolves
+// a real linked test_case_id from the roster for traceability, then
+// dispatches the healer directly at that file via triggerHealRun.
+router.post('/runs/:runId/heal', requireAuth, staffOnly, async (req, res) => {
+  const { result_id } = req.body
+  if (!result_id) return res.status(400).json({ error: 'result_id is required' })
+
+  try {
+    const { rows: runRows } = await query(`
+      SELECT tr.*, s.id AS suite_id, s.slug AS suite_slug, s.platform AS suite_platform
+      FROM test_runs tr JOIN automation_suites s ON s.id = tr.suite_id
+      WHERE tr.id=$1 AND tr.project_id=$2
+    `, [req.params.runId, req.params.id])
+    if (!runRows[0]) return res.status(404).json({ error: 'Run not found' })
+    const run = runRows[0]
+
+    const { rows: resultRows } = await query(
+      `SELECT * FROM test_run_results WHERE id=$1 AND test_run_id=$2`,
+      [result_id, req.params.runId]
+    )
+    if (!resultRows[0]) return res.status(404).json({ error: 'Result not found on this run' })
+    const result = resultRows[0]
+    if (result.status !== 'failed') {
+      return res.status(400).json({ error: 'Only a failed result can be healed' })
+    }
+
+    const files = await listSuiteFiles({ id: run.suite_id, slug: run.suite_slug, platform: run.suite_platform })
+    const url = matchTestCaseToFile(result.test_title, files)
+    const file = url && files.find(f => f.url === url)
+    if (!file) return res.status(400).json({ error: `Could not find a matching file for: ${result.test_title}` })
+
+    const { rows: rosterRows } = await query(
+      `SELECT test_case_id FROM automated_test_cases WHERE suite_id=$1 AND title=$2 AND test_case_id IS NOT NULL`,
+      [run.suite_id, result.test_title]
+    )
+    const testCaseIds = rosterRows[0] ? [rosterRows[0].test_case_id] : []
+
+    const newRun = await triggerHealRun({
+      projectId: req.params.id,
+      suiteId: run.suite_id,
+      testCaseIds,
+      targetTitle: result.test_title,
+      filePath: file.path,
       userId: req.userId,
     })
     res.status(202).json(newRun)
