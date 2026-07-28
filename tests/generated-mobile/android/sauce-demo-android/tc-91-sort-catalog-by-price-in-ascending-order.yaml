@@ -1,0 +1,55 @@
+# scenario: TC-91 — Sort catalog by price in ascending order
+# spec: specs/tc-91-sort-catalog-by-price-in-ascending-order.md
+appId: com.saucelabs.mydemoapp.android
+---
+- launchApp:
+    clearState: true
+
+# 1. The catalog page is the initial "Products" screen shown on launch, with
+# catalog items listed in productRV, each item's price in a priceTV TextView
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/productTV"
+    text: "Products"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/titleTV"
+    index: 0
+    text: "Sauce Labs Backpack"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/priceTV"
+    index: 0
+    text: "\\$ 29\\.99"
+
+# 2. Locate the sort control (icon with accessible name "Shows current sorting
+# order and displays available sorting options", resource-id sortIV, in the
+# header) and tap it to open the sort options menu
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/sortIV"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/sortTV"
+    text: "Sort by:"
+# priceAscCL is a container ViewGroup — its "Price - Ascending" label lives on
+# an un-id'd child TextView, so id and text are asserted separately here
+# rather than combined (a combined id+text selector never matches, since no
+# single element carries both attributes).
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/priceAscCL"
+- assertVisible: "Price - Ascending"
+
+# 3. Select the ascending-by-price option, labeled "Price - Ascending" in the
+# real UI
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/priceAscCL"
+
+# 4. Observe the order of items and their prices displayed in the catalog
+# Expect: All catalog items are reordered from the lowest price to the
+# highest price. The first item in the catalog is now "Sauce Labs Onesie" at
+# $ 7.99 (was "Sauce Labs Backpack" at $ 29.99 before sorting), confirming
+# low-to-high reordering.
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/titleTV"
+    index: 0
+    text: "Sauce Labs Onesie"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/priceTV"
+    index: 0
+    text: "\\$ 7\\.99"
