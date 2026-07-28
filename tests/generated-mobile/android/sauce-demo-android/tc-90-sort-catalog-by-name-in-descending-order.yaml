@@ -1,0 +1,41 @@
+# scenario: TC-90 — Sort catalog by name in descending order
+# spec: specs/tc-90-sort-catalog-by-name-in-descending-order.md
+appId: com.saucelabs.mydemoapp.android
+---
+- launchApp:
+    clearState: true
+
+# 1. Navigate to the catalog page (this is the app's default landing screen)
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/productTV"
+    text: "Products"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/titleTV"
+    index: 0
+    text: "Sauce Labs Backpack"
+
+# 2. Locate the sort control (icon with accessible name "Shows current sorting
+# order and displays available sorting options", resource-id sortIV, in the
+# header) and tap it to open the sort options menu
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/sortIV"
+# nameDesCL is a container ViewGroup — its "Name - Descending" label lives on
+# an un-id'd child TextView, so id and text are asserted separately here
+# rather than combined (a combined id+text selector never matches, since no
+# single element carries both attributes).
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/nameDesCL"
+- assertVisible: "Name - Descending"
+
+# 3. Select the 'Name - Descending' option from the sort menu
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/nameDesCL"
+
+# 4. Observe the order of items displayed in the catalog
+# Expect: All catalog items are reordered alphabetically from Z to A by name.
+# The first item in the catalog is now "Test.allTheThings() T-Shirt (yellow)"
+# (was "Sauce Labs Backpack" before sorting), confirming Z-to-A reordering.
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/titleTV"
+    index: 0
+    text: "Test.allTheThings\\(\\) T-Shirt \\(yellow\\)"
