@@ -23,6 +23,14 @@ router.get('/suites', ...anyProjectMember, async (req, res) => {
     // renamed/deleted test), so it only ever grows and drifts from reality.
     // The last real run's count doesn't have that problem. Roster count is
     // still the fallback for a suite that's never actually run yet.
+    //
+    // "latest" is scoped to scope='suite' only — confirmed a real bug where
+    // a diagnostic re-run of one or two specific failed tests (scope=
+    // 'test_cases', its own separate row by design so it never touches the
+    // run it diagnosed) was the most RECENT row for that suite_id, so it
+    // silently hijacked the suite card's displayed count/pass/fail down to
+    // whatever tiny subset was re-run. This card must only ever reflect a
+    // real full-suite run.
     const { rows } = await query(`
       SELECT s.*,
         COALESCE(latest.total, COUNT(atc.id)::int) AS test_case_count,
@@ -36,7 +44,7 @@ router.get('/suites', ...anyProjectMember, async (req, res) => {
       LEFT JOIN automated_test_cases atc ON atc.suite_id = s.id
       LEFT JOIN LATERAL (
         SELECT * FROM test_runs tr
-        WHERE tr.suite_id = s.id
+        WHERE tr.suite_id = s.id AND tr.scope = 'suite'
         ORDER BY tr.started_at DESC
         LIMIT 1
       ) latest ON true
@@ -177,6 +185,7 @@ router.post('/runs/:runId/rerun', requireAuth, staffOnly, async (req, res) => {
       projectId: req.params.id,
       suiteId: run.suite_id,
       filePaths,
+      targetTitles: results.map(r => r.test_title),
       userId: req.userId,
     })
     res.status(202).json(newRun)

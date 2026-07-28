@@ -123,7 +123,7 @@ export async function triggerSuiteRun({ projectId, suiteId, userId }) {
 // input both workflows now understand. Getting its own fresh correlation_id
 // and its own INSERTed row means the webhook that reports results back can
 // only ever UPDATE this new row — the run being diagnosed is never touched.
-export async function triggerTestCaseRerun({ projectId, suiteId, filePaths, userId }) {
+export async function triggerTestCaseRerun({ projectId, suiteId, filePaths, targetTitles, userId }) {
   if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
     throw new TriggerError(500, 'GitHub Actions is not configured on the server')
   }
@@ -143,9 +143,9 @@ export async function triggerTestCaseRerun({ projectId, suiteId, filePaths, user
   const correlationId = crypto.randomUUID()
 
   const { rows } = await query(
-    `INSERT INTO test_runs (project_id, suite_id, correlation_id, trigger_type, status, scope, created_by)
-     VALUES ($1,$2,$3,'manual','pending','test_cases',$4) RETURNING *`,
-    [projectId, suiteId, correlationId, userId]
+    `INSERT INTO test_runs (project_id, suite_id, correlation_id, trigger_type, status, scope, target_titles, created_by)
+     VALUES ($1,$2,$3,'manual','pending','test_cases',$4,$5) RETURNING *`,
+    [projectId, suiteId, correlationId, targetTitles || [], userId]
   )
 
   const ref = suite.platform === 'web' ? 'master' : GITHUB_MOBILE_REF

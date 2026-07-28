@@ -130,6 +130,12 @@ BEGIN
   END IF;
 END $$;
 
+-- Only set for scope='test_cases' runs — the specific test title(s) being
+-- re-run, captured once at trigger time. Lets "Recent executions" show what
+-- was actually re-run instead of just the parent suite's name, which reads
+-- as if the whole suite ran.
+ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS target_titles TEXT[];
+
 CREATE TABLE IF NOT EXISTS test_run_results (
   id            SERIAL PRIMARY KEY,
   test_run_id   INTEGER REFERENCES test_runs(id) ON DELETE CASCADE,
