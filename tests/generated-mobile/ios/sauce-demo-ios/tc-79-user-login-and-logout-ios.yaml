@@ -1,0 +1,78 @@
+# scenario: TC-79 — User login and logout (iOS)
+# spec: specs/tc-79-user-login-and-logout-ios.md
+appId: com.saucelabs.mydemo.app.ios
+---
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "Catalog-screen"
+
+# 1. From the Catalog screen, tap the "More" tab in the bottom navigation bar
+# to open the More menu screen — a scrollable list of items ending in a
+# "Login" row (id LogOut-menu-item).
+- tapOn:
+    id: "More-tab-item"
+- assertVisible:
+    id: "LogOut-menu-item"
+
+# 2. Tap the "Login" row (the last item in the More list) to navigate to the
+# Login screen. Note: the row's accessibility text is empty pre-login
+# (confirmed via inspect_screen) even though "Login" is visibly rendered — a
+# text-based tap (tapOn: "Login") fails outright with element-not-found. Tap
+# by id: LogOut-menu-item instead (same id is used both pre- and post-login).
+- tapOn:
+    id: "LogOut-menu-item"
+- assertVisible:
+    text: "Select a username from the list below"
+
+# 3. On the Login screen, tap a listed demo username ("bob@example.com") to
+# auto-fill the "User Name" and "Password" fields, then submit via the green
+# "Login" button. (The "Login" title label and the "Login" submit button both
+# render the literal text "Login" on this screen, so the submit button is
+# disambiguated with index: 1 — the title is index 0.)
+- tapOn:
+    text: "bob@example.com"
+- assertVisible:
+    text: "bob@example.com"
+    below:
+      text: "User Name"
+    above:
+      text: "Password"
+    index: 0
+- tapOn:
+    text: "Login"
+    index: 1
+
+# 4. Confirm the logged-in state: the app redirects to the Catalog screen
+# automatically. Tap the "More" tab again and confirm the last menu row now
+# reads "Log Out" instead of "Login" — this is the logged-in indicator. Tap
+# "Log Out" (LogOut-menu-item) to log out.
+- assertVisible:
+    id: "Catalog-screen"
+- tapOn:
+    id: "More-tab-item"
+- assertVisible:
+    id: "LogOut-menu-item"
+# The LogOut-menu-item row's accessibility text/value is empty in both the
+# logged-out ("Login") and logged-in ("Log Out") states (confirmed live via
+# inspect_screen — same empty a11y/txt either way, and a plain
+# assertVisible: "Log Out" fails with "element not visible" even while the
+# row visibly renders "Log Out", verified via take_screenshot). Since
+# Maestro's standard text/id matchers cannot see this rendered label at all,
+# an AI-powered assertion is used instead to confirm the visible text
+# genuinely changed to "Log Out".
+- assertWithAI:
+    assertion: "The last row in this menu list reads 'Log Out', not 'Login'."
+- tapOn:
+    id: "LogOut-menu-item"
+
+# Expect: Login succeeds with valid credentials and redirects to the Catalog
+# screen; the More menu's last row changes from "Login" to "Log Out" while
+# logged in. Tapping "Log Out" immediately navigates to the Login screen,
+# confirming the app has returned to a logged-out state.
+- assertVisible:
+    text: "Select a username from the list below"
+- assertVisible:
+    text: "User Name"
+- assertVisible:
+    text: "Password"
