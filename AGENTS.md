@@ -125,3 +125,15 @@ Full detail and the real evidence behind the rules below is in
   hand-written mobile flows (if any) get their own top-level folder, same
   separation the web pipeline already keeps between `tests/<slug>/` and
   `tests/generated/<slug>/`.
+
+### Known app quirks (real findings — check here before re-diagnosing from scratch)
+
+- **iOS keyboard won't dismiss via `hideKeyboard` or a tapped Return/Done
+  key.** Reproduced live on the Sauce Demo iOS app: `hideKeyboard` fails
+  outright ("Couldn't hide the keyboard..."), and tapping a visible
+  `id: "Return"` key reports `success: true` but does NOT actually dismiss
+  the keyboard or submit the field — a false-positive-success trap, not a
+  real fix. **Known-working alternative**: navigate away from the current
+  screen (tap the real back/close control) and back into it — the keyboard
+  clears and the already-entered text is retained. Use this directly instead
+  of retrying `hideKeyboard`/Return variants.

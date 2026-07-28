@@ -171,8 +171,18 @@ async function runAgent(prompt) {
 // file as its OWN `maestro test` invocation rather than the whole dir in one
 // batch call. Returns per-file pass/fail. One invocation per flow the same
 // reasoning as main()'s per-TC agent loop below — see that comment.
-async function runMaestroTest(targetDir) {
-  const files = fs.readdirSync(targetDir).filter(f => /\.ya?ml$/.test(f))
+//
+// `fileNames` is required, not defaulted to a full directory scan: this
+// generation pipeline heals only what it just wrote this run, never the rest
+// of the suite. Running (and auto-healing) every pre-existing flow on every
+// single new-TC generation meant one unrelated, already-merged flow going
+// red could silently burn a whole run's time/cost investigating a regression
+// nobody asked this run to look at. Suite-wide regression checking still
+// happens — via the existing "Run suite" execution trigger — just as an
+// explicit, deliberate action instead of a surprise side effect of
+// generating one new test case.
+async function runMaestroTest(targetDir, fileNames) {
+  const files = fileNames
   const status = {}
   for (const file of files) {
     status[file] = await new Promise(resolve => {
@@ -275,7 +285,10 @@ async function main() {
     console.warn(`Generation was cut short (cost cap or timeout) — skipping the heal loop. Proceeding to PR with ${succeeded.length}/${entries.length} test case(s) as generated (unhealed).`)
   } else {
     await reportPhaseOnce('healing')
-    let statusByFile = await runMaestroTest(suiteDir)
+    // Only the flow(s) generated THIS run — not a sweep of the whole suite
+    // directory. See runMaestroTest's comment for why.
+    const generatedFileNames = succeeded.map(r => path.basename(r.specPath))
+    let statusByFile = await runMaestroTest(suiteDir, generatedFileNames)
     let failingFiles = Object.entries(statusByFile).filter(([, ok]) => !ok).map(([f]) => f)
     for (let attempt = 1; attempt <= 3 && failingFiles.length > 0; attempt++) {
       console.log(`Heal attempt ${attempt}/3: ${failingFiles.join(', ')}`)
@@ -291,7 +304,7 @@ async function main() {
           console.error(`Healer failed for ${file}: ${err.message}`)
         }
       }
-      statusByFile = await runMaestroTest(suiteDir)
+      statusByFile = await runMaestroTest(suiteDir, generatedFileNames)
       failingFiles = Object.entries(statusByFile).filter(([, ok]) => !ok).map(([f]) => f)
     }
     if (failingFiles.length > 0) {
