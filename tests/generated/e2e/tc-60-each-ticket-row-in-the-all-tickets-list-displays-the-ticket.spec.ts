@@ -8,6 +8,8 @@ test.describe('All Tickets list', () => {
   test("TC-60: Each ticket row in the All Tickets list displays the ticket's priority", async ({ page }) => {
     let data: Awaited<ReturnType<typeof createTicket>>;
 
+    await page.goto('/');
+
     // 1. Create a ticket with a known priority of 'High' via createTicket(page) — returns TestData with a unique .title
     await test.step("Create a ticket with a known priority of 'High' via createTicket(page)", async () => {
       data = await createTicket(page);
