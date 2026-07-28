@@ -22,7 +22,10 @@ test.describe('New Ticket form validation', () => {
       await expect(page.getByText('Title *')).toBeVisible();
       await expect(page.getByText('Description *')).toBeVisible();
       await expect(page.getByText('Category *')).toBeVisible();
-      await expect(page.getByText('Priority')).toBeVisible();
+      // FRAGILE: getByText('Priority') is ambiguous (matches a table column header,
+      // a <select> option, and this field's <label>), so the label is targeted via
+      // its form-label class to disambiguate.
+      await expect(page.locator('label.form-label').filter({ hasText: 'Priority' })).toBeVisible();
       await expect(page.getByText('Attachment (optional)')).toBeVisible();
     });
 
