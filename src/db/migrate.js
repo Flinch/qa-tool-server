@@ -115,6 +115,21 @@ CREATE TABLE IF NOT EXISTS test_runs (
 -- were produced, or a server-side timeout when CI never reports back at all.
 ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS error_message TEXT;
 
+-- 'suite' = the existing full-suite behavior. 'test_cases' = a diagnostic
+-- re-run of specific previously-failed test cases (never the whole suite),
+-- triggered from a prior run's failed results. Clients only ever see
+-- 'suite' rows — 'test_cases' runs are Malik's own troubleshooting, not
+-- something a client should interpret as a real suite result.
+ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'suite';
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'test_runs_scope_check'
+  ) THEN
+    ALTER TABLE test_runs ADD CONSTRAINT test_runs_scope_check CHECK (scope IN ('suite','test_cases'));
+  END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS test_run_results (
   id            SERIAL PRIMARY KEY,
   test_run_id   INTEGER REFERENCES test_runs(id) ON DELETE CASCADE,

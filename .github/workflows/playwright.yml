@@ -11,6 +11,10 @@ on:
         description: 'Correlation ID linking this run back to a pending row in the DB'
         required: false
         type: string
+      file_paths:
+        description: 'Space-separated, repo-relative spec file paths to run instead of the whole suite (diagnostic re-run of specific failed tests)'
+        required: false
+        type: string
   schedule:
     - cron: '0 7 * * *' # 7am UTC nightly — adjust to whatever time you want
 
@@ -38,6 +42,11 @@ jobs:
       # both or generated tests are silently invisible to it. Passing a path
       # that has no matching files is safe (Playwright just finds 0 tests for
       # that arg, confirmed locally), so no existence check is needed here.
+      #
+      # When file_paths is set (a diagnostic re-run of specific previously-
+      # failed tests, dispatched by the app rather than typed by hand), it
+      # replaces the full-suite path entirely — Playwright accepts specific
+      # spec file paths as positional args exactly like directories.
       - name: Determine suite
         id: suite
         run: |
@@ -47,7 +56,11 @@ jobs:
             SLUG="smoke"
           fi
           echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
-          echo "path=tests/$SLUG tests/generated/$SLUG" >> "$GITHUB_OUTPUT"
+          if [ -n "${{ inputs.file_paths }}" ]; then
+            echo "path=${{ inputs.file_paths }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=tests/$SLUG tests/generated/$SLUG" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run Playwright tests
         continue-on-error: true

@@ -19,6 +19,10 @@ on:
         description: 'Correlation ID linking this run back to a pending test_runs row'
         required: false
         type: string
+      file_paths:
+        description: 'Space-separated, repo-relative flow file paths to run instead of the whole suite (diagnostic re-run of specific failed tests)'
+        required: false
+        type: string
 
 permissions:
   contents: write # needed to push the report to the gh-pages branch
@@ -52,6 +56,7 @@ jobs:
         env:
           RUN_CORRELATION_ID: ${{ inputs.run_correlation_id }}
           TRIGGER_TYPE: manual
+          FILE_PATHS: ${{ inputs.file_paths }}
           GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           # Predictable ahead of the actual gh-pages deploy step below (URL
           # shape only depends on run_id, not on the deploy having happened

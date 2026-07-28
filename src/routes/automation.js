@@ -3,7 +3,7 @@ import { query } from '../db/pool.js'
 import { requireAuth, requireRole, verifyToken } from '../middleware/auth.js'
 import { requireProjectAccess } from '../middleware/projectAccess.js'
 import { subscribe, unsubscribe } from '../lib/sse.js'
-import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileStaleGenerationRuns } from '../lib/automationTrigger.js'
+import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileStaleGenerationRuns, triggerTestCaseRerun } from '../lib/automationTrigger.js'
 import { getPrStatus } from '../lib/githubPrStatus.js'
 import { listSuiteFiles, matchTestCaseToFile } from '../lib/githubSuiteFiles.js'
 
@@ -66,7 +66,10 @@ router.post('/suites', requireAuth, staffOnly, async (req, res) => {
   }
 })
 
-// GET /runs — recent executions (optionally ?suite_id=)
+// GET /runs — recent executions (optionally ?suite_id=). scope='test_cases'
+// rows (diagnostic re-runs of specific previously-failed tests) are Malik's
+// own troubleshooting, never a real suite result — excluded for clients
+// server-side, not just hidden in the UI, same as any other access rule.
 router.get('/runs', ...anyProjectMember, async (req, res) => {
   try {
     await reconcileStaleRuns(req.params.id)
@@ -74,8 +77,11 @@ router.get('/runs', ...anyProjectMember, async (req, res) => {
     const params = [req.params.id]
     let filter = ''
     if (suite_id) {
-      filter = 'AND tr.suite_id = $2'
+      filter += ` AND tr.suite_id = $${params.length + 1}`
       params.push(suite_id)
+    }
+    if (req.userRole === 'client') {
+      filter += ` AND tr.scope = 'suite'`
     }
     const { rows } = await query(`
       SELECT tr.*, s.name AS suite_name, s.slug AS suite_slug
@@ -91,7 +97,10 @@ router.get('/runs', ...anyProjectMember, async (req, res) => {
   }
 })
 
-// GET /runs/:runId — detailed drill-down for one run
+// GET /runs/:runId — detailed drill-down for one run. Same client
+// exclusion as the list above, applied here too so a direct/shared link to
+// a scope='test_cases' run id can't bypass it — 404s rather than 403s, same
+// "not found" shape as any other access-denied case in this app.
 router.get('/runs/:runId', ...anyProjectMember, async (req, res) => {
   try {
     await reconcileStaleRuns(req.params.id)
@@ -102,6 +111,9 @@ router.get('/runs/:runId', ...anyProjectMember, async (req, res) => {
       WHERE tr.id = $1 AND tr.project_id = $2
     `, [req.params.runId, req.params.id])
     if (!rows[0]) return res.status(404).json({ error: 'Not found' })
+    if (rows[0].scope === 'test_cases' && req.userRole === 'client') {
+      return res.status(404).json({ error: 'Not found' })
+    }
 
     const { rows: results } = await query(
       `SELECT * FROM test_run_results WHERE test_run_id=$1 ORDER BY id`,
@@ -110,6 +122,66 @@ router.get('/runs/:runId', ...anyProjectMember, async (req, res) => {
     res.json({ ...rows[0], results })
   } catch (e) {
     res.status(500).json({ error: e.message })
+  }
+})
+
+// POST /runs/:runId/rerun — diagnostic re-run of specific FAILED results
+// from a prior run, not the whole suite. Resolves each failed result's
+// title to its real committed file (same listSuiteFiles/matchTestCaseToFile
+// helpers the "View test cases" pages already use) and dispatches only
+// those files via triggerTestCaseRerun.
+router.post('/runs/:runId/rerun', requireAuth, staffOnly, async (req, res) => {
+  const { result_ids } = req.body
+  if (!Array.isArray(result_ids) || result_ids.length === 0) {
+    return res.status(400).json({ error: 'At least 1 result_id is required' })
+  }
+
+  try {
+    const { rows: runRows } = await query(`
+      SELECT tr.*, s.id AS suite_id, s.slug AS suite_slug, s.platform AS suite_platform
+      FROM test_runs tr JOIN automation_suites s ON s.id = tr.suite_id
+      WHERE tr.id=$1 AND tr.project_id=$2
+    `, [req.params.runId, req.params.id])
+    if (!runRows[0]) return res.status(404).json({ error: 'Run not found' })
+    const run = runRows[0]
+
+    const { rows: results } = await query(
+      `SELECT * FROM test_run_results WHERE id = ANY($1::int[]) AND test_run_id=$2`,
+      [result_ids, req.params.runId]
+    )
+    if (results.length !== result_ids.length) {
+      return res.status(400).json({ error: 'One or more results were not found on this run' })
+    }
+    const notFailed = results.filter(r => r.status !== 'failed')
+    if (notFailed.length > 0) {
+      return res.status(400).json({ error: `Only failed results can be re-run (${notFailed.map(r => r.test_title).join(', ')} did not fail)` })
+    }
+
+    const files = await listSuiteFiles({ id: run.suite_id, slug: run.suite_slug, platform: run.suite_platform })
+    const filePaths = []
+    const unresolved = []
+    for (const r of results) {
+      const url = matchTestCaseToFile(r.test_title, files)
+      // matchTestCaseToFile resolves to a GitHub html_url — recover the
+      // repo-relative path from the matching file entry instead of parsing
+      // the URL, since listSuiteFiles already carries both.
+      const file = url && files.find(f => f.url === url)
+      if (!file) unresolved.push(r.test_title)
+      else filePaths.push(file.path)
+    }
+    if (unresolved.length > 0) {
+      return res.status(400).json({ error: `Could not find a matching file for: ${unresolved.join(', ')}` })
+    }
+
+    const newRun = await triggerTestCaseRerun({
+      projectId: req.params.id,
+      suiteId: run.suite_id,
+      filePaths,
+      userId: req.userId,
+    })
+    res.status(202).json(newRun)
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message })
   }
 })
 
@@ -221,18 +293,42 @@ router.get('/generation-runs', ...anyProjectMember, async (req, res) => {
   try {
     await reconcileStaleGenerationRuns(req.params.id)
     const { rows } = await query(`
-      SELECT gr.*, s.name AS suite_name, s.slug AS suite_slug
+      SELECT gr.*, s.id AS suite_pk, s.name AS suite_name, s.slug AS suite_slug, s.platform AS suite_platform
       FROM generation_runs gr
       JOIN automation_suites s ON s.id = gr.suite_id
       WHERE gr.project_id = $1
       ORDER BY gr.started_at DESC
       LIMIT 20
     `, [req.params.id])
+
+    // failed_test_case_ids: which of this run's requested TCs have no real
+    // generated file in the suite's actual GitHub directory. No structured
+    // per-TC success/failure is stored anywhere (the CI script only ever
+    // writes one aggregate error_message string), and automated_test_cases
+    // is NOT a reliable "did this succeed" signal — confirmed for real: it's
+    // only populated once the suite is actually EXECUTED (via the test-run
+    // webhook), so a TC generated and merged this session with the suite
+    // never re-run since has no roster row yet despite succeeding. The real
+    // GitHub file listing is the only source of truth for "did this exist."
+    const filesBySuite = new Map()
+    const withFailedIds = []
+    for (const r of rows) {
+      if (!['completed', 'failed'].includes(r.status)) {
+        withFailedIds.push({ ...r, failed_test_case_ids: [] })
+        continue
+      }
+      if (!filesBySuite.has(r.suite_pk)) {
+        filesBySuite.set(r.suite_pk, await listSuiteFiles({ id: r.suite_pk, slug: r.suite_slug, platform: r.suite_platform }))
+      }
+      const files = filesBySuite.get(r.suite_pk)
+      const failed = (r.test_case_ids || []).filter(tcId => !matchTestCaseToFile(`tc-${tcId}`, files))
+      withFailedIds.push({ ...r, failed_test_case_ids: failed })
+    }
     // Live GitHub check per PR — cheap enough for ~20 rows, and avoids
     // needing a pull_request webhook receiver (GitHub-side setup, not just
     // code) just to know whether a PR landed. Runs in parallel, fails open
     // per-row (see githubPrStatus.js) so one bad lookup can't 500 the panel.
-    const withPrStatus = await Promise.all(rows.map(async r => {
+    const withPrStatus = await Promise.all(withFailedIds.map(async r => {
       if (!r.pr_url) return r
       const prStatus = await getPrStatus(r.pr_url)
       return { ...r, pr_status: prStatus }

@@ -111,6 +111,70 @@ export async function triggerSuiteRun({ projectId, suiteId, userId }) {
   return rows[0]
 }
 
+// Dispatches a diagnostic re-run of SPECIFIC previously-failed test files,
+// not the whole suite. Mirrors triggerSuiteRun almost exactly (same suite
+// lookup, same dispatch shape, same pending-row-before-dispatch ordering) —
+// the only real differences are scope='test_cases' on the inserted row (so
+// GET /runs can hide these from clients) and the extra file_paths dispatch
+// input both workflows now understand. Getting its own fresh correlation_id
+// and its own INSERTed row means the webhook that reports results back can
+// only ever UPDATE this new row — the run being diagnosed is never touched.
+export async function triggerTestCaseRerun({ projectId, suiteId, filePaths, userId }) {
+  if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
+    throw new TriggerError(500, 'GitHub Actions is not configured on the server')
+  }
+
+  const { rows: suiteRows } = await query(
+    `SELECT * FROM automation_suites WHERE id=$1 AND project_id=$2`,
+    [suiteId, projectId]
+  )
+  if (!suiteRows[0]) throw new TriggerError(404, 'Suite not found')
+  const suite = suiteRows[0]
+
+  const workflowId = suite.platform === 'web' ? GITHUB_WORKFLOW_ID : GITHUB_MOBILE_WORKFLOW_ID
+  if (!workflowId) {
+    throw new TriggerError(500, `No run workflow configured for "${suite.platform}" suites`)
+  }
+
+  const correlationId = crypto.randomUUID()
+
+  const { rows } = await query(
+    `INSERT INTO test_runs (project_id, suite_id, correlation_id, trigger_type, status, scope, created_by)
+     VALUES ($1,$2,$3,'manual','pending','test_cases',$4) RETURNING *`,
+    [projectId, suiteId, correlationId, userId]
+  )
+
+  const ref = suite.platform === 'web' ? 'master' : GITHUB_MOBILE_REF
+  const filePathsInput = filePaths.join(' ')
+  const inputs = suite.platform === 'web'
+    ? { suite_slug: suite.slug, run_correlation_id: correlationId, file_paths: filePathsInput }
+    : { suite_slug: suite.slug, platform: suite.platform, project_id: String(projectId), run_correlation_id: correlationId, file_paths: filePathsInput }
+
+  const ghRes = await fetch(
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${workflowId}/dispatches`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ref, inputs }),
+    }
+  )
+
+  if (!ghRes.ok) {
+    const errText = (await ghRes.text()).slice(0, 500)
+    await query(
+      `UPDATE test_runs SET status='failed', error_message=$2, completed_at=NOW() WHERE id=$1`,
+      [rows[0].id, `GitHub Actions dispatch failed: ${errText}`]
+    )
+    throw new TriggerError(502, `GitHub Actions dispatch failed: ${errText}`)
+  }
+
+  return rows[0]
+}
+
 // Dispatches a test GENERATION run: manual test cases -> Playwright agents in
 // CI -> pull request. Mirrors triggerSuiteRun's shape on purpose (insert row
 // first, dispatch, mark failed on dispatch error) so the two flows stay easy

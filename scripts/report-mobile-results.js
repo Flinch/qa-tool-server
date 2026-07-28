@@ -30,7 +30,12 @@ import http from 'http'
 import { buildHtmlReport } from './buildMobileReport.js'
 
 const [, , flowsDir, suiteSlug, projectIdArg] = process.argv
-const { WEBHOOK_BASE_URL, WEBHOOK_SECRET, RUN_CORRELATION_ID, TRIGGER_TYPE, GITHUB_RUN_URL, REPORT_URL, REPORT_OUTPUT_DIR } = process.env
+const { WEBHOOK_BASE_URL, WEBHOOK_SECRET, RUN_CORRELATION_ID, TRIGGER_TYPE, GITHUB_RUN_URL, REPORT_URL, REPORT_OUTPUT_DIR, FILE_PATHS } = process.env
+// A diagnostic re-run of specific previously-failed flows passes their exact
+// paths here instead of the whole suite directory — flowsDir is still used
+// below for platform derivation and report/screenshot dir naming, which stay
+// keyed by suite regardless of scope.
+const maestroTargets = FILE_PATHS?.trim() ? FILE_PATHS.trim().split(/\s+/) : [flowsDir]
 
 if (!flowsDir || !suiteSlug || !projectIdArg) {
   console.error('Usage: node scripts/report-mobile-results.js <flows-dir> <suite-slug> <project-id>')
@@ -132,11 +137,11 @@ function statusToResult(status) {
   return 'failed'
 }
 
-console.log(`Running maestro test against ${flowsDir} (platform: ${platform})...`)
+console.log(`Running maestro test against ${maestroTargets.join(' ')} (platform: ${platform})...`)
 try {
   execFileSync('maestro', [
     '--platform', platform,
-    'test', flowsDir,
+    'test', ...maestroTargets,
     '--format', 'junit', '--output', junitPath,
     '--debug-output', debugOutputDir, '--flatten-debug-output',
   ], {
