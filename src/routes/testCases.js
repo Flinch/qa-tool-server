@@ -13,8 +13,18 @@ const staffOnly = requireRole('qa_engineer', 'admin')
 // GET /projects/:id/test-cases — staff + read-only clients who are project members
 router.get('/', async (req, res) => {
   try {
+    // is_automated: does this TC actually have real generated automation
+    // (an automated_test_cases roster row resolved back to it), as opposed
+    // to merely being flagged automation_candidate — "candidate" just means
+    // an engineer/AI thinks it's a good fit; "automated" means it actually
+    // has committed code. Same origin='generated' signal already used
+    // everywhere else this session (webhooks.js roster tracking, The Lab).
     const { rows } = await query(
-      `SELECT tc.*, COUNT(b.id)::int AS bug_count
+      `SELECT tc.*, COUNT(b.id)::int AS bug_count,
+         EXISTS (
+           SELECT 1 FROM automated_test_cases atc
+           WHERE atc.test_case_id = tc.id AND atc.origin = 'generated'
+         ) AS is_automated
        FROM test_cases tc
        LEFT JOIN bugs b ON b.test_case_id = tc.id
        WHERE tc.project_id=$1
