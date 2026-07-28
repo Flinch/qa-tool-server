@@ -1,0 +1,65 @@
+# scenario: TC-87 — Product Detail Page renders all required elements for a valid product
+# spec: specs/tc-87-product-detail-page-renders-all-required-elements-for-a-vali.md
+appId: com.saucelabs.mydemoapp.android
+---
+- launchApp:
+    clearState: true
+
+# 1. Navigate to the application and open a product detail page for a product
+# that has an image, colors, rating, highlights, and stock quantity (tap the
+# "Sauce Labs Backpack" product card image on the Products listing screen).
+- tapOn:
+    id: "com.saucelabs.mydemoapp.android:id/productIV"
+    index: 0
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/productTV"
+    text: "Sauce Labs Backpack"
+
+# 2. Observe the product image section.
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/productIV"
+
+# 3. Observe the color picker section: a horizontal list of clickable color
+# swatches (e.g. "Black color", "Blue color", "Gray color", "Green color").
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/colorRV"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/colorIV"
+    text: "Black color"
+
+# 4. Observe the rating section: a row of 5 star icon ImageViews
+# (start1IV through start5IV) — a star-icon rating, not a numeric text value.
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/rattingV"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/start1IV"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/start5IV"
+
+# 5. Observe the Add to Cart button.
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/cartBt"
+    text: "Add to cart"
+
+# 6. Scroll down past the quantity/Add to Cart row to observe the product
+# highlights section — this sits below the fold and is not visible without
+# scrolling.
+- scroll
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/productHeightLightsTV"
+    text: "Product Highlights"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/descTV"
+
+# 7. Observe the product quantity selector: a stepper control with a decrease
+# button (minusIV), a numeric quantity display (noTV, defaults to "1"), and
+# an increase button (plusIV) — not a dropdown.
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/addToCartLL"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/minusIV"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/noTV"
+    text: "1"
+- assertVisible:
+    id: "com.saucelabs.mydemoapp.android:id/plusIV"
