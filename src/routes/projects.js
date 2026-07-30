@@ -68,6 +68,44 @@ router.get('/:id', requireTenantAccess, async (req, res) => {
   }
 })
 
+// PATCH /projects/:id — inline-editable name/client_name/description from
+// the project page. Staff only (matches every other project-mutation
+// route). name can't be edited blank; client_name/description can (they're
+// optional — an empty string clears them, same as null).
+router.patch('/:id', requireTenantAccess, requireRole('qa_engineer', 'admin'), async (req, res) => {
+  const { name, client_name, description } = req.body
+
+  const fields = []
+  const values = []
+  let i = 1
+
+  if (name !== undefined) {
+    if (!name.trim()) return res.status(400).json({ error: 'Name cannot be empty' })
+    fields.push(`name=$${i++}`); values.push(name.trim())
+  }
+  if (client_name !== undefined) {
+    fields.push(`client_name=$${i++}`); values.push(client_name?.trim() || null)
+  }
+  if (description !== undefined) {
+    fields.push(`description=$${i++}`); values.push(description?.trim() || null)
+  }
+  if (fields.length === 0) return res.status(400).json({ error: 'No fields to update' })
+
+  fields.push(`updated_at=NOW()`)
+  values.push(req.params.id)
+
+  try {
+    const { rows } = await req.db.query(
+      `UPDATE projects SET ${fields.join(', ')} WHERE id=$${i} RETURNING *`,
+      values
+    )
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' })
+    res.json(rows[0])
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // GET /projects/:id/stats
 router.get('/:id/stats', requireTenantAccess, async (req, res) => {
   try {
