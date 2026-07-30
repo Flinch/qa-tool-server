@@ -38,10 +38,16 @@ router.get('/', async (req, res) => {
 })
 
 router.post('/', staffOnly, async (req, res) => {
-  const { title, type, steps, expected, platform, feature_id } = req.body
+  const { title, type, steps, expected, platform, feature_id, is_critical_flow, requirementIds } = req.body
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
   if (!['functional', 'integration', 'e2e'].includes(type)) return res.status(400).json({ error: 'Invalid type' })
   if (platform !== undefined && !['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
+
+  // A manually-authored critical flow is always type='e2e' — normalized
+  // here too, not just enforced client-side, since automation_candidate=
+  // true + type='e2e' together IS the definition of a critical flow (see
+  // generateCriticalFlows.js). Never trust the client alone for that.
+  const resolvedType = is_critical_flow ? 'e2e' : type
 
   try {
     if (feature_id) {
@@ -50,12 +56,31 @@ router.post('/', staffOnly, async (req, res) => {
     }
 
     const { rows } = await req.db.query(
-      `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, created_by, platform, feature_id)
-       VALUES ($1,$2,$3,$4,$5,false,$6,$7,$8) RETURNING *`,
-      [req.params.id, title.trim(), type, JSON.stringify(steps || []), expected || '', req.userId, platform || 'web', feature_id || null]
+      `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by, platform, feature_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [req.params.id, title.trim(), resolvedType, JSON.stringify(steps || []), expected || '', !!is_critical_flow,
+       is_critical_flow ? 'Manually authored critical flow' : null, req.userId, platform || 'web', feature_id || null]
     )
+    const tc = rows[0]
+
+    if (is_critical_flow && Array.isArray(requirementIds) && requirementIds.length > 0) {
+      // Same "never trust ids from the client" posture as
+      // criticalFlows.js's /apply — filter down to requirements that are
+      // real, active, and actually belong to this project first.
+      const { rows: validReqRows } = await req.db.query(
+        `SELECT id FROM requirements WHERE project_id=$1 AND status='active' AND id = ANY($2::int[])`,
+        [req.params.id, requirementIds]
+      )
+      for (const r of validReqRows) {
+        await req.db.query(
+          `INSERT INTO flow_requirements (requirement_id, test_case_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+          [r.id, tc.id]
+        )
+      }
+    }
+
     await req.db.query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])
-    res.status(201).json({ ...rows[0], bug_count: 0 })
+    res.status(201).json({ ...tc, bug_count: 0 })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
