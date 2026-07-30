@@ -301,6 +301,27 @@ CREATE INDEX IF NOT EXISTS idx_requirements_project ON requirements(project_id);
 CREATE INDEX IF NOT EXISTS idx_requirement_test_cases_requirement ON requirement_test_cases(requirement_id);
 CREATE INDEX IF NOT EXISTS idx_requirement_test_cases_test_case ON requirement_test_cases(test_case_id);
 
+-- Tracks which requirements a critical E2E flow spans (see
+-- generateCriticalFlows.js) — deliberately its OWN table, not a reuse of
+-- requirement_test_cases. That table backs the regular per-requirement
+-- generation/coverage tracking (linked_test_case_count, the "uncovered
+-- requirements" query "Generate all test cases" relies on). A flow linking
+-- into it made a requirement look "covered" the moment any flow happened to
+-- touch it, even with zero dedicated functional/integration test cases —
+-- silently skipping it from bulk generation and wrongly blocking the
+-- single-requirement "Generate" button (which refuses to run if
+-- linked_test_case_count > 0). Real bug, found live in production data
+-- across three projects. The two systems are fully independent now.
+CREATE TABLE IF NOT EXISTS flow_requirements (
+  id             SERIAL PRIMARY KEY,
+  test_case_id   INTEGER REFERENCES test_cases(id) ON DELETE CASCADE,
+  requirement_id INTEGER REFERENCES requirements(id) ON DELETE CASCADE,
+  created_at     TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(test_case_id, requirement_id)
+);
+CREATE INDEX IF NOT EXISTS idx_flow_requirements_test_case ON flow_requirements(test_case_id);
+CREATE INDEX IF NOT EXISTS idx_flow_requirements_requirement ON flow_requirements(requirement_id);
+
 CREATE TABLE IF NOT EXISTS requirement_documents (
   id           SERIAL PRIMARY KEY,
   project_id   INTEGER REFERENCES projects(id) ON DELETE CASCADE,

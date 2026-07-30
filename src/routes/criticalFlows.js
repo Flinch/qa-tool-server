@@ -23,9 +23,9 @@ router.post('/review', staffOnly, async (req, res) => {
 
     const { rows: existingFlows } = await req.db.query(
       `SELECT tc.id, tc.title, tc.steps, tc.expected, tc.platform,
-         COALESCE(array_agg(rtc.requirement_id) FILTER (WHERE rtc.requirement_id IS NOT NULL), '{}') AS requirement_ids
+         COALESCE(array_agg(fr.requirement_id) FILTER (WHERE fr.requirement_id IS NOT NULL), '{}') AS requirement_ids
        FROM test_cases tc
-       LEFT JOIN requirement_test_cases rtc ON rtc.test_case_id = tc.id
+       LEFT JOIN flow_requirements fr ON fr.test_case_id = tc.id
        WHERE tc.project_id=$1 AND tc.type='e2e' AND tc.automation_candidate=true
        GROUP BY tc.id
        ORDER BY tc.id`,
@@ -65,7 +65,7 @@ router.post('/review', staffOnly, async (req, res) => {
 
 // POST /projects/:id/critical-flows/apply — commits a user-reviewed diff
 // from POST /review. Transactional (unlike most routes in this app): a
-// flow's test_cases row and its requirement_test_cases links have to land
+// flow's test_cases row and its flow_requirements links have to land
 // together, same reasoning as testCases.js's /combine/apply.
 router.post('/apply', staffOnly, async (req, res) => {
   const { modified = [], removed = [], new: added = [] } = req.body
@@ -96,10 +96,10 @@ router.post('/apply', staffOnly, async (req, res) => {
       if (!rows[0]) continue
       modifiedIds.push(rows[0].id)
 
-      await client.query(`DELETE FROM requirement_test_cases WHERE test_case_id=$1`, [rows[0].id])
+      await client.query(`DELETE FROM flow_requirements WHERE test_case_id=$1`, [rows[0].id])
       for (const reqId of sanitizeReqIds(m.requirementIds)) {
         await client.query(
-          `INSERT INTO requirement_test_cases (requirement_id, test_case_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+          `INSERT INTO flow_requirements (requirement_id, test_case_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
           [reqId, rows[0].id]
         )
       }
@@ -108,7 +108,7 @@ router.post('/apply', staffOnly, async (req, res) => {
     // Demoted, not deleted — a flow that no longer represents a critical
     // journey may still have real automation/bug history attached, and it
     // remains a perfectly valid e2e test case, just no longer flagged as an
-    // automation candidate. Its requirement links are left as-is.
+    // automation candidate. Its flow_requirements links are left as-is.
     const removedIds = []
     for (const id of removed) {
       const { rows } = await client.query(
@@ -129,7 +129,7 @@ router.post('/apply', staffOnly, async (req, res) => {
       const flow = rows[0]
       for (const reqId of sanitizeReqIds(n.requirementIds)) {
         await client.query(
-          `INSERT INTO requirement_test_cases (requirement_id, test_case_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+          `INSERT INTO flow_requirements (requirement_id, test_case_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
           [reqId, flow.id]
         )
       }
