@@ -1,12 +1,12 @@
 import { Router } from 'express'
-import { query } from '../db/pool.js'
+import { query as controlQuery } from '../db/pool.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
-import { requireProjectAccess } from '../middleware/projectAccess.js'
+import { requireTenantAccess } from '../middleware/tenantAccess.js'
 import { JiraError, listJiraProjects, createJiraIssue, attachImageToJiraIssue } from '../lib/jiraClient.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
-router.use(requireProjectAccess)
+router.use(requireTenantAccess)
 
 const staffOnly = requireRole('qa_engineer', 'admin')
 
@@ -36,7 +36,7 @@ router.get('/jira/projects', staffOnly, async (req, res) => {
 // GET /projects/:id/bugs — staff + read-only clients who are project members
 router.get('/', async (req, res) => {
   try {
-    const { rows } = await query(
+    const { rows } = await req.db.query(
       `SELECT b.*, er.name AS execution_run_name, s.name AS suite_name, s.slug AS suite_slug
        FROM bugs b
        LEFT JOIN execution_runs er ON er.id = b.execution_run_id
@@ -64,17 +64,17 @@ router.post('/', staffOnly, async (req, res) => {
   if (!feature_id) return res.status(400).json({ error: 'Feature is required' })
 
   try {
-    const { rows: fRows } = await query(`SELECT id FROM features WHERE id=$1 AND project_id=$2`, [feature_id, req.params.id])
+    const { rows: fRows } = await req.db.query(`SELECT id FROM features WHERE id=$1 AND project_id=$2`, [feature_id, req.params.id])
     if (!fRows[0]) return res.status(400).json({ error: 'Invalid feature' })
 
-    const { rows } = await query(
+    const { rows } = await req.db.query(
       `INSERT INTO bugs (project_id, test_case_id, execution_run_id, title, severity, steps_to_reproduce, expected, actual, notes, created_by, jira_organization, feature_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
       [req.params.id, test_case_id || null, execution_run_id || null, title.trim(), severity || 'medium',
        steps_to_reproduce || null, expected || null, actual || null, notes || null, req.userId,
        post_to_jira ? (jira?.organization?.trim() || null) : null, feature_id]
     )
-    await query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])
+    await req.db.query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])
     let bug = rows[0]
 
     if (post_to_jira) {
@@ -85,7 +85,7 @@ router.post('/', staffOnly, async (req, res) => {
           description: buildJiraDescription(bug),
           priorityName: SEVERITY_TO_PRIORITY[bug.severity],
         })
-        const { rows: updated } = await query(
+        const { rows: updated } = await req.db.query(
           `UPDATE bugs SET jira_issue_key=$1, jira_issue_url=$2 WHERE id=$3 RETURNING *`,
           [issue.key, issue.url, bug.id]
         )
@@ -109,8 +109,10 @@ router.post('/', staffOnly, async (req, res) => {
   }
 })
 
-// PATCH /bugs/:id — mounted at root in index.js
-export async function patchBug(req, res) {
+// PATCH /projects/:id/bugs/:bugId — nested under this router (not a flat
+// /api/bugs/:id mount) so requireTenantAccess runs first and req.db is
+// resolved before this handler queries anything.
+router.patch('/:bugId', staffOnly, async (req, res) => {
   const { status, title, severity, steps_to_reproduce, expected, actual, notes, feature_id } = req.body
 
   const fields = []
@@ -151,22 +153,26 @@ export async function patchBug(req, res) {
   if (fields.length === 0) return res.status(400).json({ error: 'No fields to update' })
 
   fields.push(`updated_at=NOW()`)
+  values.push(req.params.bugId)
+  const bugIdParam = i++
   values.push(req.params.id)
+  const projectIdParam = i++
 
   try {
     if (feature_id) {
-      // No project_id in this route's params (mounted at /api/bugs/:id) —
-      // validate via the bug's own project instead.
-      const { rows: fRows } = await query(
+      const { rows: fRows } = await req.db.query(
         `SELECT f.id FROM features f JOIN bugs b ON b.project_id = f.project_id
          WHERE f.id=$1 AND b.id=$2`,
-        [feature_id, req.params.id]
+        [feature_id, req.params.bugId]
       )
       if (!fRows[0]) return res.status(400).json({ error: 'Invalid feature' })
     }
 
-    const { rows } = await query(
-      `UPDATE bugs SET ${fields.join(', ')} WHERE id=$${i} RETURNING *`,
+    // Also filters by project_id — see testCases.js's identical PATCH
+    // comment for why that's not redundant yet during Phase A's identity-
+    // resolver bridge.
+    const { rows } = await req.db.query(
+      `UPDATE bugs SET ${fields.join(', ')} WHERE id=$${bugIdParam} AND project_id=$${projectIdParam} RETURNING *`,
       values
     )
     if (!rows[0]) return res.status(404).json({ error: 'Not found' })
@@ -174,23 +180,36 @@ export async function patchBug(req, res) {
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
-}
+})
 
 const IMAGE_DATA_URL = /^data:image\/(png|jpe?g|gif|webp);base64,/
 
 // GET /projects/:id/bugs/:bugId/comments — any project member (staff + client)
+//
+// user_name/user_role can no longer come from a JOIN — `users` lives in the
+// control plane now, not in this tenant DB. Fetch comments from the tenant
+// DB, then a single batched control-plane lookup for every distinct
+// commenter, merged in JS. `= ANY($1::text[])` keeps this one query
+// regardless of how many distinct commenters a bug has.
 router.get('/:bugId/comments', async (req, res) => {
   try {
-    const { rows } = await query(
-      `SELECT c.*, u.name AS user_name, u.role AS user_role
-       FROM bug_comments c
+    const { rows: comments } = await req.db.query(
+      `SELECT c.* FROM bug_comments c
        JOIN bugs b ON b.id = c.bug_id
-       JOIN users u ON u.id = c.user_id
        WHERE c.bug_id=$1 AND b.project_id=$2
        ORDER BY c.created_at ASC`,
       [req.params.bugId, req.params.id]
     )
-    res.json(rows)
+    const userIds = [...new Set(comments.map(c => c.user_id).filter(Boolean))]
+    const { rows: users } = userIds.length
+      ? await controlQuery(`SELECT id, name, role FROM users WHERE id = ANY($1::text[])`, [userIds])
+      : { rows: [] }
+    const userById = Object.fromEntries(users.map(u => [u.id, u]))
+    res.json(comments.map(c => ({
+      ...c,
+      user_name: userById[c.user_id]?.name || null,
+      user_role: userById[c.user_id]?.role || null,
+    })))
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
@@ -203,14 +222,14 @@ router.post('/:bugId/comments', async (req, res) => {
   if (image && !IMAGE_DATA_URL.test(image)) return res.status(400).json({ error: 'Invalid image format' })
 
   try {
-    const { rows: bugRows } = await query(`SELECT id FROM bugs WHERE id=$1 AND project_id=$2`, [req.params.bugId, req.params.id])
+    const { rows: bugRows } = await req.db.query(`SELECT id FROM bugs WHERE id=$1 AND project_id=$2`, [req.params.bugId, req.params.id])
     if (!bugRows[0]) return res.status(404).json({ error: 'Not found' })
 
-    const { rows } = await query(
+    const { rows } = await req.db.query(
       `INSERT INTO bug_comments (bug_id, user_id, body, image_data) VALUES ($1,$2,$3,$4) RETURNING *`,
       [req.params.bugId, req.userId, body?.trim() || null, image || null]
     )
-    const { rows: userRows } = await query(`SELECT name, role FROM users WHERE id=$1`, [req.userId])
+    const { rows: userRows } = await controlQuery(`SELECT name, role FROM users WHERE id=$1`, [req.userId])
     res.status(201).json({ ...rows[0], user_name: userRows[0]?.name, user_role: userRows[0]?.role })
   } catch (e) {
     res.status(500).json({ error: e.message })

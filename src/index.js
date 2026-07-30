@@ -3,19 +3,15 @@ import express from 'express'
 import cors from 'cors'
 import projectsRouter from './routes/projects.js'
 import testCasesRouter from './routes/testCases.js'
-import { patchTestCase, deleteTestCase } from './routes/testCases.js'
 import requirementsRouter from './routes/requirements.js'
-import { patchRequirement } from './routes/requirements.js'
 import bugsRouter from './routes/bugs.js'
-import { patchBug } from './routes/bugs.js'
 import featuresRouter from './routes/features.js'
-import { patchFeature, deleteFeature } from './routes/features.js'
 import statsRouter from './routes/stats.js'
 import authRouter from './routes/auth.js'
 import automationRouter from './routes/automation.js'
 import executionRunsRouter from './routes/executionRuns.js'
 import webhooksRouter from './routes/webhooks.js'
-import { requireAuth, requireRole } from './middleware/auth.js'
+import { startNightlyScheduler } from './lib/nightlyScheduler.js'
 
 const app = express()
 const PORT = process.env.PORT || 3002
@@ -48,12 +44,17 @@ app.use('/api/projects/:id/execution-runs', executionRunsRouter)
 app.use('/api/stats', statsRouter)
 app.use('/api/webhooks', webhooksRouter)
 
-// Standalone PATCH/DELETE routes
-app.patch('/api/test-cases/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchTestCase)
-app.delete('/api/test-cases/:id', requireAuth, requireRole('qa_engineer', 'admin'), deleteTestCase)
-app.patch('/api/requirements/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchRequirement)
-app.patch('/api/bugs/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchBug)
-app.patch('/api/features/:id', requireAuth, requireRole('qa_engineer', 'admin'), patchFeature)
-app.delete('/api/features/:id', requireAuth, requireRole('qa_engineer', 'admin'), deleteFeature)
+// Phase A: the old standalone /api/test-cases/:id, /api/requirements/:id,
+// /api/bugs/:id, /api/features/:id PATCH/DELETE routes are gone — they had
+// no project/tenant id in their URL, so once a tenant's data lives in its
+// own database there was no way to know which one to open. Their handlers
+// now live nested inside their respective routers above (e.g.
+// PATCH /api/projects/:id/test-cases/:tcId), where requireTenantAccess
+// already resolves req.db before the handler runs.
 
 app.listen(PORT, () => console.log(`QA Tool server running on port ${PORT}`))
+
+// Phase A, Part 6: nightly suite runs are dispatched by this server now,
+// not GitHub Actions' own schedule: trigger (retired from playwright.yml /
+// maestro-run.yml) — see nightlyScheduler.js for why.
+startNightlyScheduler()

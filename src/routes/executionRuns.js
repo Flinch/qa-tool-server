@@ -1,28 +1,41 @@
 import { Router } from 'express'
-import { query } from '../db/pool.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
-import { requireProjectAccess } from '../middleware/projectAccess.js'
+import { requireTenantAccess } from '../middleware/tenantAccess.js'
 import { triggerSuiteRun, reconcileStaleRuns } from '../lib/automationTrigger.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
-router.use(requireProjectAccess)
+router.use(requireTenantAccess)
 
 const staffOnly = requireRole('qa_engineer', 'admin')
 
-async function markInProgress(runId) {
-  await query(
+async function markInProgress(db, projectId, runId) {
+  await db.query(
     `UPDATE execution_runs SET status='in_progress', started_at=COALESCE(started_at, NOW())
-     WHERE id=$1 AND status='not_started'`,
-    [runId]
+     WHERE id=$1 AND project_id=$2 AND status='not_started'`,
+    [runId, projectId]
   )
+}
+
+// Confirms :runId in the URL actually belongs to :id (the tenant/project
+// this request is scoped to) before any handler below touches it. Every
+// mutation on a sub-resource of a run (a test-case-in-run status, a suite
+// trigger) otherwise trusts req.params.runId as a bare id with no ownership
+// check of its own — during Phase A's identity-resolver bridge (see
+// tenantPool.js), every tenant still shares one physical database, so an
+// unchecked runId could operate on a different project's execution run.
+// Kept permanently after the bridge ends too: zero cost, real defense in
+// depth against exactly the bug class this whole rework exists to close.
+async function assertRunOwnership(db, projectId, runId) {
+  const { rows } = await db.query(`SELECT id FROM execution_runs WHERE id=$1 AND project_id=$2`, [runId, projectId])
+  return !!rows[0]
 }
 
 // GET / — execution runs for a project, with pass/fail/not-run/blocked + suite counts.
 // Staff + read-only clients who are project members.
 router.get('/', async (req, res) => {
   try {
-    const { rows } = await query(`
+    const { rows } = await req.db.query(`
       SELECT er.*,
         COUNT(DISTINCT etc.id)::int AS total_test_cases,
         COUNT(DISTINCT etc.id) FILTER (WHERE etc.status='pass')::int AS passed,
@@ -52,21 +65,21 @@ router.post('/', staffOnly, async (req, res) => {
   }
 
   try {
-    const { rows } = await query(
+    const { rows } = await req.db.query(
       `INSERT INTO execution_runs (project_id, name, created_by) VALUES ($1,$2,$3) RETURNING *`,
       [req.params.id, name.trim(), req.userId]
     )
     const run = rows[0]
 
     for (const tcId of test_case_ids) {
-      await query(
+      await req.db.query(
         `INSERT INTO execution_run_test_cases (execution_run_id, test_case_id) VALUES ($1,$2)
          ON CONFLICT (execution_run_id, test_case_id) DO NOTHING`,
         [run.id, tcId]
       )
     }
     for (const suiteId of suite_ids) {
-      await query(
+      await req.db.query(
         `INSERT INTO execution_run_suites (execution_run_id, suite_id) VALUES ($1,$2)
          ON CONFLICT (execution_run_id, suite_id) DO NOTHING`,
         [run.id, suiteId]
@@ -83,15 +96,15 @@ router.post('/', staffOnly, async (req, res) => {
 // Staff + read-only clients who are project members.
 router.get('/:runId', async (req, res) => {
   try {
-    await reconcileStaleRuns(req.params.id)
+    await reconcileStaleRuns(req.db, req.params.id)
 
-    const { rows: runRows } = await query(
+    const { rows: runRows } = await req.db.query(
       `SELECT * FROM execution_runs WHERE id=$1 AND project_id=$2`,
       [req.params.runId, req.params.id]
     )
     if (!runRows[0]) return res.status(404).json({ error: 'Not found' })
 
-    const { rows: testCases } = await query(`
+    const { rows: testCases } = await req.db.query(`
       SELECT etc.id AS execution_test_case_id, etc.status, etc.notes, etc.executed_by, etc.executed_at,
         tc.id AS test_case_id, tc.title, tc.type, tc.steps, tc.expected,
         COUNT(b.id)::int AS bug_count
@@ -109,7 +122,7 @@ router.get('/:runId', async (req, res) => {
     // renamed/deleted test), so it only ever grows and drifts from reality.
     // Falls back to the roster count for a suite that hasn't executed within
     // this specific execution run yet (tr.total is null until it has).
-    const { rows: suites } = await query(`
+    const { rows: suites } = await req.db.query(`
       SELECT es.id AS execution_suite_id, es.suite_id, es.latest_test_run_id,
         s.name AS suite_name, s.slug AS suite_slug,
         COALESCE(tr.total, COUNT(atc.id)::int) AS test_case_count,
@@ -158,7 +171,7 @@ router.patch('/:runId', staffOnly, async (req, res) => {
   const projectIdParam = i++
 
   try {
-    const { rows } = await query(
+    const { rows } = await req.db.query(
       `UPDATE execution_runs SET ${fields.join(', ')} WHERE id=$${runIdParam} AND project_id=$${projectIdParam} RETURNING *`,
       values
     )
@@ -195,14 +208,17 @@ router.patch('/:runId/test-cases/:etcId', staffOnly, async (req, res) => {
   const runIdParam = i++
 
   try {
-    const { rows } = await query(
+    if (!(await assertRunOwnership(req.db, req.params.id, req.params.runId))) {
+      return res.status(404).json({ error: 'Not found' })
+    }
+    const { rows } = await req.db.query(
       `UPDATE execution_run_test_cases SET ${fields.join(', ')}
        WHERE id=$${etcIdParam} AND execution_run_id=$${runIdParam}
        RETURNING *`,
       values
     )
     if (!rows[0]) return res.status(404).json({ error: 'Not found' })
-    await markInProgress(req.params.runId)
+    await markInProgress(req.db, req.params.id, req.params.runId)
     res.json(rows[0])
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -215,22 +231,25 @@ router.patch('/:runId/test-cases/bulk', staffOnly, async (req, res) => {
   if (!['not_run', 'pass', 'fail', 'blocked'].includes(status)) return res.status(400).json({ error: 'Invalid status' })
 
   try {
+    if (!(await assertRunOwnership(req.db, req.params.id, req.params.runId))) {
+      return res.status(404).json({ error: 'Not found' })
+    }
     let rows
     if (ids === 'all') {
-      ;({ rows } = await query(
+      ;({ rows } = await req.db.query(
         `UPDATE execution_run_test_cases SET status=$1, executed_by=$2, executed_at=NOW()
          WHERE execution_run_id=$3 RETURNING *`,
         [status, req.userId, req.params.runId]
       ))
     } else {
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids must be a non-empty array or "all"' })
-      ;({ rows } = await query(
+      ;({ rows } = await req.db.query(
         `UPDATE execution_run_test_cases SET status=$1, executed_by=$2, executed_at=NOW()
          WHERE execution_run_id=$3 AND id = ANY($4::int[]) RETURNING *`,
         [status, req.userId, req.params.runId, ids]
       ))
     }
-    await markInProgress(req.params.runId)
+    await markInProgress(req.db, req.params.id, req.params.runId)
     res.json(rows)
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -240,16 +259,19 @@ router.patch('/:runId/test-cases/bulk', staffOnly, async (req, res) => {
 // POST /:runId/suites/:suiteId/run — trigger a suite attached to this run via GitHub Actions
 router.post('/:runId/suites/:suiteId/run', staffOnly, async (req, res) => {
   try {
-    const { rows: esRows } = await query(
+    if (!(await assertRunOwnership(req.db, req.params.id, req.params.runId))) {
+      return res.status(404).json({ error: 'Not found' })
+    }
+    const { rows: esRows } = await req.db.query(
       `SELECT * FROM execution_run_suites WHERE execution_run_id=$1 AND suite_id=$2`,
       [req.params.runId, req.params.suiteId]
     )
     if (!esRows[0]) return res.status(404).json({ error: 'Suite is not part of this execution run' })
 
-    const testRun = await triggerSuiteRun({ projectId: req.params.id, suiteId: req.params.suiteId, userId: req.userId })
+    const testRun = await triggerSuiteRun({ db: req.db, tenantId: req.tenantId, projectId: req.params.id, suiteId: req.params.suiteId, userId: req.userId })
 
-    await query(`UPDATE execution_run_suites SET latest_test_run_id=$1 WHERE id=$2`, [testRun.id, esRows[0].id])
-    await markInProgress(req.params.runId)
+    await req.db.query(`UPDATE execution_run_suites SET latest_test_run_id=$1 WHERE id=$2`, [testRun.id, esRows[0].id])
+    await markInProgress(req.db, req.params.id, req.params.runId)
 
     res.status(202).json(testRun)
   } catch (e) {
@@ -260,7 +282,7 @@ router.post('/:runId/suites/:suiteId/run', staffOnly, async (req, res) => {
 // DELETE /:runId
 router.delete('/:runId', staffOnly, async (req, res) => {
   try {
-    const { rows } = await query(
+    const { rows } = await req.db.query(
       `DELETE FROM execution_runs WHERE id=$1 AND project_id=$2 RETURNING id`,
       [req.params.runId, req.params.id]
     )

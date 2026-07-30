@@ -1,5 +1,3 @@
-import { query } from '../db/pool.js'
-
 // ============================================================================
 // Plan exporter: test_cases rows -> planner-format Markdown
 // ============================================================================
@@ -90,10 +88,10 @@ export function buildPlanMarkdown(tc, platform = 'web') {
 // edited or un-flagged in the minutes between clicking Generate and CI
 // fetching the payload, and exporting a stale/ineligible TC would waste an
 // expensive agent run on it.
-export async function exportPlansForTestCases(projectId, testCaseIds, platform = 'web') {
+export async function exportPlansForTestCases(db, projectId, testCaseIds, platform = 'web') {
   if (!Array.isArray(testCaseIds) || testCaseIds.length === 0) return []
 
-  const { rows } = await query(
+  const { rows } = await db.query(
     `SELECT id, title, type, steps, expected, automation_reasoning
      FROM test_cases
      WHERE project_id = $1 AND id = ANY($2::int[]) AND automation_candidate = true

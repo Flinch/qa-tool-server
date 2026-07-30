@@ -1,7 +1,7 @@
 import { Router } from 'express'
-import { query } from '../db/pool.js'
+import { query as controlQuery } from '../db/pool.js'
 import { requireAuth, requireRole, verifyToken } from '../middleware/auth.js'
-import { requireProjectAccess } from '../middleware/projectAccess.js'
+import { requireTenantAccess } from '../middleware/tenantAccess.js'
 import { subscribe, unsubscribe } from '../lib/sse.js'
 import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileStaleGenerationRuns, triggerTestCaseRerun, triggerHealRun } from '../lib/automationTrigger.js'
 import { getPrStatus } from '../lib/githubPrStatus.js'
@@ -10,13 +10,14 @@ import { listSuiteFiles, matchTestCaseToFile } from '../lib/githubSuiteFiles.js'
 const router = Router({ mergeParams: true })
 
 const staffOnly = requireRole('qa_engineer', 'admin')
-const anyProjectMember = [requireAuth, requireProjectAccess]
+const anyProjectMember = [requireAuth, requireTenantAccess]
+const staffOnlyChain = [requireAuth, requireTenantAccess, staffOnly]
 
 // GET /suites — bucket cards with counts + latest run summary. Staff +
 // read-only clients who are project members.
 router.get('/suites', ...anyProjectMember, async (req, res) => {
   try {
-    await reconcileStaleRuns(req.params.id)
+    await reconcileStaleRuns(req.db, req.params.id)
     // test_case_count prefers the latest run's actual total over the
     // automated_test_cases roster — that roster is insert-only (webhooks.js
     // adds a title the first time it's seen but never removes one for a
@@ -31,7 +32,7 @@ router.get('/suites', ...anyProjectMember, async (req, res) => {
     // silently hijacked the suite card's displayed count/pass/fail down to
     // whatever tiny subset was re-run. This card must only ever reflect a
     // real full-suite run.
-    const { rows } = await query(`
+    const { rows } = await req.db.query(`
       SELECT s.*,
         COALESCE(latest.total, COUNT(atc.id)::int) AS test_case_count,
         latest.status AS latest_status,
@@ -59,11 +60,11 @@ router.get('/suites', ...anyProjectMember, async (req, res) => {
 })
 
 // POST /suites — create a new suite bucket (e.g. "Regression")
-router.post('/suites', requireAuth, staffOnly, async (req, res) => {
+router.post('/suites', ...staffOnlyChain, async (req, res) => {
   const { name, slug } = req.body
   if (!name?.trim() || !slug?.trim()) return res.status(400).json({ error: 'Name and slug are required' })
   try {
-    const { rows } = await query(
+    const { rows } = await req.db.query(
       `INSERT INTO automation_suites (project_id, name, slug) VALUES ($1,$2,$3) RETURNING *`,
       [req.params.id, name.trim(), slug.trim().toLowerCase()]
     )
@@ -80,7 +81,7 @@ router.post('/suites', requireAuth, staffOnly, async (req, res) => {
 // server-side, not just hidden in the UI, same as any other access rule.
 router.get('/runs', ...anyProjectMember, async (req, res) => {
   try {
-    await reconcileStaleRuns(req.params.id)
+    await reconcileStaleRuns(req.db, req.params.id)
     const { suite_id } = req.query
     const params = [req.params.id]
     let filter = ''
@@ -91,7 +92,7 @@ router.get('/runs', ...anyProjectMember, async (req, res) => {
     if (req.userRole === 'client') {
       filter += ` AND tr.scope = 'suite'`
     }
-    const { rows } = await query(`
+    const { rows } = await req.db.query(`
       SELECT tr.*, s.name AS suite_name, s.slug AS suite_slug
       FROM test_runs tr
       JOIN automation_suites s ON s.id = tr.suite_id
@@ -111,8 +112,8 @@ router.get('/runs', ...anyProjectMember, async (req, res) => {
 // "not found" shape as any other access-denied case in this app.
 router.get('/runs/:runId', ...anyProjectMember, async (req, res) => {
   try {
-    await reconcileStaleRuns(req.params.id)
-    const { rows } = await query(`
+    await reconcileStaleRuns(req.db, req.params.id)
+    const { rows } = await req.db.query(`
       SELECT tr.*, s.name AS suite_name, s.slug AS suite_slug
       FROM test_runs tr
       JOIN automation_suites s ON s.id = tr.suite_id
@@ -123,7 +124,7 @@ router.get('/runs/:runId', ...anyProjectMember, async (req, res) => {
       return res.status(404).json({ error: 'Not found' })
     }
 
-    const { rows: results } = await query(
+    const { rows: results } = await req.db.query(
       `SELECT * FROM test_run_results WHERE test_run_id=$1 ORDER BY id`,
       [req.params.runId]
     )
@@ -138,14 +139,14 @@ router.get('/runs/:runId', ...anyProjectMember, async (req, res) => {
 // title to its real committed file (same listSuiteFiles/matchTestCaseToFile
 // helpers the "View test cases" pages already use) and dispatches only
 // those files via triggerTestCaseRerun.
-router.post('/runs/:runId/rerun', requireAuth, staffOnly, async (req, res) => {
+router.post('/runs/:runId/rerun', ...staffOnlyChain, async (req, res) => {
   const { result_ids } = req.body
   if (!Array.isArray(result_ids) || result_ids.length === 0) {
     return res.status(400).json({ error: 'At least 1 result_id is required' })
   }
 
   try {
-    const { rows: runRows } = await query(`
+    const { rows: runRows } = await req.db.query(`
       SELECT tr.*, s.id AS suite_id, s.slug AS suite_slug, s.platform AS suite_platform
       FROM test_runs tr JOIN automation_suites s ON s.id = tr.suite_id
       WHERE tr.id=$1 AND tr.project_id=$2
@@ -153,7 +154,7 @@ router.post('/runs/:runId/rerun', requireAuth, staffOnly, async (req, res) => {
     if (!runRows[0]) return res.status(404).json({ error: 'Run not found' })
     const run = runRows[0]
 
-    const { rows: results } = await query(
+    const { rows: results } = await req.db.query(
       `SELECT * FROM test_run_results WHERE id = ANY($1::int[]) AND test_run_id=$2`,
       [result_ids, req.params.runId]
     )
@@ -182,6 +183,8 @@ router.post('/runs/:runId/rerun', requireAuth, staffOnly, async (req, res) => {
     }
 
     const newRun = await triggerTestCaseRerun({
+      db: req.db,
+      tenantId: req.tenantId,
       projectId: req.params.id,
       suiteId: run.suite_id,
       filePaths,
@@ -199,12 +202,12 @@ router.post('/runs/:runId/rerun', requireAuth, staffOnly, async (req, res) => {
 // action). Resolves the file the same way /rerun does, best-effort resolves
 // a real linked test_case_id from the roster for traceability, then
 // dispatches the healer directly at that file via triggerHealRun.
-router.post('/runs/:runId/heal', requireAuth, staffOnly, async (req, res) => {
+router.post('/runs/:runId/heal', ...staffOnlyChain, async (req, res) => {
   const { result_id } = req.body
   if (!result_id) return res.status(400).json({ error: 'result_id is required' })
 
   try {
-    const { rows: runRows } = await query(`
+    const { rows: runRows } = await req.db.query(`
       SELECT tr.*, s.id AS suite_id, s.slug AS suite_slug, s.platform AS suite_platform
       FROM test_runs tr JOIN automation_suites s ON s.id = tr.suite_id
       WHERE tr.id=$1 AND tr.project_id=$2
@@ -212,7 +215,7 @@ router.post('/runs/:runId/heal', requireAuth, staffOnly, async (req, res) => {
     if (!runRows[0]) return res.status(404).json({ error: 'Run not found' })
     const run = runRows[0]
 
-    const { rows: resultRows } = await query(
+    const { rows: resultRows } = await req.db.query(
       `SELECT * FROM test_run_results WHERE id=$1 AND test_run_id=$2`,
       [result_id, req.params.runId]
     )
@@ -227,13 +230,15 @@ router.post('/runs/:runId/heal', requireAuth, staffOnly, async (req, res) => {
     const file = url && files.find(f => f.url === url)
     if (!file) return res.status(400).json({ error: `Could not find a matching file for: ${result.test_title}` })
 
-    const { rows: rosterRows } = await query(
+    const { rows: rosterRows } = await req.db.query(
       `SELECT test_case_id FROM automated_test_cases WHERE suite_id=$1 AND title=$2 AND test_case_id IS NOT NULL`,
       [run.suite_id, result.test_title]
     )
     const testCaseIds = rosterRows[0] ? [rosterRows[0].test_case_id] : []
 
     const newRun = await triggerHealRun({
+      db: req.db,
+      tenantId: req.tenantId,
       projectId: req.params.id,
       suiteId: run.suite_id,
       testCaseIds,
@@ -254,14 +259,14 @@ router.post('/runs/:runId/heal', requireAuth, staffOnly, async (req, res) => {
 // unlike Generation History's PR/file links which stayed staff-only).
 router.get('/suites/:suiteId/test-cases', ...anyProjectMember, async (req, res) => {
   try {
-    const { rows: suiteRows } = await query(
+    const { rows: suiteRows } = await req.db.query(
       `SELECT * FROM automation_suites WHERE id=$1 AND project_id=$2`,
       [req.params.suiteId, req.params.id]
     )
     const suite = suiteRows[0]
     if (!suite) return res.status(404).json({ error: 'Suite not found' })
 
-    const { rows } = await query(`
+    const { rows } = await req.db.query(`
       SELECT atc.id, atc.title, atc.origin, atc.review_status, atc.test_case_id,
         tc.title AS linked_test_case_title
       FROM automated_test_cases atc
@@ -292,7 +297,7 @@ router.get('/generated-test-cases', ...anyProjectMember, async (req, res) => {
     // design (never touches the run it diagnosed) and must never get picked
     // up as "the" last run here either, or a passing test would flash as
     // failed (or vice versa) based on someone's unrelated troubleshooting.
-    const { rows } = await query(`
+    const { rows } = await req.db.query(`
       SELECT atc.id, atc.title, atc.origin, atc.review_status, atc.test_case_id,
         tc.title AS linked_test_case_title,
         s.id AS suite_id, s.name AS suite_name, s.slug AS suite_slug, s.platform AS suite_platform,
@@ -337,12 +342,12 @@ router.get('/generated-test-cases', ...anyProjectMember, async (req, res) => {
 })
 
 // POST /runs/trigger — kick off a manual run via GitHub workflow_dispatch
-router.post('/runs/trigger', requireAuth, staffOnly, async (req, res) => {
+router.post('/runs/trigger', ...staffOnlyChain, async (req, res) => {
   const { suite_id } = req.body
   if (!suite_id) return res.status(400).json({ error: 'suite_id is required' })
 
   try {
-    const run = await triggerSuiteRun({ projectId: req.params.id, suiteId: suite_id, userId: req.userId })
+    const run = await triggerSuiteRun({ db: req.db, tenantId: req.tenantId, projectId: req.params.id, suiteId: suite_id, userId: req.userId })
     res.status(202).json(run)
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message })
@@ -350,12 +355,14 @@ router.post('/runs/trigger', requireAuth, staffOnly, async (req, res) => {
 })
 
 // POST /generate — kick off a test GENERATION run (manual TCs -> agents -> PR)
-router.post('/generate', requireAuth, staffOnly, async (req, res) => {
+router.post('/generate', ...staffOnlyChain, async (req, res) => {
   const { suite_id, test_case_ids } = req.body
   if (!suite_id) return res.status(400).json({ error: 'suite_id is required' })
 
   try {
     const run = await triggerGenerationRun({
+      db: req.db,
+      tenantId: req.tenantId,
       projectId: req.params.id,
       suiteId: suite_id,
       testCaseIds: test_case_ids,
@@ -370,8 +377,8 @@ router.post('/generate', requireAuth, staffOnly, async (req, res) => {
 // GET /generation-runs — recent generation runs, newest first
 router.get('/generation-runs', ...anyProjectMember, async (req, res) => {
   try {
-    await reconcileStaleGenerationRuns(req.params.id)
-    const { rows } = await query(`
+    await reconcileStaleGenerationRuns(req.db, req.params.id)
+    const { rows } = await req.db.query(`
       SELECT gr.*, s.id AS suite_pk, s.name AS suite_name, s.slug AS suite_slug, s.platform AS suite_platform
       FROM generation_runs gr
       JOIN automation_suites s ON s.id = gr.suite_id
@@ -434,8 +441,8 @@ router.get('/runs/stream', async (req, res) => {
     return res.status(403).json({ error: "You don't have access to this resource" })
   }
   if (decoded.role === 'client') {
-    const { rows } = await query(
-      `SELECT 1 FROM project_members WHERE project_id=$1 AND user_id=$2`,
+    const { rows } = await controlQuery(
+      `SELECT 1 FROM tenant_members WHERE tenant_id=$1 AND user_id=$2`,
       [req.params.id, decoded.sub]
     )
     if (!rows[0]) return res.status(404).json({ error: 'Not found' })

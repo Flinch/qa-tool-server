@@ -1,5 +1,5 @@
 import crypto from 'crypto'
-import { query } from '../db/pool.js'
+import { query } from '../db/pool.js' // control-plane pool from here on
 import { broadcast } from './sse.js'
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN
@@ -50,15 +50,35 @@ class TriggerError extends Error {
   }
 }
 
+// The mechanism that lets a webhook resolve which tenant DB a result belongs
+// to WITHOUT trusting anything CI claims about project_id — see
+// dispatch_index in controlPlaneSchema.js. Written to the control plane
+// AFTER the tenant DB's own pending row exists (so a crash before this call
+// just means nothing was dispatched yet — harmless) and BEFORE the GitHub
+// Actions dispatch fetch() (so a crash after this call but before dispatch
+// is equally harmless: an orphan index row pointing at a run that was never
+// actually kicked off). There is no ordering that leaves a REAL dispatched
+// run unable to resolve its tenant.
+async function recordDispatch(correlationId, tenantId, kind) {
+  await query(
+    `INSERT INTO dispatch_index (correlation_id, tenant_id, kind) VALUES ($1,$2,$3)`,
+    [correlationId, tenantId, kind]
+  )
+}
+
 // Dispatches a suite run via GitHub Actions workflow_dispatch and records the
 // pending test_runs row. Shared by the Automation page's "Run suite" action
-// and by Execution Runs triggering a suite from inside a session.
-export async function triggerSuiteRun({ projectId, suiteId, userId }) {
+// and by Execution Runs triggering a suite from inside a session. `db` is
+// the caller's tenant pool (from req.db); `tenantId` is that same tenant's
+// control-plane id (equal to `projectId` by design — see "tenant id ==
+// project id" in the Phase A plan — kept as a separate param so call sites
+// stay explicit about which system each value is for).
+export async function triggerSuiteRun({ db, tenantId, projectId, suiteId, userId, triggerType = 'manual' }) {
   if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
     throw new TriggerError(500, 'GitHub Actions is not configured on the server')
   }
 
-  const { rows: suiteRows } = await query(
+  const { rows: suiteRows } = await db.query(
     `SELECT * FROM automation_suites WHERE id=$1 AND project_id=$2`,
     [suiteId, projectId]
   )
@@ -74,17 +94,21 @@ export async function triggerSuiteRun({ projectId, suiteId, userId }) {
 
   const correlationId = crypto.randomUUID()
 
-  const { rows } = await query(
+  const { rows } = await db.query(
     `INSERT INTO test_runs (project_id, suite_id, correlation_id, trigger_type, status, created_by)
-     VALUES ($1,$2,$3,'manual','pending',$4) RETURNING *`,
-    [projectId, suiteId, correlationId, userId]
+     VALUES ($1,$2,$3,$4,'pending',$5) RETURNING *`,
+    [projectId, suiteId, correlationId, triggerType, userId]
   )
+  await recordDispatch(correlationId, tenantId, 'test_run')
 
   // Web dispatch inputs must match playwright.yml's declared inputs exactly
   // (workflow_dispatch rejects undeclared ones) — project_id isn't one of
   // them there, since the web pipeline still relies on the single
-  // QA_TOOL_PROJECT_ID repo variable. Mobile already spans more than one
-  // project, so maestro-run.yml takes project_id and platform explicitly.
+  // QA_TOOL_PROJECT_ID repo variable (routing no longer depends on that
+  // value being correct now that dispatch_index exists, but the input
+  // itself is still unused by playwright.yml, so it stays omitted here).
+  // Mobile already spans more than one project, so maestro-run.yml takes
+  // project_id and platform explicitly.
   const ref = suite.platform === 'web' ? 'master' : GITHUB_MOBILE_REF
   const inputs = suite.platform === 'web'
     ? { suite_slug: suite.slug, run_correlation_id: correlationId }
@@ -105,7 +129,7 @@ export async function triggerSuiteRun({ projectId, suiteId, userId }) {
 
   if (!ghRes.ok) {
     const errText = (await ghRes.text()).slice(0, 500)
-    await query(
+    await db.query(
       `UPDATE test_runs SET status='failed', error_message=$2, completed_at=NOW() WHERE id=$1`,
       [rows[0].id, `GitHub Actions dispatch failed: ${errText}`]
     )
@@ -123,12 +147,12 @@ export async function triggerSuiteRun({ projectId, suiteId, userId }) {
 // input both workflows now understand. Getting its own fresh correlation_id
 // and its own INSERTed row means the webhook that reports results back can
 // only ever UPDATE this new row — the run being diagnosed is never touched.
-export async function triggerTestCaseRerun({ projectId, suiteId, filePaths, targetTitles, userId }) {
+export async function triggerTestCaseRerun({ db, tenantId, projectId, suiteId, filePaths, targetTitles, userId }) {
   if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
     throw new TriggerError(500, 'GitHub Actions is not configured on the server')
   }
 
-  const { rows: suiteRows } = await query(
+  const { rows: suiteRows } = await db.query(
     `SELECT * FROM automation_suites WHERE id=$1 AND project_id=$2`,
     [suiteId, projectId]
   )
@@ -142,11 +166,12 @@ export async function triggerTestCaseRerun({ projectId, suiteId, filePaths, targ
 
   const correlationId = crypto.randomUUID()
 
-  const { rows } = await query(
+  const { rows } = await db.query(
     `INSERT INTO test_runs (project_id, suite_id, correlation_id, trigger_type, status, scope, target_titles, created_by)
      VALUES ($1,$2,$3,'manual','pending','test_cases',$4,$5) RETURNING *`,
     [projectId, suiteId, correlationId, targetTitles || [], userId]
   )
+  await recordDispatch(correlationId, tenantId, 'test_run')
 
   const ref = suite.platform === 'web' ? 'master' : GITHUB_MOBILE_REF
   const filePathsInput = filePaths.join(' ')
@@ -169,7 +194,7 @@ export async function triggerTestCaseRerun({ projectId, suiteId, filePaths, targ
 
   if (!ghRes.ok) {
     const errText = (await ghRes.text()).slice(0, 500)
-    await query(
+    await db.query(
       `UPDATE test_runs SET status='failed', error_message=$2, completed_at=NOW() WHERE id=$1`,
       [rows[0].id, `GitHub Actions dispatch failed: ${errText}`]
     )
@@ -190,7 +215,7 @@ export async function triggerTestCaseRerun({ projectId, suiteId, filePaths, targ
 // carries ONLY the correlation id, and the workflow calls back to
 // GET /api/webhooks/generation-payload/:correlationId to fetch the plans.
 // Single source of truth stays in Postgres; CI pulls what it needs.
-export async function triggerGenerationRun({ projectId, suiteId, testCaseIds, userId }) {
+export async function triggerGenerationRun({ db, tenantId, projectId, suiteId, testCaseIds, userId }) {
   if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
     throw new TriggerError(500, 'Test generation workflow is not configured on the server')
   }
@@ -205,7 +230,7 @@ export async function triggerGenerationRun({ projectId, suiteId, testCaseIds, us
     throw new TriggerError(400, 'A maximum of 3 test cases can be batched into one generation run')
   }
 
-  const { rows: suiteRows } = await query(
+  const { rows: suiteRows } = await db.query(
     `SELECT * FROM automation_suites WHERE id=$1 AND project_id=$2`,
     [suiteId, projectId]
   )
@@ -229,7 +254,7 @@ export async function triggerGenerationRun({ projectId, suiteId, testCaseIds, us
   // not a precision loss (a requirement can legitimately cover both mobile
   // OSes via separate TC rows).
   const suiteCategory = suiteRows[0].platform === 'web' ? 'web' : 'mobile'
-  const { rows: tcRows } = await query(
+  const { rows: tcRows } = await db.query(
     `SELECT id FROM test_cases
      WHERE project_id=$1 AND id = ANY($2::int[]) AND automation_candidate = true AND platform = $3`,
     [projectId, testCaseIds, suiteCategory]
@@ -250,11 +275,12 @@ export async function triggerGenerationRun({ projectId, suiteId, testCaseIds, us
   // the generation sweep would eventually mark the orphaned 'pending' row
   // failed. The alternative order (dispatch first) is worse: a run could be
   // executing in CI with no row for its webhooks to land on.
-  const { rows } = await query(
+  const { rows } = await db.query(
     `INSERT INTO generation_runs (project_id, suite_id, correlation_id, status, test_case_ids, created_by)
      VALUES ($1,$2,$3,'pending',$4,$5) RETURNING *`,
     [projectId, suiteId, correlationId, testCaseIds, userId]
   )
+  await recordDispatch(correlationId, tenantId, 'generation_run')
 
   const ghRes = await fetch(
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${workflowId}/dispatches`,
@@ -276,7 +302,7 @@ export async function triggerGenerationRun({ projectId, suiteId, testCaseIds, us
 
   if (!ghRes.ok) {
     const errText = (await ghRes.text()).slice(0, 500)
-    await query(
+    await db.query(
       `UPDATE generation_runs SET status='failed', error_message=$2, completed_at=NOW() WHERE id=$1`,
       [rows[0].id, `GitHub Actions dispatch failed: ${errText}`]
     )
@@ -295,12 +321,12 @@ export async function triggerGenerationRun({ projectId, suiteId, testCaseIds, us
 // elements — a real linked test case if the failing result resolved to one,
 // empty if it's an orphan title with no tc-<id> match) since healing doesn't
 // require the stricter link triggerGenerationRun enforces.
-export async function triggerHealRun({ projectId, suiteId, testCaseIds, targetTitle, filePath, userId }) {
+export async function triggerHealRun({ db, tenantId, projectId, suiteId, testCaseIds, targetTitle, filePath, userId }) {
   if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
     throw new TriggerError(500, 'Test generation workflow is not configured on the server')
   }
 
-  const { rows: suiteRows } = await query(
+  const { rows: suiteRows } = await db.query(
     `SELECT * FROM automation_suites WHERE id=$1 AND project_id=$2`,
     [suiteId, projectId]
   )
@@ -314,11 +340,12 @@ export async function triggerHealRun({ projectId, suiteId, testCaseIds, targetTi
 
   const correlationId = crypto.randomUUID()
 
-  const { rows } = await query(
+  const { rows } = await db.query(
     `INSERT INTO generation_runs (project_id, suite_id, correlation_id, status, kind, target_title, test_case_ids, created_by)
      VALUES ($1,$2,$3,'pending','heal',$4,$5,$6) RETURNING *`,
     [projectId, suiteId, correlationId, targetTitle, testCaseIds || [], userId]
   )
+  await recordDispatch(correlationId, tenantId, 'generation_run')
 
   const ref = suite.platform === 'web' ? 'master' : GITHUB_MOBILE_GENERATION_REF
   const ghRes = await fetch(
@@ -342,7 +369,7 @@ export async function triggerHealRun({ projectId, suiteId, testCaseIds, targetTi
 
   if (!ghRes.ok) {
     const errText = (await ghRes.text()).slice(0, 500)
-    await query(
+    await db.query(
       `UPDATE generation_runs SET status='failed', error_message=$2, completed_at=NOW() WHERE id=$1`,
       [rows[0].id, `GitHub Actions dispatch failed: ${errText}`]
     )
@@ -356,8 +383,8 @@ export async function triggerHealRun({ projectId, suiteId, testCaseIds, targetTi
 // failed so a dropped webhook or a runner that never started doesn't leave
 // the client polling indefinitely. Cheap idempotent UPDATE — safe to call on
 // every read of run status.
-export async function reconcileStaleRuns(projectId) {
-  const { rows } = await query(
+export async function reconcileStaleRuns(db, projectId) {
+  const { rows } = await db.query(
     `UPDATE test_runs
      SET status='failed', error_message='Timed out waiting for CI to report results', completed_at=NOW()
      WHERE project_id=$1 AND status IN ('pending','running')
@@ -389,8 +416,8 @@ export async function reconcileStaleRuns(projectId) {
 //
 // Either ordering converges on a sane terminal state because both writers
 // are plain conditional UPDATEs — no read-then-write gap to get wrong.
-export async function reconcileStaleGenerationRuns(projectId) {
-  const { rows } = await query(
+export async function reconcileStaleGenerationRuns(db, projectId) {
+  const { rows } = await db.query(
     `UPDATE generation_runs
      SET status='failed',
          error_message='Timed out waiting for the generation workflow to report back',

@@ -1,12 +1,11 @@
 import { Router } from 'express'
-import { query, pool } from '../db/pool.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
-import { requireProjectAccess } from '../middleware/projectAccess.js'
+import { requireTenantAccess } from '../middleware/tenantAccess.js'
 import { combineTestCases } from '../lib/combineTestCases.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
-router.use(requireProjectAccess)
+router.use(requireTenantAccess)
 
 const staffOnly = requireRole('qa_engineer', 'admin')
 
@@ -19,7 +18,7 @@ router.get('/', async (req, res) => {
     // an engineer/AI thinks it's a good fit; "automated" means it actually
     // has committed code. Same origin='generated' signal already used
     // everywhere else this session (webhooks.js roster tracking, The Lab).
-    const { rows } = await query(
+    const { rows } = await req.db.query(
       `SELECT tc.*, COUNT(b.id)::int AS bug_count,
          EXISTS (
            SELECT 1 FROM automated_test_cases atc
@@ -46,16 +45,16 @@ router.post('/', staffOnly, async (req, res) => {
 
   try {
     if (feature_id) {
-      const { rows: fRows } = await query(`SELECT id FROM features WHERE id=$1 AND project_id=$2`, [feature_id, req.params.id])
+      const { rows: fRows } = await req.db.query(`SELECT id FROM features WHERE id=$1 AND project_id=$2`, [feature_id, req.params.id])
       if (!fRows[0]) return res.status(400).json({ error: 'Invalid feature' })
     }
 
-    const { rows } = await query(
+    const { rows } = await req.db.query(
       `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, created_by, platform, feature_id)
        VALUES ($1,$2,$3,$4,$5,false,$6,$7,$8) RETURNING *`,
       [req.params.id, title.trim(), type, JSON.stringify(steps || []), expected || '', req.userId, platform || 'web', feature_id || null]
     )
-    await query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])
+    await req.db.query(`UPDATE projects SET updated_at=NOW() WHERE id=$1`, [req.params.id])
     res.status(201).json({ ...rows[0], bug_count: 0 })
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -72,7 +71,7 @@ router.post('/combine', staffOnly, async (req, res) => {
   }
 
   try {
-    const { rows: sourceTestCases } = await query(
+    const { rows: sourceTestCases } = await req.db.query(
       `SELECT * FROM test_cases WHERE project_id=$1 AND id = ANY($2::int[])`,
       [req.params.id, test_case_ids]
     )
@@ -112,7 +111,7 @@ router.post('/combine/apply', staffOnly, async (req, res) => {
   // failure partway through (confirmed for real during testing — a bug in
   // the requirement-transfer query left an orphaned new test case with the
   // originals never cleaned up) must not leave that half-applied.
-  const client = await pool.connect()
+  const client = await req.db.connect()
   try {
     await client.query('BEGIN')
 
@@ -168,7 +167,7 @@ router.post('/combine/apply', staffOnly, async (req, res) => {
 
 router.get('/:tcId/bugs', async (req, res) => {
   try {
-    const { rows } = await query(
+    const { rows } = await req.db.query(
       `SELECT * FROM bugs WHERE test_case_id=$1 ORDER BY created_at DESC`,
       [req.params.tcId]
     )
@@ -178,17 +177,26 @@ router.get('/:tcId/bugs', async (req, res) => {
   }
 })
 
-export async function deleteTestCase(req, res) {
+// DELETE/PATCH /projects/:id/test-cases/:tcId — nested under this router
+// (not a flat /api/test-cases/:id mount) so requireTenantAccess runs first
+// and req.db is resolved before either handler queries anything. Both also
+// filter by project_id=$2, not just id=$1: during Phase A's identity-
+// resolver bridge every tenant still shares one physical database (see
+// tenantPool.js), so without this a same-shaped request against a
+// different :id in the URL could touch another tenant's row by id alone.
+// Caught live via this exact bug; kept permanently afterward too — zero
+// cost once a tenant's own db only ever has its own rows anyway.
+router.delete('/:tcId', staffOnly, async (req, res) => {
   try {
-    const { rowCount } = await query(`DELETE FROM test_cases WHERE id=$1`, [req.params.id])
+    const { rowCount } = await req.db.query(`DELETE FROM test_cases WHERE id=$1 AND project_id=$2`, [req.params.tcId, req.params.id])
     if (rowCount === 0) return res.status(404).json({ error: 'Not found' })
     res.status(204).end()
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
-}
+})
 
-export async function patchTestCase(req, res) {
+router.patch('/:tcId', staffOnly, async (req, res) => {
   const { status, title, type, steps, expected, automationCandidate, automationReasoning, platform, feature_id } = req.body
 
   const fields = []
@@ -230,22 +238,23 @@ export async function patchTestCase(req, res) {
   if (fields.length === 0) return res.status(400).json({ error: 'No fields to update' })
 
   fields.push(`updated_at=NOW()`)
+  values.push(req.params.tcId)
+  const tcIdParam = i++
   values.push(req.params.id)
+  const projectIdParam = i++
 
   try {
     if (feature_id) {
-      // No project_id in this route's params (mounted at /api/test-cases/:id) —
-      // validate via the test case's own project instead.
-      const { rows: fRows } = await query(
+      const { rows: fRows } = await req.db.query(
         `SELECT f.id FROM features f JOIN test_cases tc ON tc.project_id = f.project_id
          WHERE f.id=$1 AND tc.id=$2`,
-        [feature_id, req.params.id]
+        [feature_id, req.params.tcId]
       )
       if (!fRows[0]) return res.status(400).json({ error: 'Invalid feature' })
     }
 
-    const { rows } = await query(
-      `UPDATE test_cases SET ${fields.join(', ')} WHERE id=$${i} RETURNING *`,
+    const { rows } = await req.db.query(
+      `UPDATE test_cases SET ${fields.join(', ')} WHERE id=$${tcIdParam} AND project_id=$${projectIdParam} RETURNING *`,
       values
     )
     if (!rows[0]) return res.status(404).json({ error: 'Not found' })
@@ -253,5 +262,5 @@ export async function patchTestCase(req, res) {
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
-}
+})
 export default router

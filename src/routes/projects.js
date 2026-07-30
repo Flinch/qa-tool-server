@@ -1,89 +1,66 @@
 import { Router } from 'express'
-import { query } from '../db/pool.js'
+import { query } from '../db/pool.js' // control-plane pool
 import { requireAuth, requireRole } from '../middleware/auth.js'
+import { requireTenantAccess } from '../middleware/tenantAccess.js'
+import { listVisibleTenants } from '../db/tenantRegistry.js'
+import { resolveTenantPool } from '../db/tenantPool.js'
 
 const router = Router()
 router.use(requireAuth)
 
-async function assertProjectAccess(req, res) {
-  if (req.userRole === 'client') {
-    const { rows } = await query(
-      `SELECT 1 FROM project_members WHERE project_id=$1 AND user_id=$2`,
-      [req.params.id, req.userId]
-    )
-    if (!rows[0]) {
-      res.status(404).json({ error: 'Not found' })
-      return false
-    }
-  }
-  return true
-}
-
-// GET /projects
+// GET /projects — staff see every active tenant, clients only the ones
+// they're a tenant_members of. Each tenant's own data (test_case_count,
+// open_bug_count) now lives in a separate database per tenant, so this can
+// no longer be one SQL join — fan out to each tenant's pool in parallel and
+// merge in Node. Promise.allSettled so one unreachable tenant DB degrades
+// to "missing from the list" instead of 500ing the whole page for everyone.
 router.get('/', async (req, res) => {
   try {
-    let rows
-    if (req.userRole === 'client') {
-      ;({ rows } = await query(`
-        SELECT p.*,
-          COUNT(DISTINCT tc.id)::int AS test_case_count,
-          COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'open')::int AS open_bug_count
-        FROM projects p
-        JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $1
-        LEFT JOIN test_cases tc ON tc.project_id = p.id
-        LEFT JOIN bugs b ON b.project_id = p.id
-        GROUP BY p.id
-        ORDER BY p.updated_at DESC
-      `, [req.userId]))
-    } else {
-      ;({ rows } = await query(`
+    const tenants = await listVisibleTenants(req.userId, req.userRole)
+    const settled = await Promise.allSettled(tenants.map(async t => {
+      const db = await resolveTenantPool(t.id)
+      // WHERE p.id=$1 stays even though, once real per-tenant databases
+      // exist (Part 5), a tenant's db only ever has one projects row anyway
+      // — during the identity-resolver bridge (now), every tenant still
+      // shares the ONE physical database, so without this filter each
+      // iteration silently returns whichever project row Postgres happens
+      // to return first, not this tenant's own row. Caught by testing this
+      // exact bug live. Zero downside to keeping it permanently.
+      const { rows } = await db.query(`
         SELECT p.*,
           COUNT(DISTINCT tc.id)::int AS test_case_count,
           COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'open')::int AS open_bug_count
         FROM projects p
         LEFT JOIN test_cases tc ON tc.project_id = p.id
         LEFT JOIN bugs b ON b.project_id = p.id
+        WHERE p.id = $1
         GROUP BY p.id
-        ORDER BY p.updated_at DESC
-      `))
-    }
-    res.json(rows)
+      `, [t.id])
+      return rows[0]
+    }))
+    const projects = []
+    settled.forEach((r, i) => {
+      if (r.status === 'fulfilled' && r.value) projects.push(r.value)
+      else console.error(`GET /projects: tenant ${tenants[i].id} (${tenants[i].slug}) unreachable:`, r.reason)
+    })
+    projects.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+    res.json(projects)
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
 })
 
-// POST /projects — admin only
-router.post('/', requireRole('admin'), async (req, res) => {
-  const { name, client_name, description } = req.body
-  if (!name?.trim()) return res.status(400).json({ error: 'Name is required' })
-
-  try {
-    await query(
-      `INSERT INTO users (id, email, role) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`,
-      [req.userId, req.userEmail, req.userRole]
-    )
-    const { rows } = await query(
-      `INSERT INTO projects (name, client_name, description, created_by) VALUES ($1,$2,$3,$4) RETURNING *`,
-      [name.trim(), client_name?.trim() || null, description?.trim() || null, req.userId]
-    )
-    // Every project needs a legitimate default bucket for feature tagging —
-    // same reasoning as the 'General' backfill for pre-existing projects.
-    await query(
-      `INSERT INTO features (project_id, name, created_by) VALUES ($1,'General',$2)`,
-      [rows[0].id, req.userId]
-    )
-    res.status(201).json(rows[0])
-  } catch (e) {
-    res.status(500).json({ error: e.message })
-  }
-})
+// POST / — provisioning a new tenant (creating its own database, running
+// schema migrations, seeding defaults) is deliberately NOT a live HTTP
+// route. It's a CLI-only operation (scripts/provisionTenant.js) run by hand
+// off the always-on server process, so the database-creation-capable
+// credential it needs never has to live on that process. See "Phase A:
+// DB-per-client multi-tenancy" for why.
 
 // GET /projects/:id
-router.get('/:id', async (req, res) => {
+router.get('/:id', requireTenantAccess, async (req, res) => {
   try {
-    if (!(await assertProjectAccess(req, res))) return
-    const { rows } = await query(`SELECT * FROM projects WHERE id=$1`, [req.params.id])
+    const { rows } = await req.db.query(`SELECT * FROM projects WHERE id=$1`, [req.params.id])
     if (!rows[0]) return res.status(404).json({ error: 'Not found' })
     res.json(rows[0])
   } catch (e) {
@@ -92,13 +69,12 @@ router.get('/:id', async (req, res) => {
 })
 
 // GET /projects/:id/stats
-router.get('/:id/stats', async (req, res) => {
+router.get('/:id/stats', requireTenantAccess, async (req, res) => {
   try {
-    if (!(await assertProjectAccess(req, res))) return
     // Same fix as GET /:id/health — passed/failed/notRun sourced from real
     // execution history (execution_run_test_cases), not test_cases.status,
     // which execution runs never write to.
-    const { rows } = await query(`
+    const { rows } = await req.db.query(`
       WITH latest_execution AS (
         SELECT DISTINCT ON (erc.test_case_id) erc.test_case_id, erc.status
         FROM execution_run_test_cases erc
@@ -128,19 +104,12 @@ router.get('/:id/stats', async (req, res) => {
 // GET /projects/:id/health — quality-health dashboard data (see DECISIONS.md
 // "Phase 4 — quality health dashboard" for the healthStatus thresholds and
 // why the trend is sourced from execution_runs rather than test_cases.status).
-router.get('/:id/health', async (req, res) => {
+router.get('/:id/health', requireTenantAccess, async (req, res) => {
   try {
-    if (!(await assertProjectAccess(req, res))) return
     const projectId = req.params.id
 
     const [testCaseRows, bugRows, coverageRows, trendRows, requirementCoverageRows] = await Promise.all([
-      // Sourced from real execution history, not test_cases.status — that
-      // column is deliberately independent of execution results (see the
-      // schema comment on execution_run_test_cases in migrate.js), so it
-      // never reflected an actual run. This finds each test case's most
-      // recent real pass/fail/blocked result across every execution run in
-      // the project and aggregates from that instead.
-      query(`
+      req.db.query(`
         WITH latest_execution AS (
           SELECT DISTINCT ON (erc.test_case_id) erc.test_case_id, erc.status
           FROM execution_run_test_cases erc
@@ -158,13 +127,13 @@ router.get('/:id/health', async (req, res) => {
         LEFT JOIN latest_execution le ON le.test_case_id = tc.id
         WHERE tc.project_id = $1
       `, [projectId]),
-      query(`
+      req.db.query(`
         SELECT severity, COUNT(*)::int AS count
         FROM bugs
         WHERE project_id = $1 AND status = 'open'
         GROUP BY severity
       `, [projectId]),
-      query(`
+      req.db.query(`
         SELECT
           COUNT(DISTINCT tc.id)::int AS total,
           COUNT(DISTINCT tc.id) FILTER (WHERE atc.id IS NOT NULL)::int AS automated
@@ -172,7 +141,7 @@ router.get('/:id/health', async (req, res) => {
         LEFT JOIN automated_test_cases atc ON atc.test_case_id = tc.id
         WHERE tc.project_id = $1
       `, [projectId]),
-      query(`
+      req.db.query(`
         SELECT er.id, er.completed_at,
           COUNT(erc.id) FILTER (WHERE erc.status = 'pass')::int AS passed,
           COUNT(erc.id) FILTER (WHERE erc.status IN ('pass','fail'))::int AS total
@@ -187,7 +156,7 @@ router.get('/:id/health', async (req, res) => {
       // the Requirements page itself (linked_test_case_count > 0) — kept
       // identical on purpose so this dashboard and that page never disagree
       // about what "covered" means.
-      query(`
+      req.db.query(`
         SELECT
           COUNT(DISTINCT r.id)::int AS total,
           COUNT(DISTINCT r.id) FILTER (WHERE rtc.id IS NOT NULL)::int AS covered
@@ -243,7 +212,11 @@ router.get('/:id/health', async (req, res) => {
   }
 })
 
-// POST /projects/:id/members — admin only, links a client user to a project
+// POST /projects/:id/members — admin only, grants a client user access to a
+// tenant. Membership is control-plane data (it's an access-control decision
+// that has to be made BEFORE a tenant DB connection is even opened), so this
+// queries tenant_members/users via the control-plane pool, not req.db —
+// deliberately no requireTenantAccess here.
 router.post('/:id/members', requireRole('admin'), async (req, res) => {
   const { email } = req.body
   if (!email?.trim()) return res.status(400).json({ error: 'Email is required' })
@@ -253,8 +226,8 @@ router.post('/:id/members', requireRole('admin'), async (req, res) => {
     if (!userRows[0]) return res.status(404).json({ error: 'No user with that email has registered yet' })
 
     await query(
-      `INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'client')
-       ON CONFLICT (project_id, user_id) DO NOTHING`,
+      `INSERT INTO tenant_members (tenant_id, user_id, role) VALUES ($1, $2, 'client')
+       ON CONFLICT (tenant_id, user_id) DO NOTHING`,
       [req.params.id, userRows[0].id]
     )
     res.status(201).json({ added: email })
@@ -263,14 +236,14 @@ router.post('/:id/members', requireRole('admin'), async (req, res) => {
   }
 })
 
-// GET /projects/:id/members — admin only, lists clients this project has been shared with
+// GET /projects/:id/members — admin only, lists clients this tenant has been shared with
 router.get('/:id/members', requireRole('admin'), async (req, res) => {
   try {
     const { rows } = await query(
       `SELECT u.id, u.email, u.name
-       FROM project_members pm
-       JOIN users u ON u.id = pm.user_id
-       WHERE pm.project_id = $1 AND pm.role = 'client'
+       FROM tenant_members tm
+       JOIN users u ON u.id = tm.user_id
+       WHERE tm.tenant_id = $1 AND tm.role = 'client'
        ORDER BY u.email`,
       [req.params.id]
     )
@@ -284,7 +257,7 @@ router.get('/:id/members', requireRole('admin'), async (req, res) => {
 router.delete('/:id/members/:userId', requireRole('admin'), async (req, res) => {
   try {
     await query(
-      `DELETE FROM project_members WHERE project_id=$1 AND user_id=$2`,
+      `DELETE FROM tenant_members WHERE tenant_id=$1 AND user_id=$2`,
       [req.params.id, req.params.userId]
     )
     res.status(204).end()

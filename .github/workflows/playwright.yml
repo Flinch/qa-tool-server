@@ -15,8 +15,12 @@ on:
         description: 'Space-separated, repo-relative spec file paths to run instead of the whole suite (diagnostic re-run of specific failed tests)'
         required: false
         type: string
-  schedule:
-    - cron: '0 7 * * *' # 7am UTC nightly — adjust to whatever time you want
+  # No schedule: trigger — nightly runs are dispatched by the server now
+  # (src/lib/nightlyScheduler.js), the same way a manual "Run suite" click
+  # is, so they get a real run_correlation_id and route to the right tenant
+  # on the way back. A GitHub Actions cron firing this workflow directly had
+  # no way to carry that — see webhooks.js's resolveTenantId for why that
+  # mattered (Phase A, Part 6).
 
 permissions:
   contents: write # needed to push the report to the gh-pages branch
@@ -47,14 +51,14 @@ jobs:
       # failed tests, dispatched by the app rather than typed by hand), it
       # replaces the full-suite path entirely — Playwright accepts specific
       # spec file paths as positional args exactly like directories.
+      #
+      # workflow_dispatch is the only trigger now (see the "on:" block
+      # above), so suite_slug is always a real input — no schedule-trigger
+      # fallback branch needed here anymore.
       - name: Determine suite
         id: suite
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            SLUG="${{ inputs.suite_slug }}"
-          else
-            SLUG="smoke"
-          fi
+          SLUG="${{ inputs.suite_slug }}"
           echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
           if [ -n "${{ inputs.file_paths }}" ]; then
             echo "path=${{ inputs.file_paths }}" >> "$GITHUB_OUTPUT"
@@ -81,7 +85,12 @@ jobs:
         if: always()
         env:
           SUITE_SLUG: ${{ steps.suite.outputs.slug }}
-          TRIGGER_TYPE: ${{ github.event_name == 'schedule' && 'nightly' || 'manual' }}
+          # Only used by report-results.js's orphan-row fallback path (no
+          # correlation_id, or one that doesn't match a pending row) — the
+          # real trigger_type ('manual' or 'nightly') is already set
+          # server-side at dispatch time and isn't overwritten by this value
+          # for any normally-dispatched run.
+          TRIGGER_TYPE: manual
           RUN_CORRELATION_ID: ${{ inputs.run_correlation_id }}
           PROJECT_ID: ${{ vars.QA_TOOL_PROJECT_ID }}
           REPORT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/reports/${{ github.run_id }}/index.html

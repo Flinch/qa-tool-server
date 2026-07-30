@@ -1,14 +1,13 @@
 import { Router } from 'express'
 import Anthropic from '@anthropic-ai/sdk'
-import { query } from '../db/pool.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
-import { requireProjectAccess } from '../middleware/projectAccess.js'
+import { requireTenantAccess } from '../middleware/tenantAccess.js'
 import { extractDocumentText } from '../lib/extractDocumentText.js'
 import { generateTestCasesForRequirements } from '../lib/generateTestCasesFromRequirements.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
-router.use(requireProjectAccess)
+router.use(requireTenantAccess)
 
 const staffOnly = requireRole('qa_engineer', 'admin')
 
@@ -20,22 +19,22 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 // UNIQUE(project_id, name) constraint rather than creating a duplicate.
 // Blank/omitted name just means no feature — not required here the way it is
 // for manual bug creation.
-async function resolveFeatureId(projectId, name, userId) {
+async function resolveFeatureId(db, projectId, name, userId) {
   const trimmed = name?.trim()
   if (!trimmed) return null
-  await query(
+  await db.query(
     `INSERT INTO features (project_id, name, created_by) VALUES ($1,$2,$3)
      ON CONFLICT (project_id, name) DO NOTHING`,
     [projectId, trimmed, userId]
   )
-  const { rows } = await query(`SELECT id FROM features WHERE project_id=$1 AND name=$2`, [projectId, trimmed])
+  const { rows } = await db.query(`SELECT id FROM features WHERE project_id=$1 AND name=$2`, [projectId, trimmed])
   return rows[0]?.id || null
 }
 
 // GET /projects/:id/requirements — staff + read-only clients who are project members
 router.get('/', async (req, res) => {
   try {
-    const { rows } = await query(
+    const { rows } = await req.db.query(
       `SELECT r.*, COUNT(DISTINCT rtc.test_case_id)::int AS linked_test_case_count
        FROM requirements r
        LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
@@ -57,11 +56,11 @@ router.post('/', staffOnly, async (req, res) => {
 
   try {
     if (feature_id) {
-      const { rows: fRows } = await query(`SELECT id FROM features WHERE id=$1 AND project_id=$2`, [feature_id, req.params.id])
+      const { rows: fRows } = await req.db.query(`SELECT id FROM features WHERE id=$1 AND project_id=$2`, [feature_id, req.params.id])
       if (!fRows[0]) return res.status(400).json({ error: 'Invalid feature' })
     }
 
-    const { rows } = await query(
+    const { rows } = await req.db.query(
       `INSERT INTO requirements (project_id, title, description, created_by, platform, feature_id)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
       [req.params.id, title.trim(), description || '', req.userId, platform || 'web', feature_id || null]
@@ -88,14 +87,14 @@ router.post('/upload', staffOnly, async (req, res) => {
     const rawText = data ? await extractDocumentText({ filename, mimetype, data }) : text.trim()
     if (!rawText?.trim()) return res.status(400).json({ error: 'Could not extract any text from that document' })
 
-    const { rows: docRows } = await query(
+    const { rows: docRows } = await req.db.query(
       `INSERT INTO requirement_documents (project_id, filename, raw_text, uploaded_by)
        VALUES ($1,$2,$3,$4) RETURNING *`,
       [req.params.id, filename || null, rawText, req.userId]
     )
     const doc = docRows[0]
 
-    const { rows: existing } = await query(
+    const { rows: existing } = await req.db.query(
       `SELECT r.id, r.title, r.description, COUNT(DISTINCT rtc.test_case_id)::int AS linked_test_case_count
        FROM requirements r
        LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
@@ -107,7 +106,7 @@ router.post('/upload', staffOnly, async (req, res) => {
     // Existing feature names for this project, passed to the AI as context so
     // it reuses a real feature instead of minting a near-duplicate when a
     // requirement clearly belongs to one already tracked.
-    const { rows: existingFeatures } = await query(
+    const { rows: existingFeatures } = await req.db.query(
       `SELECT name FROM features WHERE project_id=$1 ORDER BY name`,
       [req.params.id]
     )
@@ -223,7 +222,7 @@ router.post('/apply-diff', staffOnly, async (req, res) => {
   try {
     const updated = []
     for (const m of modified) {
-      const { rows } = await query(
+      const { rows } = await req.db.query(
         `UPDATE requirements SET title=$1, description=$2, document_id=$3, updated_at=NOW()
          WHERE id=$4 AND project_id=$5 RETURNING *`,
         [m.title, m.description || '', documentId, m.id, req.params.id]
@@ -232,7 +231,7 @@ router.post('/apply-diff', staffOnly, async (req, res) => {
     }
 
     for (const id of removed) {
-      await query(
+      await req.db.query(
         `UPDATE requirements SET status='removed', updated_at=NOW() WHERE id=$1 AND project_id=$2`,
         [id, req.params.id]
       )
@@ -240,8 +239,8 @@ router.post('/apply-diff', staffOnly, async (req, res) => {
 
     const inserted = []
     for (const n of added) {
-      const featureId = await resolveFeatureId(req.params.id, n.feature_name, req.userId)
-      const { rows } = await query(
+      const featureId = await resolveFeatureId(req.db, req.params.id, n.feature_name, req.userId)
+      const { rows } = await req.db.query(
         `INSERT INTO requirements (project_id, title, description, document_id, created_by, platform, feature_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
         [req.params.id, n.title, n.description || '', documentId, req.userId, platform || 'web', featureId]
@@ -262,7 +261,7 @@ router.post('/apply-diff', staffOnly, async (req, res) => {
 // direct API call can't create a duplicate.
 router.post('/:reqId/generate-test-case', staffOnly, async (req, res) => {
   try {
-    const { rows: reqRows } = await query(
+    const { rows: reqRows } = await req.db.query(
       `SELECT r.id, r.title, r.description, r.platform, r.feature_id, COUNT(DISTINCT rtc.test_case_id)::int AS linked_test_case_count
        FROM requirements r
        LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
@@ -280,12 +279,12 @@ router.post('/:reqId/generate-test-case', staffOnly, async (req, res) => {
 
     const inserted = []
     for (const tc of generated) {
-      const { rows } = await query(
+      const { rows } = await req.db.query(
         `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by, platform, feature_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
         [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId, requirement.platform, requirement.feature_id]
       )
-      await query(
+      await req.db.query(
         `INSERT INTO requirement_test_cases (requirement_id, test_case_id) VALUES ($1,$2)`,
         [requirement.id, rows[0].id]
       )
@@ -303,7 +302,7 @@ router.post('/:reqId/generate-test-case', staffOnly, async (req, res) => {
 // linked test cases, in one batched AI call.
 router.post('/generate-test-cases', staffOnly, async (req, res) => {
   try {
-    const { rows: uncovered } = await query(
+    const { rows: uncovered } = await req.db.query(
       `SELECT r.id, r.title, r.description, r.platform, r.feature_id
        FROM requirements r
        LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
@@ -322,12 +321,12 @@ router.post('/generate-test-cases', staffOnly, async (req, res) => {
 
     const byRequirement = {}
     for (const tc of generated) {
-      const { rows } = await query(
+      const { rows } = await req.db.query(
         `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by, platform, feature_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
         [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId, platformByRequirement[tc.requirementId] || 'web', featureByRequirement[tc.requirementId] || null]
       )
-      await query(
+      await req.db.query(
         `INSERT INTO requirement_test_cases (requirement_id, test_case_id) VALUES ($1,$2)`,
         [tc.requirementId, rows[0].id]
       )
@@ -348,7 +347,7 @@ router.post('/generate-test-cases', staffOnly, async (req, res) => {
 
 router.get('/:reqId/test-cases', async (req, res) => {
   try {
-    const { rows } = await query(
+    const { rows } = await req.db.query(
       `SELECT tc.* FROM test_cases tc
        JOIN requirement_test_cases rtc ON rtc.test_case_id = tc.id
        WHERE rtc.requirement_id=$1
@@ -371,12 +370,12 @@ router.post('/:reqId/test-cases', staffOnly, async (req, res) => {
     // Server-side half of the platform fix — LinkTestCasesModal already
     // filters candidates client-side, but never trust the client alone: a
     // stale page or a direct API call could still try to cross-link.
-    const { rows: reqRows } = await query(
+    const { rows: reqRows } = await req.db.query(
       `SELECT platform FROM requirements WHERE id=$1 AND project_id=$2`,
       [req.params.reqId, req.params.id]
     )
     if (!reqRows[0]) return res.status(404).json({ error: 'Requirement not found' })
-    const { rows: tcRows } = await query(
+    const { rows: tcRows } = await req.db.query(
       `SELECT id FROM test_cases WHERE project_id=$1 AND id = ANY($2::int[]) AND platform = $3`,
       [req.params.id, test_case_ids, reqRows[0].platform]
     )
@@ -387,7 +386,7 @@ router.post('/:reqId/test-cases', staffOnly, async (req, res) => {
     }
 
     for (const tcId of test_case_ids) {
-      await query(
+      await req.db.query(
         `INSERT INTO requirement_test_cases (requirement_id, test_case_id)
          VALUES ($1,$2) ON CONFLICT DO NOTHING`,
         [req.params.reqId, tcId]
@@ -401,7 +400,7 @@ router.post('/:reqId/test-cases', staffOnly, async (req, res) => {
 
 router.delete('/:reqId/test-cases/:tcId', staffOnly, async (req, res) => {
   try {
-    await query(
+    await req.db.query(
       `DELETE FROM requirement_test_cases WHERE requirement_id=$1 AND test_case_id=$2`,
       [req.params.reqId, req.params.tcId]
     )
@@ -411,7 +410,13 @@ router.delete('/:reqId/test-cases/:tcId', staffOnly, async (req, res) => {
   }
 })
 
-export async function patchRequirement(req, res) {
+// PATCH /projects/:id/requirements/:reqId — nested under this router (not a
+// flat /api/requirements/:id mount) specifically so requireTenantAccess runs
+// first and req.db is resolved before this handler ever queries anything.
+// Also filters by project_id — see testCases.js's identical PATCH/DELETE
+// comment for why that's not redundant yet during Phase A's identity-
+// resolver bridge.
+router.patch('/:reqId', staffOnly, async (req, res) => {
   const { title, description, status, platform, feature_id } = req.body
 
   const fields = []
@@ -440,22 +445,23 @@ export async function patchRequirement(req, res) {
   if (fields.length === 0) return res.status(400).json({ error: 'No fields to update' })
 
   fields.push(`updated_at=NOW()`)
+  values.push(req.params.reqId)
+  const reqIdParam = i++
   values.push(req.params.id)
+  const projectIdParam = i++
 
   try {
     if (feature_id) {
-      // No project_id in this route's params (mounted at /api/requirements/:id)
-      // — validate via the requirement's own project instead.
-      const { rows: fRows } = await query(
+      const { rows: fRows } = await req.db.query(
         `SELECT f.id FROM features f JOIN requirements r ON r.project_id = f.project_id
          WHERE f.id=$1 AND r.id=$2`,
-        [feature_id, req.params.id]
+        [feature_id, req.params.reqId]
       )
       if (!fRows[0]) return res.status(400).json({ error: 'Invalid feature' })
     }
 
-    const { rows } = await query(
-      `UPDATE requirements SET ${fields.join(', ')} WHERE id=$${i} RETURNING *`,
+    const { rows } = await req.db.query(
+      `UPDATE requirements SET ${fields.join(', ')} WHERE id=$${reqIdParam} AND project_id=$${projectIdParam} RETURNING *`,
       values
     )
     if (!rows[0]) return res.status(404).json({ error: 'Not found' })
@@ -463,6 +469,6 @@ export async function patchRequirement(req, res) {
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
-}
+})
 
 export default router
