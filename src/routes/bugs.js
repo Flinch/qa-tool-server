@@ -37,10 +37,11 @@ router.get('/jira/projects', staffOnly, async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const { rows } = await req.db.query(
-      `SELECT b.*, er.name AS execution_run_name, s.name AS suite_name, s.slug AS suite_slug
+      `SELECT b.*, er.name AS execution_run_name, s.name AS suite_name, s.slug AS suite_slug, f.name AS feature_name
        FROM bugs b
        LEFT JOIN execution_runs er ON er.id = b.execution_run_id
        LEFT JOIN automation_suites s ON s.id = b.suite_id
+       LEFT JOIN features f ON f.id = b.feature_id
        WHERE b.project_id=$1 ORDER BY
         CASE b.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
         b.created_at DESC`,

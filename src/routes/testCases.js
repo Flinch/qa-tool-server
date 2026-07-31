@@ -18,19 +18,39 @@ router.get('/', async (req, res) => {
     // an engineer/AI thinks it's a good fit; "automated" means it actually
     // has committed code. Same origin='generated' signal already used
     // everywhere else this session (webhooks.js roster tracking, The Lab).
+    // linked_requirements: which requirements this test case actually
+    // traces back to (regular coverage via requirement_test_cases, or
+    // critical-flow coverage via flow_requirements — unioned and deduped,
+    // same "either table counts" definition the old has_requirement_link
+    // boolean used). COUNT(DISTINCT b.id) here isn't optional once this
+    // second join is added — without it, a TC with 2 bugs AND 2 linked
+    // requirements would fan out to 4 joined rows and double-count bugs.
     const { rows } = await req.db.query(
-      `SELECT tc.*, COUNT(b.id)::int AS bug_count,
+      `SELECT tc.*, COUNT(DISTINCT b.id)::int AS bug_count,
          EXISTS (
            SELECT 1 FROM automated_test_cases atc
            WHERE atc.test_case_id = tc.id AND atc.origin = 'generated'
-         ) AS is_automated
+         ) AS is_automated,
+         COALESCE(
+           json_agg(DISTINCT jsonb_build_object('id', r.id, 'title', r.title)) FILTER (WHERE r.id IS NOT NULL),
+           '[]'
+         ) AS linked_requirements
        FROM test_cases tc
        LEFT JOIN bugs b ON b.test_case_id = tc.id
+       LEFT JOIN (
+         SELECT test_case_id, requirement_id FROM requirement_test_cases
+         UNION
+         SELECT test_case_id, requirement_id FROM flow_requirements
+       ) links ON links.test_case_id = tc.id
+       LEFT JOIN requirements r ON r.id = links.requirement_id AND r.status = 'active'
        WHERE tc.project_id=$1
        GROUP BY tc.id
        ORDER BY tc.created_at DESC`,
       [req.params.id]
     )
+    // linked_requirements is plain coverage/traceability info (which
+    // requirements this test verifies), not AI-generation-workflow content
+    // — client-visible, same as the Requirements page itself.
     res.json(rows)
   } catch (e) {
     res.status(500).json({ error: e.message })

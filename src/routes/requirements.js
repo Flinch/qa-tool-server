@@ -43,7 +43,10 @@ router.get('/', async (req, res) => {
        ORDER BY r.created_at DESC`,
       [req.params.id]
     )
-    res.json(rows)
+    // ambiguity_flag/estimated_effort are AI-assessment output (Requirements
+    // Intelligence) — staff-only, stripped for clients same as
+    // automation.js's review_status/origin.
+    res.json(req.userRole === 'client' ? rows.map(({ ambiguity_flag, estimated_effort, ...rest }) => rest) : rows)
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
@@ -126,12 +129,15 @@ Return ONLY a valid JSON array with no preamble, no markdown, no explanation. Ea
 - "title": string — short, specific requirement name
 - "description": string — the full requirement detail, rewritten clearly if needed
 - "feature_name": string — a short, specific feature/module name this requirement belongs to (reuse an existing one above when it fits, otherwise propose a new concise name)
+- "ambiguity_flag": string or null — a short (one sentence) reason this requirement is ambiguous or missing acceptance criteria (e.g. "no defined error message" or "'quickly' is not a measurable threshold"), or null if it's clear and testable as written
+- "estimated_effort": "S", "M", or "L" — rough testing effort: S = a single straightforward check, M = a few related scenarios/edge cases, L = a multi-step flow or several distinct edge cases to cover
 
 Rules:
 - Split compound requirements into separate items when they describe genuinely different behavior
 - Do not invent requirements that aren't actually in the document
 - Aim for individually testable units, not a paragraph-by-paragraph copy
 - Keep the total number of distinct feature_name values small and coherent — group related requirements under the same feature rather than creating a new one for each
+- Only set ambiguity_flag when there's a genuine, specific gap — not for stylistic nitpicks
 
 Document:
 ${rawText}`
@@ -146,7 +152,11 @@ ${rawText}`
       const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
       const parsed = JSON.parse(cleaned)
 
-      const newItems = parsed.map(r => ({ title: r.title, description: r.description || '', feature_name: r.feature_name || '' }))
+      const newItems = parsed.map(r => ({
+        title: r.title, description: r.description || '', feature_name: r.feature_name || '',
+        ambiguity_flag: r.ambiguity_flag || null,
+        estimated_effort: ['S', 'M', 'L'].includes(r.estimated_effort) ? r.estimated_effort : null,
+      }))
 
       return res.status(201).json({
         mode: 'created',
@@ -170,9 +180,9 @@ Existing features already tracked for this project (reuse one of these names for
 
 Return ONLY a valid JSON object with no preamble, no markdown, no explanation, with this exact shape:
 {
-  "modified": [{"id": 12, "title": "...", "description": "..."}],
+  "modified": [{"id": 12, "title": "...", "description": "...", "ambiguity_flag": null, "estimated_effort": "M"}],
   "removed": [13, 15],
-  "new": [{"title": "...", "description": "...", "feature_name": "..."}]
+  "new": [{"title": "...", "description": "...", "feature_name": "...", "ambiguity_flag": null, "estimated_effort": "S"}]
 }
 
 Rules:
@@ -180,7 +190,8 @@ Rules:
 - "removed": ids of existing requirements no longer present in the new document at all.
 - "new": requirements described in the new document that don't correspond to any existing one. Each needs a "feature_name" — a short feature/module name (reuse an existing one above when it fits, otherwise propose a concise new one). Keep the total number of distinct feature_name values small and coherent.
 - Any existing requirement not mentioned in "modified" or "removed" is assumed unchanged — do not list unchanged ones anywhere.
-- Do not invent requirements that aren't actually in the document.`
+- Do not invent requirements that aren't actually in the document.
+- Every "modified" and "new" item needs "ambiguity_flag" (a short one-sentence reason it's ambiguous or missing acceptance criteria, or null if clear and testable) and "estimated_effort" ("S"/"M"/"L" testing effort). Only set ambiguity_flag for a genuine, specific gap, not stylistic nitpicks.`
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
@@ -192,14 +203,23 @@ Rules:
     const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
     const diffResult = JSON.parse(cleaned)
 
+    const sanitizeEffort = (e) => ['S', 'M', 'L'].includes(e) ? e : null
+
     const byId = Object.fromEntries(existing.map(r => [r.id, r]))
     const modified = (diffResult.modified || [])
       .filter(m => byId[m.id])
-      .map(m => ({ id: m.id, title: m.title, description: m.description || '', old: byId[m.id] }))
+      .map(m => ({
+        id: m.id, title: m.title, description: m.description || '', old: byId[m.id],
+        ambiguity_flag: m.ambiguity_flag || null, estimated_effort: sanitizeEffort(m.estimated_effort),
+      }))
     const removed = (diffResult.removed || [])
       .filter(id => byId[id])
       .map(id => byId[id])
-    const newItems = diffResult.new || []
+    const newItems = (diffResult.new || []).map(n => ({
+      ...n,
+      ambiguity_flag: n.ambiguity_flag || null,
+      estimated_effort: sanitizeEffort(n.estimated_effort),
+    }))
     const unchangedCount = existing.length - modified.length - removed.length
 
     res.status(201).json({
@@ -219,13 +239,15 @@ router.post('/apply-diff', staffOnly, async (req, res) => {
   const { documentId, modified = [], removed = [], added = [], platform } = req.body
   if (platform !== undefined && !['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
 
+  const sanitizeEffort = (e) => ['S', 'M', 'L'].includes(e) ? e : null
+
   try {
     const updated = []
     for (const m of modified) {
       const { rows } = await req.db.query(
-        `UPDATE requirements SET title=$1, description=$2, document_id=$3, updated_at=NOW()
-         WHERE id=$4 AND project_id=$5 RETURNING *`,
-        [m.title, m.description || '', documentId, m.id, req.params.id]
+        `UPDATE requirements SET title=$1, description=$2, document_id=$3, ambiguity_flag=$4, estimated_effort=$5, updated_at=NOW()
+         WHERE id=$6 AND project_id=$7 RETURNING *`,
+        [m.title, m.description || '', documentId, m.ambiguity_flag || null, sanitizeEffort(m.estimated_effort), m.id, req.params.id]
       )
       if (rows[0]) updated.push(rows[0])
     }
@@ -241,9 +263,9 @@ router.post('/apply-diff', staffOnly, async (req, res) => {
     for (const n of added) {
       const featureId = await resolveFeatureId(req.db, req.params.id, n.feature_name, req.userId)
       const { rows } = await req.db.query(
-        `INSERT INTO requirements (project_id, title, description, document_id, created_by, platform, feature_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-        [req.params.id, n.title, n.description || '', documentId, req.userId, platform || 'web', featureId]
+        `INSERT INTO requirements (project_id, title, description, document_id, created_by, platform, feature_id, ambiguity_flag, estimated_effort)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [req.params.id, n.title, n.description || '', documentId, req.userId, platform || 'web', featureId, n.ambiguity_flag || null, sanitizeEffort(n.estimated_effort)]
       )
       inserted.push({ ...rows[0], linked_test_case_count: 0 })
     }

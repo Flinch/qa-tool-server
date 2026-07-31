@@ -394,4 +394,20 @@ ALTER TABLE bugs ADD COLUMN IF NOT EXISTS feature_id INTEGER REFERENCES features
 CREATE INDEX IF NOT EXISTS idx_test_cases_feature ON test_cases(feature_id);
 CREATE INDEX IF NOT EXISTS idx_requirements_feature ON requirements(feature_id);
 CREATE INDEX IF NOT EXISTS idx_bugs_feature ON bugs(feature_id);
+
+-- Requirements Intelligence (Phase 2.2) — AI-assessed at upload/diff time
+-- only (not backfilled onto existing untouched requirements), staff-only
+-- fields (stripped from GET / for the client role, same as automation's
+-- review_status/origin).
+ALTER TABLE requirements ADD COLUMN IF NOT EXISTS ambiguity_flag TEXT;
+ALTER TABLE requirements ADD COLUMN IF NOT EXISTS estimated_effort TEXT;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'requirements_estimated_effort_check'
+  ) THEN
+    ALTER TABLE requirements ADD CONSTRAINT requirements_estimated_effort_check
+      CHECK (estimated_effort IS NULL OR estimated_effort IN ('S','M','L'));
+  END IF;
+END $$;
 `

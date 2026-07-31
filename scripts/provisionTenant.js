@@ -96,6 +96,15 @@ export async function provisionTenant({ name, clientName, description, createdBy
         `INSERT INTO features (project_id, name, created_by) VALUES ($1,'General',$2)`,
         [tenantId, createdByUserId]
       )
+      // Every project starts with somewhere for "Generate automated tests"
+      // to target — a brand-new project with zero suites was a real dead
+      // end (see automation.js's POST /suites, added alongside this so
+      // staff can add more as needs grow). Web + no engine (implies
+      // Playwright), same convention every existing web suite uses.
+      await tenantPool.query(
+        `INSERT INTO automation_suites (project_id, name, slug, platform) VALUES ($1,'E2E Critical Flow','e2e-critical-flow','web')`,
+        [tenantId]
+      )
     }
   } finally {
     await tenantPool.end()

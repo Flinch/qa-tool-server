@@ -59,14 +59,25 @@ router.get('/suites', ...anyProjectMember, async (req, res) => {
   }
 })
 
-// POST /suites — create a new suite bucket (e.g. "Regression")
+// POST /suites — create a new suite bucket (e.g. "Regression"). platform
+// drives which CI workflow generation/runs route to (see
+// triggerGenerationRun's platform === 'web' branch); engine is only
+// meaningful for non-web suites (maestro vs. appium) — web suites always
+// run Playwright, so engine stays null for them, same convention every
+// existing web suite across real tenants already uses.
 router.post('/suites', ...staffOnlyChain, async (req, res) => {
-  const { name, slug } = req.body
+  const { name, slug, platform, engine } = req.body
   if (!name?.trim() || !slug?.trim()) return res.status(400).json({ error: 'Name and slug are required' })
+  if (platform !== undefined && !['web', 'ios', 'android'].includes(platform)) {
+    return res.status(400).json({ error: 'Invalid platform' })
+  }
+  if (engine !== undefined && engine !== null && !['playwright', 'maestro', 'appium'].includes(engine)) {
+    return res.status(400).json({ error: 'Invalid engine' })
+  }
   try {
     const { rows } = await req.db.query(
-      `INSERT INTO automation_suites (project_id, name, slug) VALUES ($1,$2,$3) RETURNING *`,
-      [req.params.id, name.trim(), slug.trim().toLowerCase()]
+      `INSERT INTO automation_suites (project_id, name, slug, platform, engine) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [req.params.id, name.trim(), slug.trim().toLowerCase(), platform || 'web', engine || null]
     )
     res.status(201).json(rows[0])
   } catch (e) {
@@ -256,7 +267,10 @@ router.post('/runs/:runId/heal', ...staffOnlyChain, async (req, res) => {
 // each row annotated with a GitHub link when a real generated file matches
 // its tc-<id> title prefix. Staff + read-only clients who are project
 // members (Malik confirmed clients should see the same view as staff here,
-// unlike Generation History's PR/file links which stayed staff-only).
+// unlike Generation History's PR/file links which stayed staff-only) — but
+// `origin`/`review_status` are AI-generation/healing workflow state, so
+// those two fields are stripped for the client role below; this stays a
+// plain coverage list for them, not an AI-review view.
 router.get('/suites/:suiteId/test-cases', ...anyProjectMember, async (req, res) => {
   try {
     const { rows: suiteRows } = await req.db.query(
@@ -276,7 +290,10 @@ router.get('/suites/:suiteId/test-cases', ...anyProjectMember, async (req, res) 
     `, [suite.id])
 
     const files = await listSuiteFiles(suite)
-    const testCases = rows.map(r => ({ ...r, github_url: matchTestCaseToFile(r.title, files) }))
+    let testCases = rows.map(r => ({ ...r, github_url: matchTestCaseToFile(r.title, files) }))
+    if (req.userRole === 'client') {
+      testCases = testCases.map(({ origin, review_status, ...rest }) => rest)
+    }
 
     res.json({ suite, testCases })
   } catch (e) {
@@ -285,11 +302,12 @@ router.get('/suites/:suiteId/test-cases', ...anyProjectMember, async (req, res) 
 })
 
 // GET /generated-test-cases — every AI-generated automated test case across
-// every suite in the project, for the "Generated test cases" cross-suite
-// view. Directory listing fetched once per distinct suite, not per row.
-// Staff + read-only clients who are project members — same access level as
-// the suite-scoped roster route above.
-router.get('/generated-test-cases', ...anyProjectMember, async (req, res) => {
+// every suite in the project, for The Lab's cross-suite view. Directory
+// listing fetched once per distinct suite, not per row. Staff-only: this is
+// AI-generation/healing workflow state (review_status, last-run diagnostics),
+// not a client-facing health metric — unlike the suite-scoped roster route
+// below, which stays client-visible as a plain coverage list.
+router.get('/generated-test-cases', ...staffOnlyChain, async (req, res) => {
   try {
     // last_* fields power The Lab's per-test status + re-run/heal actions.
     // Scoped to tr.scope='suite' only — same reasoning as the GET /suites
@@ -374,8 +392,10 @@ router.post('/generate', ...staffOnlyChain, async (req, res) => {
   }
 })
 
-// GET /generation-runs — recent generation runs, newest first
-router.get('/generation-runs', ...anyProjectMember, async (req, res) => {
+// GET /generation-runs — recent generation runs, newest first. Staff-only:
+// PR URLs, branch names, and generation phase are AI-pipeline internals, not
+// a client-facing health metric.
+router.get('/generation-runs', ...staffOnlyChain, async (req, res) => {
   try {
     await reconcileStaleGenerationRuns(req.db, req.params.id)
     const { rows } = await req.db.query(`
