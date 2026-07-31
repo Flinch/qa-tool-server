@@ -135,9 +135,19 @@ function runPlaywrightTest(targetDir) {
 
 async function main() {
   const payload = JSON.parse(fs.readFileSync('.generation-payload.json', 'utf-8'))
-  const { suite_slug: suiteSlug, target_url: targetUrl, plans } = payload
+  const { suite_slug: suiteSlug, target_url: targetUrl, engine, plans } = payload
   const suiteDir = path.join('tests', 'generated', suiteSlug)
   fs.mkdirSync(suiteDir, { recursive: true })
+
+  // API suites (engine='api') get a different agent trio — no browser
+  // involved, verification is curl/fetch over Bash instead of
+  // mcp__playwright-test__browser_* tools. See AGENTS.md's "API tests"
+  // section for the full conventions these agents follow.
+  const isApi = engine === 'api'
+  const agents = isApi
+    ? { planner: 'api-test-planner', generator: 'api-test-generator', healer: 'api-test-healer' }
+    : { planner: 'playwright-test-planner', generator: 'playwright-test-generator', healer: 'playwright-test-healer' }
+  const conventions = isApi ? "AGENTS.md's \"API tests\" section" : 'AGENTS.md conventions'
 
   const entries = plans.map(plan => ({
     ...plan,
@@ -162,7 +172,7 @@ async function main() {
   try {
     const plannerList = entries.map(e => `- specs/${e.filename}`).join('\n')
     await runAgent(
-      `Use the playwright-test-planner agent to verify and refine EACH of the following plans against the running app at ${targetUrl}, following AGENTS.md conventions. Update each file in place only if changes are needed. Process every plan in this list before finishing:\n${plannerList}\n\nIf a plan step is fully covered by an existing helper (see AGENTS.md's helpers list, e.g. createTicket(page) for creating a ticket), you don't need to re-verify that step live — it's already a proven, working part of the codebase. Focus live verification on steps that aren't already covered by a helper.\n\nIf a plan's stated Expect: outcome turns out to be genuinely contradicted by the app's real behavior (not a wording issue — the app actually does something different from what's described), do NOT keep retrying or waiting for the expected state to appear. Follow AGENTS.md's Behavior mismatch policy: note it directly in the plan file with a BEHAVIOR MISMATCH comment describing expected vs actual, and move on to the next plan.`
+      `Use the ${agents.planner} agent to verify and refine EACH of the following plans against the ${isApi ? `real API at ${targetUrl}` : `running app at ${targetUrl}`}, following ${conventions}. Update each file in place only if changes are needed. Process every plan in this list before finishing:\n${plannerList}\n\nIf a plan step is fully covered by an existing helper (see AGENTS.md's helpers list${isApi ? '' : ', e.g. createTicket(page) for creating a ticket'}), you don't need to re-verify that step live — it's already a proven, working part of the codebase. Focus live verification on steps that aren't already covered by a helper.\n\nIf a plan's stated Expect: outcome turns out to be genuinely contradicted by the ${isApi ? 'API' : 'app'}'s real behavior (not a wording issue — it actually does something different from what's described), do NOT keep retrying or waiting for the expected state to appear. Follow AGENTS.md's Behavior mismatch policy: note it directly in the plan file with a BEHAVIOR MISMATCH comment describing expected vs actual, and move on to the next plan.`
     )
   } catch (err) {
     if (err instanceof CostCapExceededError) throw err
@@ -181,7 +191,7 @@ async function main() {
   try {
     const generatorList = entries.map(e => `- specs/${e.filename} -> ${e.specPath}`).join('\n')
     await runAgent(
-      `Use the playwright-test-generator agent to implement EACH of the following plans as its corresponding spec file, following AGENTS.md conventions. Process every entry in this list:\n${generatorList}`
+      `Use the ${agents.generator} agent to implement EACH of the following plans as its corresponding spec file, following ${conventions}. Process every entry in this list:\n${generatorList}`
     )
   } catch (err) {
     // Don't bail immediately — some specs may have been written before the
@@ -224,7 +234,7 @@ async function main() {
     for (let attempt = 1; attempt <= 3 && !clean; attempt++) {
       console.log(`Heal attempt ${attempt}/3`)
       await runAgent(
-        `Use the playwright-test-healer agent to fix any failing tests in ${suiteDir}, following AGENTS.md conventions. Do not weaken assertions — if a failure means app behavior changed rather than the test being wrong, mark it with test.fixme() and a POSSIBLE REGRESSION comment instead of forcing it to pass.`
+        `Use the ${agents.healer} agent to fix any failing tests in ${suiteDir}, following ${conventions}. Do not weaken assertions — if a failure means ${isApi ? 'API' : 'app'} behavior changed rather than the test being wrong, mark it with test.fixme() and a POSSIBLE REGRESSION comment instead of forcing it to pass.`
       )
       clean = await runPlaywrightTest(suiteDir)
     }

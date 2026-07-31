@@ -137,3 +137,98 @@ Full detail and the real evidence behind the rules below is in
   screen (tap the real back/close control) and back into it — the keyboard
   clears and the already-entered text is retained. Use this directly instead
   of retrying `hideKeyboard`/Return variants.
+
+## API tests (Playwright `request` fixture)
+
+Everything above the Mobile section is the browser/UI pipeline. API tests
+are a third pipeline: same Playwright install, same `tests/generated/`
+convention, but no browser at all — using
+[api-test-planner](.claude/agents/api-test-planner.md),
+[api-test-generator](.claude/agents/api-test-generator.md), and
+[api-test-healer](.claude/agents/api-test-healer.md), which verify against
+the live API with `curl` over Bash instead of driving a browser.
+Applies to any suite with `engine: 'api'` (see automation_suites in the QA
+tool's schema) — `generate-tests.js` picks this trio instead of the web
+trio based on the generation payload's `engine` field.
+
+- Generated specs: `tests/generated/<suite-slug>/tc-<ids>-<slug>.spec.ts`
+  — same directory convention as web, so `playwright.yml`'s
+  `tests/$SLUG tests/generated/$SLUG` run command needs no changes at all.
+- Test plans: `specs/tc-<id>-<slug>.md` — same plan format as web (produced
+  by `planExport.js`'s `buildPlanMarkdown`), except the "Starting state"
+  line says explicitly there is no browser/page/storageState and gives the
+  configured baseURL instead.
+- Every generated test uses Playwright's `request` fixture directly —
+  `test('TC-42: ...', async ({ request }) => { ... })` — never `page`,
+  never `browser_*` tools. `request` inherits `use.baseURL` from
+  `playwright.config.js` the same way `page` does (this app's API and
+  frontend share an origin — see the QA tool's Phase 1 plan for why a
+  separate `API_BASE_URL` isn't needed yet).
+
+### Traceability (required)
+
+Same rule as web: every `test()` title starts with its manual test case id
+(`test('TC-42: ...')`), one spec file per plan file, keep the plan's
+scenario title.
+
+### Assertion policy
+
+Assert the BUSINESS OUTCOME from the plan's `Expect:` line — status code
+AND response body/schema, not just "request didn't throw."
+
+- Bad:  `expect(response.ok()).toBeTruthy()` as the only assertion
+- Good: `expect(response.status()).toBe(201); expect(body.status).toBe('open')`
+
+Check the response body shape (the fields the plan's `Expect:` line actually
+names), not just status code alone — a 200 with the wrong body is still a
+failure.
+
+### Auth policy
+
+If the endpoint requires auth, obtain a token/session the same
+programmatic way for every test (a shared helper, mirroring how
+`helpers/auth.ts` centralizes storageState for the web pipeline — extend
+`helpers/` with an API equivalent rather than re-implementing login-for-token
+per spec file). Never hardcode a token value in a generated spec.
+
+### Verification workflow (planner + generator)
+
+There is no live browser to explore, so verification means real HTTP calls,
+not UI navigation:
+
+- **Planner**: refine each plan against the real API using `curl` over Bash
+  — confirm the endpoint exists, confirm the actual status code
+  and response shape for both the happy path and the plan's stated edge
+  case, before finalizing the plan.
+- **Generator**: implement the plan as a `request`-fixture spec. Prefer
+  reusing an existing suite-level helper for setup data (creating a
+  resource the test then acts on) over re-implementing it per spec, same
+  "don't re-verify what's already proven" principle the web generator uses
+  for its own helpers.
+- **Behavior mismatch policy** (same idea as web's, see above): if live
+  `curl` verification shows the API's actual status/response genuinely
+  contradicts the plan's `Expect:` — not a wording issue, a real
+  contradiction — don't force the assertion to match. Note it in the plan
+  (planner) or mark `test.fixme()` with a `// POSSIBLE REGRESSION:` comment
+  (generator/healer), exactly like the web pipeline.
+
+### Stability rules
+
+- No arbitrary waits/sleeps — Playwright's `request` calls are synchronous
+  from the test's perspective, there's no loading state to wait out.
+- Each test creates the data it needs and must pass twice in a row, same
+  test data policy as web (unique values, never hardcoded ids/titles).
+- Each test is independent — no ordering dependencies between tests in a
+  file.
+
+### Healing rules
+
+- Run `npx playwright test <path>` directly (Bash) to see the real failure,
+  then `curl` the same endpoint to compare actual vs. expected response
+  before editing anything.
+- Fix request payloads, headers, and assertions freely, confirmed by
+  re-running against the live API.
+- If a test fails because the API's actual behavior changed, follow the
+  Behavior mismatch policy above: `test.fixme()` with a
+  `// POSSIBLE REGRESSION:` comment, never a rewritten assertion.
+- Apply the minimal fix. Never refactor passing tests during a heal.

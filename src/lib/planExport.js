@@ -41,10 +41,14 @@ export function planFilename(tc) {
 // the planner agent itself produces (scenario heading, steps, expectations)
 // so verifying OUR plans feels identical to it as refining its own.
 //
-// `platform` picks the starting-state line: web plans assume the `generated`
-// Playwright project's authenticated storageState; mobile has no equivalent
-// concept, just a freshly-launched app.
-export function buildPlanMarkdown(tc, platform = 'web') {
+// `platform`+`engine` pick the starting-state line: web+UI plans assume the
+// `generated` Playwright project's authenticated storageState; mobile has
+// no equivalent concept, just a freshly-launched app; `engine === 'api'`
+// (API testing, Phase 1) has neither a browser nor a page at all — the
+// api-test-planner/-generator agents work against the `request` fixture
+// directly, so the framing says that explicitly rather than implying a
+// browser session exists.
+export function buildPlanMarkdown(tc, platform = 'web', engine = null) {
   const steps = Array.isArray(tc.steps) ? tc.steps.filter(s => String(s).trim()) : []
 
   const lines = []
@@ -60,7 +64,9 @@ export function buildPlanMarkdown(tc, platform = 'web') {
   lines.push('')
   lines.push(`## Scenario: TC-${tc.id} — ${tc.title}`)
   lines.push('')
-  lines.push(platform === 'web'
+  lines.push(engine === 'api'
+    ? 'Starting state: no browser, no page, no storageState. Use the `request` fixture directly against the configured baseURL.'
+    : platform === 'web'
     ? 'Starting state: authenticated (storageState), on the dashboard.'
     : 'Starting state: app freshly launched.')
   lines.push('')
@@ -88,7 +94,7 @@ export function buildPlanMarkdown(tc, platform = 'web') {
 // edited or un-flagged in the minutes between clicking Generate and CI
 // fetching the payload, and exporting a stale/ineligible TC would waste an
 // expensive agent run on it.
-export async function exportPlansForTestCases(db, projectId, testCaseIds, platform = 'web') {
+export async function exportPlansForTestCases(db, projectId, testCaseIds, platform = 'web', engine = null) {
   if (!Array.isArray(testCaseIds) || testCaseIds.length === 0) return []
 
   const { rows } = await db.query(
@@ -102,6 +108,6 @@ export async function exportPlansForTestCases(db, projectId, testCaseIds, platfo
   return rows.map(tc => ({
     tc_id: tc.id,
     filename: planFilename(tc),
-    markdown: buildPlanMarkdown(tc, platform),
+    markdown: buildPlanMarkdown(tc, platform, engine),
   }))
 }

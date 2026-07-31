@@ -410,4 +410,14 @@ BEGIN
       CHECK (estimated_effort IS NULL OR estimated_effort IN ('S','M','L'));
   END IF;
 END $$;
+
+-- API testing (Phase 1) — a suite is 'api'-engine on platform='web' (routes
+-- through the same web generation/run workflow every UI web suite already
+-- uses; see automationTrigger.js, which only ever branches on platform,
+-- never engine). Widening the original inline CHECK from
+-- automation_suites' own ADD COLUMN above, same drop-then-recreate pattern
+-- already used for execution_run_test_cases_status_check.
+ALTER TABLE automation_suites DROP CONSTRAINT IF EXISTS automation_suites_engine_check;
+ALTER TABLE automation_suites ADD CONSTRAINT automation_suites_engine_check
+  CHECK (engine IN ('playwright','maestro','appium','api'));
 `

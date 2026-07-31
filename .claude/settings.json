@@ -45,7 +45,9 @@
       "mcp__maestro__take_screenshot",
       "mcp__maestro__run",
       "mcp__maestro__cheat_sheet",
-      "mcp__device-status__check_ios_simulator"
+      "mcp__device-status__check_ios_simulator",
+      "Bash(curl:*)",
+      "Bash(npx playwright test:*)"
     ]
   }
 }

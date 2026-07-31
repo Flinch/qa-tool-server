@@ -255,7 +255,7 @@ router.get('/generation-payload/:correlationId', verifySecret, async (req, res) 
     if (!db) return res.status(404).json({ error: 'Unknown correlation id' })
 
     const { rows } = await db.query(
-      `SELECT gr.*, s.slug AS suite_slug, s.platform AS suite_platform
+      `SELECT gr.*, s.slug AS suite_slug, s.platform AS suite_platform, s.engine AS suite_engine
        FROM generation_runs gr
        JOIN automation_suites s ON s.id = gr.suite_id
        WHERE gr.correlation_id = $1`,
@@ -286,8 +286,9 @@ router.get('/generation-payload/:correlationId', verifySecret, async (req, res) 
       suite_id: run.suite_id,
       suite_slug: run.suite_slug,
       platform: run.suite_platform,
+      engine: run.suite_engine,
       ...platformFields,
-      plans: await exportPlansForTestCases(db, run.project_id, run.test_case_ids, run.suite_platform),
+      plans: await exportPlansForTestCases(db, run.project_id, run.test_case_ids, run.suite_platform, run.suite_engine),
     })
   } catch (e) {
     res.status(500).json({ error: e.message })

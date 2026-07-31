@@ -71,7 +71,7 @@ router.post('/suites', ...staffOnlyChain, async (req, res) => {
   if (platform !== undefined && !['web', 'ios', 'android'].includes(platform)) {
     return res.status(400).json({ error: 'Invalid platform' })
   }
-  if (engine !== undefined && engine !== null && !['playwright', 'maestro', 'appium'].includes(engine)) {
+  if (engine !== undefined && engine !== null && !['playwright', 'maestro', 'appium', 'api'].includes(engine)) {
     return res.status(400).json({ error: 'Invalid engine' })
   }
   try {
