@@ -32,6 +32,14 @@ export default defineConfig({
     baseURL: process.env.TARGET_URL || 'https://service-desk-roan.vercel.app',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
+    // 'on' (not 'retain-on-failure') deliberately — the ask is to be able
+    // to watch the actual playback even for a PASSING test, to confirm it
+    // really went through the intended flow rather than just trusting the
+    // step list. Embeds automatically into the existing HTML report
+    // already linked from the frontend's "Report" button
+    // (AutomationPage.jsx/ExecutionRunDetailPage.jsx), no other changes
+    // needed.
+    video: 'on',
     // Playwright's default is NO action timeout — a click/fill/etc. that
     // never becomes actionable (element present but never satisfies
     // visible+stable+enabled+receives-events) waits forever. Confirmed
