@@ -23,3 +23,31 @@ export async function archiveIfOrphaned(db, projectId, testCaseId) {
   )
   return rowCount > 0
 }
+
+// Unlinks every test case from a requirement that's being removed — both
+// regular coverage (requirement_test_cases) AND critical-flow coverage
+// (flow_requirements, since a flow can span multiple requirements, only
+// THIS requirement's link is dropped, not the flow's other links) — and
+// archive-checks each affected test case. Otherwise a removed requirement's
+// test cases just keep sitting there silently linked to a dead requirement
+// forever, invisible to the Test Cases page's requirement column, the
+// diff-based generation review, and "Generate critical flows" alike (all
+// three only ever look at ACTIVE requirements). Called wherever a
+// requirement transitions to status='removed': POST /apply-diff's removed
+// loop and PATCH /:reqId's manual delete.
+export async function unlinkRequirementTestCases(db, projectId, requirementId) {
+  const { rows: rtcRows } = await db.query(
+    `DELETE FROM requirement_test_cases WHERE requirement_id=$1 RETURNING test_case_id`,
+    [requirementId]
+  )
+  const { rows: frRows } = await db.query(
+    `DELETE FROM flow_requirements WHERE requirement_id=$1 RETURNING test_case_id`,
+    [requirementId]
+  )
+  const testCaseIds = new Set([...rtcRows, ...frRows].map(r => r.test_case_id))
+  const archivedIds = []
+  for (const testCaseId of testCaseIds) {
+    if (await archiveIfOrphaned(db, projectId, testCaseId)) archivedIds.push(testCaseId)
+  }
+  return archivedIds
+}

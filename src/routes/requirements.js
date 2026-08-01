@@ -4,7 +4,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js'
 import { requireTenantAccess } from '../middleware/tenantAccess.js'
 import { extractDocumentText } from '../lib/extractDocumentText.js'
 import { reviewTestCasesForRequirements } from '../lib/generateTestCasesFromRequirements.js'
-import { archiveIfOrphaned } from '../lib/archiveOrphans.js'
+import { archiveIfOrphaned, unlinkRequirementTestCases } from '../lib/archiveOrphans.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
@@ -258,6 +258,10 @@ router.post('/apply-diff', staffOnly, async (req, res) => {
         `UPDATE requirements SET status='removed', updated_at=NOW() WHERE id=$1 AND project_id=$2`,
         [id, req.params.id]
       )
+      // Otherwise this requirement's test cases stay silently linked to a
+      // dead requirement forever — invisible to the diff-based generation
+      // review, which only ever looks at active requirements.
+      await unlinkRequirementTestCases(req.db, req.params.id, id)
     }
 
     const inserted = []
@@ -542,6 +546,10 @@ router.patch('/:reqId', staffOnly, async (req, res) => {
       values
     )
     if (!rows[0]) return res.status(404).json({ error: 'Not found' })
+    // Same cleanup POST /apply-diff's removed loop does — a manually
+    // deleted requirement shouldn't leave its test cases silently linked to
+    // a dead requirement either.
+    if (status === 'removed') await unlinkRequirementTestCases(req.db, req.params.id, req.params.reqId)
     res.json(rows[0])
   } catch (e) {
     res.status(500).json({ error: e.message })
