@@ -6,18 +6,9 @@ import { broadcast } from '../lib/sse.js'
 import { exportPlansForTestCases } from '../lib/planExport.js'
 import { describeFailure } from '../lib/describeFailure.js'
 import { classifyFailure } from '../lib/classifyFailure.js'
+import { resolveTestEnvironment } from '../lib/testEnvironment.js'
 
 const GENERATION_STATUSES = ['pending', 'exploring', 'generating', 'healing', 'opening_pr', 'completed', 'failed']
-
-// One app id per mobile platform, not a single shared var — a single
-// MOBILE_TARGET_APP_ID silently misdirected generation at whichever platform's
-// bundle id happened to be set last (real wasted CI runs from this). Mirrors
-// GITHUB_GENERATION_WORKFLOW_ID vs GITHUB_MOBILE_GENERATION_WORKFLOW_ID's
-// existing per-platform-var pattern.
-const MOBILE_APP_ID_BY_PLATFORM = {
-  android: process.env.MOBILE_TARGET_APP_ID_ANDROID || 'com.sec.android.app.popupcalculator',
-  ios: process.env.MOBILE_TARGET_APP_ID_IOS,
-}
 
 const router = Router()
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || ''
@@ -270,16 +261,18 @@ router.get('/generation-payload/:correlationId', verifySecret, async (req, res) 
       broadcast(tenantId, 'generation_progress', { generation_run_id: run.id, status: 'exploring' })
     }
 
+    const env = await resolveTestEnvironment(db, run.project_id, run.suite_platform)
+
     // target_url (Playwright's baseURL) only makes sense for the web
     // pipeline. Mobile has no equivalent binary-management yet (a known,
-    // flagged gap) — app_id is a stand-in env var default for now, same
-    // category as target_url's own hardcoded fallback.
-    if (run.suite_platform !== 'web' && !MOBILE_APP_ID_BY_PLATFORM[run.suite_platform]) {
-      return res.status(500).json({ error: `No app id configured for "${run.suite_platform}" suites — set MOBILE_TARGET_APP_ID_${run.suite_platform.toUpperCase()}` })
+    // flagged gap) — app_id resolves to this project's configured id, or
+    // the env-var fallback if unset.
+    if (run.suite_platform !== 'web' && !env.mobileAppId) {
+      return res.status(500).json({ error: `No app id configured for "${run.suite_platform}" suites — set it on this project's Test Environment, or MOBILE_TARGET_APP_ID_${run.suite_platform.toUpperCase()}` })
     }
     const platformFields = run.suite_platform === 'web'
-      ? { target_url: process.env.TARGET_URL || 'https://service-desk-roan.vercel.app' }
-      : { app_id: MOBILE_APP_ID_BY_PLATFORM[run.suite_platform] }
+      ? { target_url: env.targetUrl, api_base_url: env.apiBaseUrl }
+      : { app_id: env.mobileAppId }
 
     res.json({
       project_id: tenantId,
@@ -288,7 +281,46 @@ router.get('/generation-payload/:correlationId', verifySecret, async (req, res) 
       platform: run.suite_platform,
       engine: run.suite_engine,
       ...platformFields,
+      test_credentials: env.credentials,
       plans: await exportPlansForTestCases(db, run.project_id, run.test_case_ids, run.suite_platform, run.suite_engine),
+    })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// GET /run-config/:correlationId — the lighter counterpart to
+// GET /generation-payload above, for CI jobs that need the target
+// environment but not test plans: plain suite runs (playwright.yml,
+// maestro-run.yml) and heals (heal-test.yml, heal-mobile-test.yml). Suite
+// runs live in test_runs, heals live in generation_runs (kind='heal') — same
+// correlation_id -> dispatch_index resolution either way, just a different
+// table to join platform from.
+router.get('/run-config/:correlationId', verifySecret, async (req, res) => {
+  try {
+    const tenantId = await resolveTenantId(req.params.correlationId, null)
+    const db = tenantId ? await resolveTenantPool(tenantId) : null
+    if (!db) return res.status(404).json({ error: 'Unknown correlation id' })
+
+    const { rows: runRows } = await db.query(
+      `SELECT tr.project_id, s.platform AS suite_platform
+       FROM test_runs tr JOIN automation_suites s ON s.id = tr.suite_id
+       WHERE tr.correlation_id = $1
+       UNION ALL
+       SELECT gr.project_id, s.platform AS suite_platform
+       FROM generation_runs gr JOIN automation_suites s ON s.id = gr.suite_id
+       WHERE gr.correlation_id = $1 AND gr.kind = 'heal'`,
+      [req.params.correlationId]
+    )
+    const run = runRows[0]
+    if (!run) return res.status(404).json({ error: 'Unknown correlation id' })
+
+    const env = await resolveTestEnvironment(db, run.project_id, run.suite_platform)
+    res.json({
+      target_url: env.targetUrl,
+      api_base_url: env.apiBaseUrl,
+      app_id: env.mobileAppId,
+      test_credentials: env.credentials,
     })
   } catch (e) {
     res.status(500).json({ error: e.message })

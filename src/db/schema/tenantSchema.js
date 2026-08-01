@@ -420,4 +420,24 @@ END $$;
 ALTER TABLE automation_suites DROP CONSTRAINT IF EXISTS automation_suites_engine_check;
 ALTER TABLE automation_suites ADD CONSTRAINT automation_suites_engine_check
   CHECK (engine IN ('playwright','maestro','appium','api'));
+
+-- Per-project test environment (target URL, mobile app ids, test login
+-- credentials) — the real target/credential config every CI workflow
+-- actually dispatches against. Its own table, not columns on projects, so
+-- test_credentials never rides along on the general GET /projects/:id
+-- response every role already hits (see routes/projects.js's test-config
+-- endpoints — staff-only, GET never returns the raw password). Falls back
+-- to the existing hardcoded env-var defaults when a project has no row
+-- here yet (see lib/testEnvironment.js), so the current demo project keeps
+-- working with zero setup.
+CREATE TABLE IF NOT EXISTS project_test_config (
+  project_id            INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  target_url            TEXT,
+  api_base_url          TEXT,
+  mobile_app_id_ios     TEXT,
+  mobile_app_id_android TEXT,
+  test_credentials      JSONB,
+  updated_by            TEXT,
+  updated_at            TIMESTAMPTZ DEFAULT NOW()
+);
 `

@@ -54,15 +54,20 @@ jobs:
       # as the `generated` Playwright project (storageState). Locally this
       # file was already on disk from prior runs; a fresh CI checkout never
       # has it, so it has to be created before any agent touches the app.
-      - name: Authenticate (create storageState)
-        run: npx playwright test --project=setup
-
+      #
+      # Reordered ahead of Authenticate below (was after it) — the payload
+      # this step fetches now carries this project's real TARGET_URL/
+      # TEST_USER_* (per-project test config), and Authenticate is exactly
+      # the step that consumes them via playwright.config.js/helpers/auth.ts.
       - name: Fetch generation payload
         env:
           CORRELATION_ID: ${{ inputs.correlation_id }}
           WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
         run: node .github/scripts/fetch-generation-payload.js
+
+      - name: Authenticate (create storageState)
+        run: npx playwright test --project=setup
 
       - name: Generate and heal tests
         env:

@@ -135,7 +135,7 @@ function runPlaywrightTest(targetDir) {
 
 async function main() {
   const payload = JSON.parse(fs.readFileSync('.generation-payload.json', 'utf-8'))
-  const { suite_slug: suiteSlug, target_url: targetUrl, engine, plans } = payload
+  const { suite_slug: suiteSlug, target_url: targetUrl, api_base_url: apiBaseUrl, engine, plans } = payload
   const suiteDir = path.join('tests', 'generated', suiteSlug)
   fs.mkdirSync(suiteDir, { recursive: true })
 
@@ -172,7 +172,7 @@ async function main() {
   try {
     const plannerList = entries.map(e => `- specs/${e.filename}`).join('\n')
     await runAgent(
-      `Use the ${agents.planner} agent to verify and refine EACH of the following plans against the ${isApi ? `real API at ${targetUrl}` : `running app at ${targetUrl}`}, following ${conventions}. Update each file in place only if changes are needed. Process every plan in this list before finishing:\n${plannerList}\n\nIf a plan step is fully covered by an existing helper (see AGENTS.md's helpers list${isApi ? '' : ', e.g. createTicket(page) for creating a ticket'}), you don't need to re-verify that step live — it's already a proven, working part of the codebase. Focus live verification on steps that aren't already covered by a helper.\n\nIf a plan's stated Expect: outcome turns out to be genuinely contradicted by the ${isApi ? 'API' : 'app'}'s real behavior (not a wording issue — it actually does something different from what's described), do NOT keep retrying or waiting for the expected state to appear. Follow AGENTS.md's Behavior mismatch policy: note it directly in the plan file with a BEHAVIOR MISMATCH comment describing expected vs actual, and move on to the next plan.`
+      `Use the ${agents.planner} agent to verify and refine EACH of the following plans against the ${isApi ? `real API at ${apiBaseUrl}` : `running app at ${targetUrl}`}, following ${conventions}. Update each file in place only if changes are needed. Process every plan in this list before finishing:\n${plannerList}\n\nIf a plan step is fully covered by an existing helper (see AGENTS.md's helpers list${isApi ? '' : ', e.g. createTicket(page) for creating a ticket'}), you don't need to re-verify that step live — it's already a proven, working part of the codebase. Focus live verification on steps that aren't already covered by a helper.\n\nIf a plan's stated Expect: outcome turns out to be genuinely contradicted by the ${isApi ? 'API' : 'app'}'s real behavior (not a wording issue — it actually does something different from what's described), do NOT keep retrying or waiting for the expected state to appear. Follow AGENTS.md's Behavior mismatch policy: note it directly in the plan file with a BEHAVIOR MISMATCH comment describing expected vs actual, and move on to the next plan.`
     )
   } catch (err) {
     if (err instanceof CostCapExceededError) throw err

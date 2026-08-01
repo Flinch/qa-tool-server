@@ -41,6 +41,22 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps
 
+      # Per-project target URL/credentials (see routes/projects.js's
+      # test-config endpoints) — writes TARGET_URL/TEST_USER_* to
+      # $GITHUB_ENV so playwright.config.js's baseURL and helpers/auth.ts's
+      # TEST_USER pick them up automatically for the rest of this job. Only
+      # runs when a real correlation id was supplied — a raw manual
+      # dispatch typed directly into the GitHub UI (run_correlation_id is
+      # an optional input) has no project to resolve, so it falls back to
+      # this repo's hardcoded defaults exactly as before.
+      - name: Fetch test environment
+        if: inputs.run_correlation_id != ''
+        env:
+          CORRELATION_ID: ${{ inputs.run_correlation_id }}
+          WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+        run: node .github/scripts/fetch-run-config.js
+
       # AI-generated specs for a suite live in tests/generated/<slug>/, separate
       # from the hand-written tests/<slug>/ folder — a suite run has to check
       # both or generated tests are silently invisible to it. Passing a path

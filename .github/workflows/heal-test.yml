@@ -50,6 +50,18 @@ jobs:
             fs.writeFileSync(file, JSON.stringify(config));
           "
 
+      # Per-project target URL/credentials — must run BEFORE Authenticate
+      # below, which is what actually consumes TARGET_URL/TEST_USER_* via
+      # playwright.config.js/helpers/auth.ts. correlation_id is a required
+      # input on this workflow, unlike playwright.yml's optional one, so no
+      # `if:` guard is needed here.
+      - name: Fetch test environment
+        env:
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+          WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+        run: node .github/scripts/fetch-run-config.js
+
       # Same reasoning as generate-tests.yml's identical step — the healer
       # needs the same authenticated storageState the generated Playwright
       # project starts from.

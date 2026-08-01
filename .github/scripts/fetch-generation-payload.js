@@ -3,7 +3,7 @@ import path from 'path'
 import https from 'https'
 import http from 'http'
 
-const { CORRELATION_ID, WEBHOOK_BASE_URL, WEBHOOK_SECRET } = process.env
+const { CORRELATION_ID, WEBHOOK_BASE_URL, WEBHOOK_SECRET, GITHUB_ENV } = process.env
 
 function getJson(url, secret) {
   return new Promise((resolve, reject) => {
@@ -48,6 +48,27 @@ function postJson(url, secret, body) {
   })
 }
 
+// Web-only (target_url/test_credentials are only meaningful for the
+// Playwright pipeline — mobile generation reads app_id straight off the
+// payload object, not an env var, since there's no storageState/Authenticate
+// step to feed). Harmless no-op for a mobile payload, which just won't have
+// these fields.
+function writeEnv(payload) {
+  const lines = []
+  if (payload.target_url) lines.push(`TARGET_URL=${payload.target_url}`)
+  if (payload.api_base_url) lines.push(`API_BASE_URL=${payload.api_base_url}`)
+  if (payload.test_credentials?.username) lines.push(`TEST_USER_NAME=${payload.test_credentials.username}`)
+  if (payload.test_credentials?.password) lines.push(`TEST_USER_PASSWORD=${payload.test_credentials.password}`)
+  if (payload.test_credentials?.displayName) lines.push(`TEST_USER_DISPLAY_NAME=${payload.test_credentials.displayName}`)
+
+  if (lines.length === 0) return
+  if (GITHUB_ENV) {
+    fs.appendFileSync(GITHUB_ENV, lines.join('\n') + '\n')
+  } else {
+    console.log('GITHUB_ENV not set (not running in Actions?) — would have written:\n' + lines.join('\n'))
+  }
+}
+
 if (!CORRELATION_ID || !WEBHOOK_BASE_URL || !WEBHOOK_SECRET) {
   console.error('CORRELATION_ID, WEBHOOK_BASE_URL, and WEBHOOK_SECRET are required')
   process.exit(1)
@@ -55,6 +76,7 @@ if (!CORRELATION_ID || !WEBHOOK_BASE_URL || !WEBHOOK_SECRET) {
 
 try {
   const payload = await getJson(`${WEBHOOK_BASE_URL}/generation-payload/${CORRELATION_ID}`, WEBHOOK_SECRET)
+  writeEnv(payload)
 
   fs.mkdirSync('specs', { recursive: true })
   for (const plan of payload.plans) {

@@ -109,6 +109,79 @@ router.patch('/:id', requireTenantAccess, requireRole('qa_engineer', 'admin'), a
   }
 })
 
+// GET /projects/:id/test-config — the real target URL/credentials CI
+// dispatches against for this project (see lib/testEnvironment.js, the
+// consumer). Staff-only, full stop — never reachable by the client role,
+// same posture as every other internal-tooling surface. Never returns the
+// raw password: hasCredentials + the username only, so the edit form can
+// show "a password is already saved" without the client-side JS ever
+// holding the real secret.
+router.get('/:id/test-config', requireTenantAccess, requireRole('qa_engineer', 'admin'), async (req, res) => {
+  try {
+    const { rows } = await req.db.query(`SELECT * FROM project_test_config WHERE project_id=$1`, [req.params.id])
+    const config = rows[0]
+    const creds = config?.test_credentials
+    res.json({
+      target_url: config?.target_url || null,
+      api_base_url: config?.api_base_url || null,
+      mobile_app_id_ios: config?.mobile_app_id_ios || null,
+      mobile_app_id_android: config?.mobile_app_id_android || null,
+      hasCredentials: !!creds?.password,
+      credentialUsername: creds?.username || null,
+    })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// PATCH /projects/:id/test-config — upsert. test_credentials, when
+// provided, fully replaces whatever's stored (username+password go
+// together); when omitted from the request entirely, the existing stored
+// credentials are left untouched — the "leave blank to keep the current
+// secret" pattern, so re-saving the target URL alone never accidentally
+// wipes a working password.
+router.patch('/:id/test-config', requireTenantAccess, requireRole('qa_engineer', 'admin'), async (req, res) => {
+  const { target_url, api_base_url, mobile_app_id_ios, mobile_app_id_android, test_credentials } = req.body
+
+  try {
+    const { rows: existingRows } = await req.db.query(`SELECT * FROM project_test_config WHERE project_id=$1`, [req.params.id])
+    const existing = existingRows[0]
+
+    const next = {
+      target_url: target_url !== undefined ? (target_url?.trim() || null) : (existing?.target_url ?? null),
+      api_base_url: api_base_url !== undefined ? (api_base_url?.trim() || null) : (existing?.api_base_url ?? null),
+      mobile_app_id_ios: mobile_app_id_ios !== undefined ? (mobile_app_id_ios?.trim() || null) : (existing?.mobile_app_id_ios ?? null),
+      mobile_app_id_android: mobile_app_id_android !== undefined ? (mobile_app_id_android?.trim() || null) : (existing?.mobile_app_id_android ?? null),
+      test_credentials: test_credentials !== undefined
+        ? (test_credentials?.username && test_credentials?.password
+          ? { username: test_credentials.username.trim(), password: test_credentials.password, displayName: test_credentials.displayName?.trim() || undefined }
+          : null)
+        : (existing?.test_credentials ?? null),
+    }
+
+    const { rows } = await req.db.query(
+      `INSERT INTO project_test_config (project_id, target_url, api_base_url, mobile_app_id_ios, mobile_app_id_android, test_credentials, updated_by, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+       ON CONFLICT (project_id) DO UPDATE SET
+         target_url=$2, api_base_url=$3, mobile_app_id_ios=$4, mobile_app_id_android=$5, test_credentials=$6, updated_by=$7, updated_at=NOW()
+       RETURNING *`,
+      [req.params.id, next.target_url, next.api_base_url, next.mobile_app_id_ios, next.mobile_app_id_android, JSON.stringify(next.test_credentials), req.userId]
+    )
+    const saved = rows[0]
+    const creds = saved.test_credentials
+    res.json({
+      target_url: saved.target_url,
+      api_base_url: saved.api_base_url,
+      mobile_app_id_ios: saved.mobile_app_id_ios,
+      mobile_app_id_android: saved.mobile_app_id_android,
+      hasCredentials: !!creds?.password,
+      credentialUsername: creds?.username || null,
+    })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // GET /projects/:id/stats
 router.get('/:id/stats', requireTenantAccess, async (req, res) => {
   try {
