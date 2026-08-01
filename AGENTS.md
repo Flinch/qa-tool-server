@@ -262,3 +262,42 @@ Projects with no custom target keep using the original shared
   version rather than looping indefinitely; the CI workflow's own objective
   verify step and the PR review are the real safety net, not an unbounded
   agent loop.
+
+## Per-project reusable helpers
+
+The web pipeline's `helpers/` folder (`auth.ts`, `createTicket.ts`,
+`testData.ts`) is hand-written specifically for the original demo app and
+stays exactly as-is. A project with its own custom target gets its own
+parallel helpers directory instead: `helpers/project-<id>/`. This exists so
+a project's *second* generation run (a different feature, a different
+suite) doesn't have to rediscover the same login-adjacent navigation or
+common setup steps the *first* run already proved out live — the same idea
+as the per-project auth-setup file above, generalized to ordinary reusable
+flows instead of just login.
+
+- **Check before verifying live**: both the planner and generator check
+  `helpers/project-<id>/` (via `Glob` + `Read`) for an existing helper that
+  already covers a plan step before live-verifying it — same "don't
+  re-verify what's already proven" principle the flat `helpers/` folder
+  already gets for the demo project.
+- **When the generator extracts one**: if a step needed live verification
+  because no existing helper covered it, and that step is a genuinely
+  reusable setup/entry action for this app (logging in and reaching a
+  specific form, creating a core record, anything future test cases for
+  this app will likely need again) — not a one-off or assertion-only step —
+  write it into a new file under `helpers/project-<id>/` instead of only
+  inlining it into the one spec.
+- **Shape**: one exported `async function` taking `page` (plus optional
+  data overrides), same pattern as `helpers/createTicket.ts` — a single
+  clear responsibility, not a grab-bag. A one-line comment at the top
+  describing what it does and when to reuse it, so a future run can decide
+  relevance from the file list alone without executing anything.
+- **Import convention**: `import { x } from '../../../helpers/project-<id>/y'`
+  — identical relative-path shape the flat `helpers/*` imports already use
+  from `tests/generated/<suite-slug>/*.spec.ts`.
+- **Never duplicate**: always check what's already there first — reusing
+  (or extending, if it's close but not quite right) an existing helper
+  beats writing a near-duplicate.
+- **Healer**: may use an existing helper while fixing a spec, but does not
+  create new ones during a heal — same "apply the minimal fix, never
+  refactor" boundary as the Healing rules above.

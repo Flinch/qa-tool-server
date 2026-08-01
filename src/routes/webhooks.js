@@ -283,6 +283,7 @@ router.get('/generation-payload/:correlationId', verifySecret, async (req, res) 
       ...platformFields,
       test_credentials: env.credentials,
       auth_setup_file: env.authSetupFile,
+      helpers_dir: env.helpersDir,
       plans: await exportPlansForTestCases(db, run.project_id, run.test_case_ids, run.suite_platform, run.suite_engine),
     })
   } catch (e) {
@@ -330,6 +331,7 @@ router.get('/run-config/:correlationId', verifySecret, async (req, res) => {
       app_id: env.mobileAppId,
       test_credentials: env.credentials,
       auth_setup_file: env.authSetupFile,
+      helpers_dir: env.helpersDir,
     })
   } catch (e) {
     res.status(500).json({ error: e.message })

@@ -40,11 +40,19 @@ export async function resolveTestEnvironment(db, projectId, platform) {
   // check used to decide whether the auth-setup gate applies at all).
   const authSetupFile = config.target_url ? `tests/auth-setups/project-${projectId}.setup.ts` : null
 
+  // Same condition as authSetupFile above — a project with no custom target
+  // has no app-specific flows to build a helper library for, and keeps
+  // using the original flat helpers/*.ts files (createTicket.ts etc.)
+  // exactly as before. See AGENTS.md's "Per-project reusable helpers"
+  // section for what lives here and when the generator adds to it.
+  const helpersDir = config.target_url ? `helpers/project-${projectId}` : null
+
   return {
     targetUrl,
     apiBaseUrl,
     mobileAppId,
     credentials: config.test_credentials || null,
     authSetupFile,
+    helpersDir,
   }
 }
