@@ -166,22 +166,42 @@ test.describe('TC-62 — Add new employee with login credentials and verify in e
       // every pagination page and confirm the new employee's Id sits correctly between its
       // immediate ascending-order neighbors. Wrapped in expect.toPass() to tolerate the
       // brief re-render after the sort click, not an arbitrary wait.
+      //
+      // FIXED (was flaky): the previous implementation captured `pagination.getByRole('button')`
+      // once and then drove the sweep with `.nth(i)` on that live locator. The pagination
+      // component only renders a "previous" arrow when NOT on page 1, and only a "next" arrow
+      // when NOT on the last page (confirmed live via the rendered HTML), so the button count
+      // and index-to-page mapping shifts after every click. Reproduced live: starting the sweep
+      // from a non-first page caused index 2 to resolve to page 3 instead of page 2, permanently
+      // skipping page 2 on every retry and spinning until the 120s test timeout. Fixed by always
+      // returning to page 1 by its own accessible name first, then walking forward one page at a
+      // time via the "Next" arrow (identified by its chevron icon, since it has no accessible
+      // name) until it disappears — immune to index shifting because it never uses `.nth()` on
+      // the pagination control.
       await expect(async () => {
         const pagination = page.getByRole('navigation', { name: 'Pagination Navigation' });
-        const pageButtons = pagination.getByRole('button');
-        const pageButtonCount = await pageButtons.count();
+        const bodyRows = page.getByRole('row').filter({ has: page.getByRole('cell') });
+
+        // Always start from page 1 via its own numeric label, not a positional index — this
+        // works whether we're already on page 1 or a retry left us on a later page.
+        await pagination.getByRole('button', { name: '1', exact: true }).click();
+        await expect(bodyRows.first()).toBeVisible();
 
         const allIds: string[] = [];
-        for (let i = 0; i < pageButtonCount; i++) {
-          const label = (await pageButtons.nth(i).textContent())?.trim();
-          if (!label || !/^\d+$/.test(label)) continue; // skip the unlabeled next/prev arrow
-          await pageButtons.nth(i).click();
-          const bodyRows = page.getByRole('row').filter({ has: page.getByRole('cell') });
+        while (true) {
           const rowCount = await bodyRows.count();
           for (let r = 0; r < rowCount; r++) {
             const idText = await bodyRows.nth(r).getByRole('cell').nth(1).textContent();
             allIds.push((idText ?? '').trim());
           }
+
+          // FRAGILE: the "Next" arrow has no accessible name and shares its button class with
+          // the "Previous" arrow, so it's identified by its chevron-right icon class, verified
+          // live. It is absent entirely on the last page.
+          const nextButton = pagination.locator('button:has(.bi-chevron-right)');
+          if ((await nextButton.count()) === 0) break;
+          await nextButton.click();
+          await expect(bodyRows.first()).toBeVisible();
         }
 
         const idx = allIds.indexOf(employeeId);
