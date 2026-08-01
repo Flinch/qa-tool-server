@@ -478,6 +478,29 @@ router.get('/generation-runs', ...staffOnlyChain, async (req, res) => {
   }
 })
 
+// GET /generation-runs/:runId/log — persisted live-agent-log lines for one
+// run (see webhooks.js's POST /generation-logs, which is what CI writes
+// these from). Backs GenerationLogModal's initial load — works the same
+// whether the run is still in progress or already finished, since these
+// are stored, not just broadcast live.
+router.get('/generation-runs/:runId/log', ...staffOnlyChain, async (req, res) => {
+  try {
+    const { rows: runRows } = await req.db.query(
+      `SELECT id FROM generation_runs WHERE id=$1 AND project_id=$2`,
+      [req.params.runId, req.params.id]
+    )
+    if (!runRows[0]) return res.status(404).json({ error: 'Not found' })
+
+    const { rows } = await req.db.query(
+      `SELECT line, created_at FROM generation_run_logs WHERE generation_run_id=$1 ORDER BY id`,
+      [req.params.runId]
+    )
+    res.json({ lines: rows.map(r => r.line) })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // GET /runs/stream — SSE. Native EventSource can't send Authorization headers,
 // so the token is passed as a query param here instead, and verified manually.
 router.get('/runs/stream', async (req, res) => {

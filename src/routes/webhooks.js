@@ -387,4 +387,44 @@ router.post('/generation-events', verifySecret, async (req, res) => {
   }
 })
 
+// POST /generation-logs — CI flushes buffered, formatted agent-step lines
+// here every ~2s as a run progresses (see each generation/heal script's
+// printStreamEvent + flushLogs). Persisted (not just broadcast) so the
+// frontend log viewer can show the full transcript for a run that already
+// finished, not just whatever arrived while someone had it open live.
+router.post('/generation-logs', verifySecret, async (req, res) => {
+  const { correlation_id, lines } = req.body
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return res.status(400).json({ error: 'lines must be a non-empty array' })
+  }
+
+  try {
+    const tenantId = await resolveTenantId(correlation_id, null)
+    const db = tenantId ? await resolveTenantPool(tenantId) : null
+    if (!db) return res.status(404).json({ error: 'Unknown correlation id' })
+
+    const { rows: existing } = await db.query(
+      `SELECT id FROM generation_runs WHERE correlation_id=$1`,
+      [correlation_id]
+    )
+    if (!existing[0]) return res.status(404).json({ error: 'Unknown correlation id' })
+    const generationRunId = existing[0].id
+
+    const values = []
+    const placeholders = lines.map((line, i) => {
+      values.push(generationRunId, line)
+      return `($${i * 2 + 1}, $${i * 2 + 2})`
+    }).join(',')
+    await db.query(
+      `INSERT INTO generation_run_logs (generation_run_id, line) VALUES ${placeholders}`,
+      values
+    )
+
+    broadcast(tenantId, 'generation_log', { generation_run_id: generationRunId, lines })
+    res.status(200).json({ received: true, count: lines.length })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 export default router

@@ -47,7 +47,7 @@ function postJson(url, body) {
       let data = ''
       res.on('data', c => data += c)
       res.on('end', () => {
-        console.log(`generation-events -> ${res.statusCode}: ${data}`)
+        console.log(`${u.pathname} -> ${res.statusCode}: ${data}`)
         resolve({ status: res.statusCode, data })
       })
     })
@@ -68,6 +68,25 @@ async function reportPhaseOnce(status) {
   await reportEvent(status)
 }
 
+// Same buffer-then-flush shape as generate-tests.js's identical addition —
+// see that file's comment for why this is duplicated per-script rather
+// than a shared lib.
+const logBuffer = []
+let flushingLogs = false
+async function flushLogs() {
+  if (flushingLogs || logBuffer.length === 0) return
+  flushingLogs = true
+  const lines = logBuffer.splice(0, logBuffer.length)
+  try {
+    await postJson(`${WEBHOOK_BASE_URL}/generation-logs`, { correlation_id: CORRELATION_ID, lines })
+  } catch (e) {
+    console.error('Failed to flush agent log lines:', e.message)
+  } finally {
+    flushingLogs = false
+  }
+}
+const logFlushInterval = setInterval(flushLogs, 2000)
+
 let totalCostUsd = 0
 class CostCapExceededError extends Error {}
 class AgentTimeoutError extends Error {}
@@ -80,15 +99,20 @@ function truncateForLog(value, max) {
 function printStreamEvent(event) {
   if (event.type !== 'assistant' && event.type !== 'user') return
   for (const block of event.message?.content || []) {
+    let line = null
     if (block.type === 'thinking' && block.thinking) {
-      console.log(`  🤔 ${truncateForLog(block.thinking, 200)}`)
+      line = `🤔 ${truncateForLog(block.thinking, 200)}`
     } else if (block.type === 'tool_use') {
-      console.log(`  🔧 ${block.name}(${truncateForLog(block.input, 150)})`)
+      line = `🔧 ${block.name}(${truncateForLog(block.input, 150)})`
     } else if (block.type === 'text' && block.text) {
-      console.log(`  💬 ${truncateForLog(block.text, 300)}`)
+      line = `💬 ${truncateForLog(block.text, 300)}`
     } else if (block.type === 'tool_result') {
       const prefix = block.is_error ? 'ERROR: ' : ''
-      console.log(`  ↳ ${prefix}${truncateForLog(block.content, 200)}`)
+      line = `↳ ${prefix}${truncateForLog(block.content, 200)}`
+    }
+    if (line) {
+      console.log(`  ${line}`)
+      logBuffer.push(line)
     }
   }
 }
@@ -171,10 +195,14 @@ async function main() {
   console.log(`Done healing ${FILE_PATH}. Handing off to the PR step.`)
 }
 
-main().then(() => {
+main().then(async () => {
+  clearInterval(logFlushInterval)
+  await flushLogs()
   process.exit(0)
 }).catch(async err => {
   console.error('Heal run failed:', err.message)
   await reportEvent('failed', { error_message: err.message.slice(0, 2000) }).catch(() => {})
+  clearInterval(logFlushInterval)
+  await flushLogs().catch(() => {})
   process.exit(1)
 })

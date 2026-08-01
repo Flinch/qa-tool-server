@@ -1,5 +1,6 @@
 import fs from 'fs'
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
+import readline from 'readline'
 import https from 'https'
 import http from 'http'
 
@@ -45,7 +46,7 @@ function postJson(url, body) {
       let data = ''
       res.on('data', c => data += c)
       res.on('end', () => {
-        console.log(`generation-events -> ${res.statusCode}: ${data}`)
+        console.log(`${u.pathname} -> ${res.statusCode}: ${data}`)
         resolve({ status: res.statusCode, data })
       })
     })
@@ -66,17 +67,77 @@ async function reportPhaseOnce(status) {
   await reportEvent(status)
 }
 
+// Same buffer-then-flush shape as generate-tests.js's identical addition —
+// see that file's comment for why this is duplicated per-script rather
+// than a shared lib.
+const logBuffer = []
+let flushingLogs = false
+async function flushLogs() {
+  if (flushingLogs || logBuffer.length === 0) return
+  flushingLogs = true
+  const lines = logBuffer.splice(0, logBuffer.length)
+  try {
+    await postJson(`${WEBHOOK_BASE_URL}/generation-logs`, { correlation_id: CORRELATION_ID, lines })
+  } catch (e) {
+    console.error('Failed to flush agent log lines:', e.message)
+  } finally {
+    flushingLogs = false
+  }
+}
+const logFlushInterval = setInterval(flushLogs, 2000)
+
 let totalCostUsd = 0
 class CostCapExceededError extends Error {}
 class AgentTimeoutError extends Error {}
 
-// Same process-tree-kill reasoning as generate-tests.js's identical helper.
-function runClaudeProcess(args, { timeout, maxBuffer }) {
+function truncateForLog(value, max) {
+  const s = typeof value === 'string' ? value : JSON.stringify(value)
+  return s.length > max ? `${s.slice(0, max)}…` : s
+}
+
+// Same formatting as generate-tests.js's identical helper.
+function printStreamEvent(event) {
+  if (event.type !== 'assistant' && event.type !== 'user') return
+  for (const block of event.message?.content || []) {
+    let line = null
+    if (block.type === 'thinking' && block.thinking) {
+      line = `🤔 ${truncateForLog(block.thinking, 200)}`
+    } else if (block.type === 'tool_use') {
+      line = `🔧 ${block.name}(${truncateForLog(block.input, 150)})`
+    } else if (block.type === 'text' && block.text) {
+      line = `💬 ${truncateForLog(block.text, 300)}`
+    } else if (block.type === 'tool_result') {
+      const prefix = block.is_error ? 'ERROR: ' : ''
+      line = `↳ ${prefix}${truncateForLog(block.content, 200)}`
+    }
+    if (line) {
+      console.log(`  ${line}`)
+      logBuffer.push(line)
+    }
+  }
+}
+
+// Same process-tree-kill + streaming reasoning as generate-tests.js's
+// identical helper.
+function runClaudeProcess(args, { timeout }) {
   return new Promise((resolve, reject) => {
-    const child = execFile('npx', args, { maxBuffer, detached: true }, (error, stdout, stderr) => {
-      clearTimeout(timer)
-      if (error) return reject(Object.assign(error, { stdout, stderr }))
-      resolve({ stdout, stderr })
+    const child = spawn('npx', args, { detached: true })
+
+    let resultEvent = null
+    let stderr = ''
+    child.stderr.on('data', d => { stderr += d })
+
+    const rl = readline.createInterface({ input: child.stdout })
+    rl.on('line', line => {
+      if (!line.trim()) return
+      let event
+      try {
+        event = JSON.parse(line)
+      } catch {
+        return
+      }
+      printStreamEvent(event)
+      if (event.type === 'result') resultEvent = event
     })
 
     const timer = setTimeout(() => {
@@ -87,17 +148,30 @@ function runClaudeProcess(args, { timeout, maxBuffer }) {
       }
       reject(new AgentTimeoutError(`Agent invocation timed out after ${timeout}ms and was killed.`))
     }, timeout)
+
+    child.on('error', err => {
+      clearTimeout(timer)
+      reject(err)
+    })
+    child.on('close', code => {
+      clearTimeout(timer)
+      if (!resultEvent) {
+        reject(Object.assign(new Error(`Agent process exited (code ${code}) without a result event`), { stderr }))
+        return
+      }
+      resolve(resultEvent)
+    })
   })
 }
 
 async function runAgent(prompt) {
-  const { stdout } = await runClaudeProcess([
+  const result = await runClaudeProcess([
     'claude', '-p', prompt,
     '--permission-mode', 'dontAsk',
-    '--output-format', 'json',
-  ], { maxBuffer: 1024 * 1024 * 50, timeout: AGENT_TIMEOUT })
+    '--output-format', 'stream-json',
+    '--verbose',
+  ], { timeout: AGENT_TIMEOUT })
 
-  const result = JSON.parse(stdout)
   if (typeof result.total_cost_usd === 'number') totalCostUsd += result.total_cost_usd
   console.log(`  cost this call: $${result.total_cost_usd ?? '?'}, running total: $${totalCostUsd.toFixed(4)}`)
 
@@ -172,10 +246,14 @@ async function main() {
   console.log(`Done. ${AUTH_SETUP_FILE} written${clean ? ' and verified' : ' (unverified)'}. Handing off to the PR step.`)
 }
 
-main().then(() => {
+main().then(async () => {
+  clearInterval(logFlushInterval)
+  await flushLogs()
   process.exit(0)
 }).catch(async err => {
   console.error('Auth-setup generation run failed:', err.message)
   await reportEvent('failed', { error_message: err.message.slice(0, 2000) }).catch(() => {})
+  clearInterval(logFlushInterval)
+  await flushLogs().catch(() => {})
   process.exit(1)
 })

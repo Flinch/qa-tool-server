@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
+import readline from 'readline'
 import https from 'https'
 import http from 'http'
 
@@ -36,7 +37,7 @@ function postJson(url, body) {
       let data = ''
       res.on('data', c => data += c)
       res.on('end', () => {
-        console.log(`generation-events -> ${res.statusCode}: ${data}`)
+        console.log(`${u.pathname} -> ${res.statusCode}: ${data}`)
         resolve({ status: res.statusCode, data })
       })
     })
@@ -62,9 +63,63 @@ async function reportPhaseOnce(status) {
   await reportEvent(status)
 }
 
+// Formatted agent-step lines, flushed periodically to POST
+// /generation-logs so the app can show a live terminal feed instead of
+// only the GH Actions log — see printStreamEvent below for what gets
+// pushed here. Same buffer-then-flush shape copied into every one of the
+// 5 generation/heal scripts (see heal-test.js's own comment on why this is
+// duplicated rather than a shared lib).
+const logBuffer = []
+let flushingLogs = false
+async function flushLogs() {
+  if (flushingLogs || logBuffer.length === 0) return
+  flushingLogs = true
+  const lines = logBuffer.splice(0, logBuffer.length)
+  try {
+    await postJson(`${WEBHOOK_BASE_URL}/generation-logs`, { correlation_id: CORRELATION_ID, lines })
+  } catch (e) {
+    console.error('Failed to flush agent log lines:', e.message)
+  } finally {
+    flushingLogs = false
+  }
+}
+const logFlushInterval = setInterval(flushLogs, 2000)
+
 let totalCostUsd = 0
 class CostCapExceededError extends Error {}
 class AgentTimeoutError extends Error {}
+
+function truncateForLog(value, max) {
+  const s = typeof value === 'string' ? value : JSON.stringify(value)
+  return s.length > max ? `${s.slice(0, max)}…` : s
+}
+
+// One line per stream-json event so both the live GitHub Actions log AND
+// the app's log viewer show the agent's tool calls and reasoning as they
+// happen, instead of nothing until the whole multi-minute turn completes
+// (the old buffered --output-format json gave no visibility at all until
+// the process exited). Deliberately terse (one line per block, hard-
+// truncated) — same convention already proven in generate-mobile-tests.js.
+function printStreamEvent(event) {
+  if (event.type !== 'assistant' && event.type !== 'user') return
+  for (const block of event.message?.content || []) {
+    let line = null
+    if (block.type === 'thinking' && block.thinking) {
+      line = `🤔 ${truncateForLog(block.thinking, 200)}`
+    } else if (block.type === 'tool_use') {
+      line = `🔧 ${block.name}(${truncateForLog(block.input, 150)})`
+    } else if (block.type === 'text' && block.text) {
+      line = `💬 ${truncateForLog(block.text, 300)}`
+    } else if (block.type === 'tool_result') {
+      const prefix = block.is_error ? 'ERROR: ' : ''
+      line = `↳ ${prefix}${truncateForLog(block.content, 200)}`
+    }
+    if (line) {
+      console.log(`  ${line}`)
+      logBuffer.push(line)
+    }
+  }
+}
 
 // Runs `npx claude -p ...` with a hard wall-clock timeout that kills the
 // WHOLE process tree, not just the immediate child. This matters because a
@@ -76,12 +131,32 @@ class AgentTimeoutError extends Error {}
 // all of it. `detached: true` makes the child the leader of its own process
 // group, so `process.kill(-pid, ...)` (negative pid = the whole group)
 // reaches every descendant in one signal.
-function runClaudeProcess(args, { timeout, maxBuffer }) {
+//
+// Streams stdout line-by-line (stream-json is one JSON object per line)
+// instead of buffering the whole call like the old execFile-based version
+// did — ported from generate-mobile-tests.js's proven implementation. The
+// final `result` event carries the exact same fields (total_cost_usd/
+// is_error/permission_denials/result) the old buffered `--output-format
+// json` mode returned, so runAgent below barely changes.
+function runClaudeProcess(args, { timeout }) {
   return new Promise((resolve, reject) => {
-    const child = execFile('npx', args, { maxBuffer, detached: true }, (error, stdout, stderr) => {
-      clearTimeout(timer)
-      if (error) return reject(Object.assign(error, { stdout, stderr }))
-      resolve({ stdout, stderr })
+    const child = spawn('npx', args, { detached: true })
+
+    let resultEvent = null
+    let stderr = ''
+    child.stderr.on('data', d => { stderr += d })
+
+    const rl = readline.createInterface({ input: child.stdout })
+    rl.on('line', line => {
+      if (!line.trim()) return
+      let event
+      try {
+        event = JSON.parse(line)
+      } catch {
+        return // a stray non-JSON line shouldn't kill the whole run
+      }
+      printStreamEvent(event)
+      if (event.type === 'result') resultEvent = event
     })
 
     const timer = setTimeout(() => {
@@ -92,6 +167,19 @@ function runClaudeProcess(args, { timeout, maxBuffer }) {
       }
       reject(new AgentTimeoutError(`Agent invocation timed out after ${timeout}ms and was killed — likely stuck on a browser action that never resolved (confirmed possible: a prior hang left the browser and MCP server processes still alive after the whole claude process should have exited).`))
     }, timeout)
+
+    child.on('error', err => {
+      clearTimeout(timer)
+      reject(err)
+    })
+    child.on('close', code => {
+      clearTimeout(timer)
+      if (!resultEvent) {
+        reject(Object.assign(new Error(`Agent process exited (code ${code}) without a result event`), { stderr }))
+        return
+      }
+      resolve(resultEvent)
+    })
   })
 }
 
@@ -100,13 +188,13 @@ function runClaudeProcess(args, { timeout, maxBuffer }) {
 // and accumulated across the whole script run; going over aborts whatever
 // comes next rather than killing an in-flight call.
 async function runAgent(prompt) {
-  const { stdout } = await runClaudeProcess([
+  const result = await runClaudeProcess([
     'claude', '-p', prompt,
     '--permission-mode', 'dontAsk',
-    '--output-format', 'json',
-  ], { maxBuffer: 1024 * 1024 * 50, timeout: AGENT_TIMEOUT })
+    '--output-format', 'stream-json',
+    '--verbose',
+  ], { timeout: AGENT_TIMEOUT })
 
-  const result = JSON.parse(stdout)
   if (typeof result.total_cost_usd === 'number') totalCostUsd += result.total_cost_usd
   console.log(`  cost this call: $${result.total_cost_usd ?? '?'}, running total: $${totalCostUsd.toFixed(4)}`)
 
@@ -250,7 +338,9 @@ async function main() {
   console.log(`Done. ${succeeded.length}/${plans.length} test case(s) generated. Handing off to the PR step.`)
 }
 
-main().then(() => {
+main().then(async () => {
+  clearInterval(logFlushInterval)
+  await flushLogs()
   // Explicit exit is necessary, not cosmetic: observed firsthand that the
   // process hung indefinitely after this point on a real run (the "Done"
   // line printed, but the "Generate and heal tests" step never completed).
@@ -261,5 +351,7 @@ main().then(() => {
 }).catch(async err => {
   console.error('Generation run failed:', err.message)
   await reportEvent('failed', { error_message: err.message.slice(0, 2000) }).catch(() => {})
+  clearInterval(logFlushInterval)
+  await flushLogs().catch(() => {})
   process.exit(1)
 })

@@ -461,4 +461,17 @@ ALTER TABLE generation_runs ADD CONSTRAINT generation_runs_kind_check
 -- transition-triggered, not retroactive — a test case that already has zero
 -- links today stays exactly as visible as it is now.
 ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+
+-- Persisted live-agent-log lines for a generation run (see
+-- routes/webhooks.js's POST /generation-logs) — append-only, id order is
+-- display order. Lets the frontend log viewer (AutomationPage.jsx's
+-- GenerationLogModal) show the full transcript for a run that's still in
+-- progress AND one that already finished, not just a live tail.
+CREATE TABLE IF NOT EXISTS generation_run_logs (
+  id                 SERIAL PRIMARY KEY,
+  generation_run_id  INTEGER REFERENCES generation_runs(id) ON DELETE CASCADE,
+  line               TEXT NOT NULL,
+  created_at         TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_generation_run_logs_run ON generation_run_logs(generation_run_id);
 `
