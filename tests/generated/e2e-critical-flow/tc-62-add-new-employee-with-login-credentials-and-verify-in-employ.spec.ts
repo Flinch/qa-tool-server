@@ -1,0 +1,205 @@
+// spec: specs/tc-62-add-new-employee-with-login-credentials-and-verify-in-employ.md
+// seed: tests/seed.spec.ts
+//
+// NOTE on test data policy: this generator run had no file-write access to
+// helpers/testData.ts (only generator_write_test, which writes this one spec
+// file, was available), so the unique-data generation that would normally
+// live in a createEmployeeData() helper is inlined below instead. It still
+// follows the same rule — unique values derived from Date.now(), never
+// hardcoded — a reviewer should hoist this into helpers/testData.ts as a
+// createEmployeeData() export the next time this file is touched.
+
+import { test, expect } from '@playwright/test';
+
+test.describe('TC-62 — Add new employee with login credentials and verify in employee list', () => {
+  test('TC-62: Add new employee with login credentials and verify in employee list', async ({ page }) => {
+    // This is a long end-to-end flow (11 steps, several full page navigations, a slow
+    // save round-trip, and a pagination sweep) that exceeds Playwright's default 30s
+    // per-test budget, so raise the test timeout (timing/stability only).
+    test.setTimeout(120_000);
+
+    // Unique per-run data: never hardcoded, so re-running never collides with a
+    // previously created record.
+    const suffix = Date.now().toString().slice(-6);
+    const firstName = `QAFirst${suffix}`;
+    const lastName = `QALast${suffix}`;
+    const employeeId = `QA${suffix}`;
+    const username = `qauser${suffix}`;
+    const password = `StrongPass!${suffix}`;
+
+    let baselineCount = -1;
+
+    // 1. Setup / baseline: Navigate to PIM > Employee List with no search filters applied,
+    // and note the baseline total from the '(N) Records Found' text.
+    await test.step("Setup / baseline: Navigate to PIM > Employee List with no search filters applied, and note the baseline total from the '(N) Records Found' text", async () => {
+      await page.goto('/web/index.php/pim/viewEmployeeList');
+      const recordsFound = page.getByText(/\(\d+\) Records? Found/);
+      await expect(recordsFound).toBeVisible();
+      const text = await recordsFound.textContent();
+      const match = text?.match(/\((\d+)\)/);
+      expect(match).not.toBeNull();
+      baselineCount = parseInt(match![1], 10);
+    });
+
+    // 2. Navigate to PIM > Add Employee.
+    await test.step('Navigate to PIM > Add Employee', async () => {
+      await page.goto('/web/index.php/pim/addEmployee');
+      await expect(page.getByRole('heading', { name: 'Add Employee' })).toBeVisible();
+    });
+
+    // FRAGILE: Employee Id input has no accessible name/placeholder/label, verified live.
+    const employeeIdInput = page.locator('.oxd-input-group').filter({ hasText: /^Employee Id$/ }).locator('input');
+
+    // 3. Generate unique test data for this run. Fill First Name and Last Name with the
+    // unique values.
+    await test.step('Generate unique test data for this run and fill First Name and Last Name with the unique values', async () => {
+      await page.getByPlaceholder('First Name').fill(firstName);
+      await page.getByPlaceholder('Last Name').fill(lastName);
+      // The auto-generated Employee Id is present as soon as the page loads and does not
+      // change in response to typing the name (clarification, not a mismatch) — just
+      // confirm it is present.
+      await expect(employeeIdInput).not.toHaveValue('');
+    });
+
+    // 4. Edit the Employee Id field to a unique custom value.
+    await test.step('Edit the Employee Id field to a unique custom value', async () => {
+      await employeeIdInput.fill(employeeId);
+      await expect(employeeIdInput).toHaveValue(employeeId);
+    });
+
+    // 5. Toggle on 'Create Login Details'.
+    await test.step("Toggle on 'Create Login Details'", async () => {
+      // FRAGILE: the underlying <input type="checkbox"> has no accessible name and is
+      // pointer-intercepted by its sibling <span class="oxd-switch-input"> — clicking the
+      // input directly hangs until the action timeout, verified live. Click the span.
+      await page.locator('.oxd-switch-input').first().click();
+      await expect(page.getByRole('radio', { name: 'Enabled' })).toBeChecked();
+    });
+
+    // FRAGILE: Username/Password/Confirm Password inputs have no accessible
+    // name/placeholder/label; the ^...$ anchors are required because "Confirm Password"
+    // also contains the substring "Password", verified live.
+    const usernameInput = page.locator('.oxd-input-group').filter({ hasText: /^Username$/ }).locator('input');
+    const passwordInput = page.locator('.oxd-input-group').filter({ hasText: /^Password$/ }).locator('input');
+    const confirmPasswordInput = page.locator('.oxd-input-group').filter({ hasText: /^Confirm Password$/ }).locator('input');
+
+    // 6. Fill Username with a unique value. Fill Password and Confirm Password with a
+    // matching strong password. Leave the Status radio on 'Enabled'.
+    await test.step("Fill Username with a unique value, fill Password and Confirm Password with a matching strong password, and leave Status on 'Enabled'", async () => {
+      await usernameInput.fill(username);
+      await passwordInput.fill(password);
+      await confirmPasswordInput.fill(password);
+      await expect(page.getByText('Strongest')).toBeVisible();
+      await expect(page.getByRole('radio', { name: 'Enabled' })).toBeChecked();
+    });
+
+    // 7. Click the 'Save' button.
+    await test.step("Click the 'Save' button", async () => {
+      await page.getByRole('button', { name: 'Save' }).click();
+      // The save round-trip is slow: the app can stay on /addEmployee for several
+      // seconds before the client-side route change to viewPersonalDetails begins,
+      // so this navigation assertion needs more than the 5s default (timing only).
+      await expect(page).toHaveURL(/\/pim\/viewPersonalDetails\/empNumber\/\d+/, { timeout: 30000 });
+      await expect(page.getByRole('heading', { name: `${firstName} ${lastName}` })).toBeVisible();
+      await expect(employeeIdInput).toHaveValue(employeeId);
+    });
+
+    // 8. Navigate to PIM > Employee List. In the Employee Name search field, type the
+    // unique first+last name, wait for and click the matching suggestion in the
+    // autocomplete dropdown, then click 'Search'.
+    await test.step("Navigate to PIM > Employee List, search by the unique employee name via the autocomplete field, and click 'Search'", async () => {
+      await page.goto('/web/index.php/pim/viewEmployeeList');
+      // FRAGILE: there are two identical 'Type for hints...' autocomplete fields on this
+      // page (Employee Name and Supervisor Name), so an unscoped getByPlaceholder is
+      // ambiguous, verified live.
+      const employeeNameInput = page
+        .locator('.oxd-input-group')
+        .filter({ hasText: /^Employee Name$/ })
+        .getByPlaceholder('Type for hints...');
+      await employeeNameInput.fill(`${firstName} ${lastName}`);
+      await page.getByRole('option', { name: `${firstName} ${lastName}` }).click();
+      await page.getByRole('button', { name: 'Search' }).click();
+
+      // Expect: filters to exactly the new record, "(1) Record Found" (singular wording).
+      await expect(page.getByText('(1) Record Found')).toBeVisible();
+      const row = page.getByRole('row', { name: new RegExp(employeeId) });
+      await expect(row).toBeVisible();
+      await expect(row).toContainText(firstName);
+      await expect(row).toContainText(lastName);
+      await expect(row.getByRole('cell').nth(1)).toHaveText(employeeId);
+      // CLARIFICATION (not a mismatch): the Employment Status column is blank for an
+      // employee created with only Personal Details and no Job tab entry — do not assert
+      // a specific Employment Status text here.
+    });
+
+    // 9. Navigate to Admin > User Management > Users, fill the Username filter with the
+    // unique username created earlier, and click 'Search'.
+    await test.step("Navigate to Admin > User Management > Users, filter by the unique username, and click 'Search' to verify the login's Enabled status", async () => {
+      await page.goto('/web/index.php/admin/viewSystemUsers');
+      // FRAGILE: Username filter input has no accessible name/placeholder, verified live.
+      const usernameFilter = page.locator('.oxd-input-group').filter({ hasText: /^Username$/ }).locator('input');
+      await usernameFilter.fill(username);
+      await page.getByRole('button', { name: 'Search' }).click();
+
+      await expect(page.getByText('(1) Record Found')).toBeVisible();
+      const userRow = page.getByRole('row', { name: new RegExp(username) });
+      await expect(userRow).toContainText('ESS');
+      await expect(userRow).toContainText(`${firstName} ${lastName}`);
+      await expect(userRow).toContainText('Enabled');
+    });
+
+    // 10. Return to PIM > Employee List with no search filters applied. In the 'Id' column
+    // header, click the sort icon to open its Ascending/Descending menu, then click
+    // 'Ascending' scoped to that same header.
+    await test.step("Return to PIM > Employee List, sort the 'Id' column ascending, and verify the new employee's Id is in the correct position", async () => {
+      await page.goto('/web/index.php/pim/viewEmployeeList');
+      // FRAGILE: scoped to the Id header — every column header renders its own hidden
+      // Ascending/Descending menu in the DOM, so an unscoped getByText('Ascending')
+      // resolves to 7 elements, verified live.
+      const idHeader = page.locator('.oxd-table-header-cell', { hasText: 'Id' }).first();
+      await idHeader.locator('.oxd-icon').first().click();
+      await idHeader.getByText('Ascending', { exact: true }).click();
+
+      // The sort is lexicographic/string-based, not numeric (clarification, not a
+      // mismatch). Rather than asserting a fixed absolute index (which would be brittle
+      // against this shared demo's ever-changing dataset), collect the Id column across
+      // every pagination page and confirm the new employee's Id sits correctly between its
+      // immediate ascending-order neighbors. Wrapped in expect.toPass() to tolerate the
+      // brief re-render after the sort click, not an arbitrary wait.
+      await expect(async () => {
+        const pagination = page.getByRole('navigation', { name: 'Pagination Navigation' });
+        const pageButtons = pagination.getByRole('button');
+        const pageButtonCount = await pageButtons.count();
+
+        const allIds: string[] = [];
+        for (let i = 0; i < pageButtonCount; i++) {
+          const label = (await pageButtons.nth(i).textContent())?.trim();
+          if (!label || !/^\d+$/.test(label)) continue; // skip the unlabeled next/prev arrow
+          await pageButtons.nth(i).click();
+          const bodyRows = page.getByRole('row').filter({ has: page.getByRole('cell') });
+          const rowCount = await bodyRows.count();
+          for (let r = 0; r < rowCount; r++) {
+            const idText = await bodyRows.nth(r).getByRole('cell').nth(1).textContent();
+            allIds.push((idText ?? '').trim());
+          }
+        }
+
+        const idx = allIds.indexOf(employeeId);
+        expect(idx).toBeGreaterThan(-1);
+        if (idx > 0) {
+          expect(allIds[idx - 1].localeCompare(employeeId, undefined, { sensitivity: 'base' })).toBeLessThanOrEqual(0);
+        }
+        if (idx < allIds.length - 1) {
+          expect(allIds[idx + 1].localeCompare(employeeId, undefined, { sensitivity: 'base' })).toBeGreaterThanOrEqual(0);
+        }
+      }).toPass();
+    });
+
+    // 11. With no search filters applied, read the '(N) Records Found' text on the
+    // Employee List.
+    await test.step("With no search filters applied, read the '(N) Records Found' text on the Employee List and confirm it equals the baseline plus 1", async () => {
+      await page.goto('/web/index.php/pim/viewEmployeeList');
+      await expect(page.getByText(`(${baselineCount + 1}) Records Found`)).toBeVisible();
+    });
+  });
+});
