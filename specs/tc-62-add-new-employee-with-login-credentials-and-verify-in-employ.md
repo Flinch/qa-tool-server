@@ -1,0 +1,51 @@
+# TC-62: Add new employee with login credentials and verify in employee list
+
+## Application Overview
+
+OrangeHRM demo (https://opensource-demo.orangehrmlive.com/) — an open-source HR management Angular SPA. This scenario covers the PIM module's "Add Employee" flow: creating a new employee record (with an auto-generated or custom Employee Id) plus optional system-login credentials (username/password/Enabled status), then verifying the record surfaces correctly in the Employee List (search, sort, and total count).
+
+Source: qa-tool test case 62 | type: e2e. Automation rationale: Adding an employee and confirming they are discoverable in the managed list is the foundational HR workflow the entire system is built around.
+
+Starting state: authenticated (storageState), on the dashboard. Per repo convention, generated tests start already logged in — no manual login step is written or verified here.
+
+IMPORTANT — unique test data: every run must generate a unique First/Last Name, Employee Id, and Username (e.g. by appending a timestamp or random suffix) so re-running this test never collides with a previously created record. Do not hardcode a fixed name/id/username.
+
+Live verification summary (2026-08-01, against the real app):
+- All 10 original steps were exercised end-to-end live: an employee was created (First/Last Name, custom Employee Id "QA588333", login username "qauser588333", password, Enabled status), saved successfully (landed on /web/index.php/pim/viewPersonalDetails/empNumber/167), found via Employee List name search, its login "Enabled" status confirmed via Admin > User Management > Users, the Employee Id column was sorted ascending, and the total record count was confirmed to include the new row.
+- No BEHAVIOR MISMATCH (genuine functional contradiction of an Expect outcome) was found. Two wording/locator precision issues were found and fixed in the steps below (not contradictions): (1) the auto-generated Employee Id is present on page load, not generated in response to typing the name; (2) the Employee List's "status" column is Employment Status (blank for an employee with no Job Details) — the login "Enabled" status set during "Create Login Details" is only visible on Admin > User Management > Users, not on the Employee List row.
+- A real, previously-documented hazard was reconfirmed live: the "Create Login Details" toggle's underlying &lt;input type="checkbox"&gt; has no accessible name and is pointer-intercepted by its own sibling &lt;span class="oxd-switch-input"&gt;; clicking the input directly hangs until the Playwright action timeout. The working locator is the span itself.
+- Several fields (Employee Id, Username, Password, Confirm Password) have no accessible name/placeholder/label association usable by getByRole/getByLabel/getByPlaceholder; verified working (FRAGILE, CSS-based) locators for each are noted inline in the steps.
+
+## Test Scenarios
+
+### 1. TC-62 — Add new employee with login credentials and verify in employee list
+
+**Seed:** `tests/seed.spec.ts`
+
+#### 1.1. TC-62: Add new employee with login credentials and verify in employee list
+
+**File:** `tests/generated/e2e/tc-62-add-new-employee-with-login-credentials-and-verify-in-employ.spec.ts`
+
+**Steps:**
+  1. Setup / baseline: Navigate to PIM > Employee List (getByRole('link', { name: 'PIM' }) then getByRole('link', { name: 'Employee List' }); direct URL: /web/index.php/pim/viewEmployeeList) with no search filters applied, and note the baseline total from the '(N) Records Found' text. This baseline is required later to confirm the total increments by exactly 1.
+    - expect: The unfiltered Employee List loads and displays an '(N) Records Found' count that can be read as the pre-add baseline (verified live: e.g. '(96) Records Found').
+  2. Navigate to PIM > Add Employee (getByRole('link', { name: 'PIM' }) then getByRole('link', { name: 'Add Employee' }) in the PIM top navigation; direct URL: /web/index.php/pim/addEmployee).
+    - expect: The 'Add Employee' form loads showing First Name / Middle Name / Last Name fields, an Employee Id field, and a 'Create Login Details' toggle (verified live).
+  3. Generate unique test data for this run (e.g. append a timestamp/random suffix to avoid collisions on re-runs). Fill First Name (getByPlaceholder('First Name')) and Last Name (getByPlaceholder('Last Name')) with the unique values.
+    - expect: The Employee Id field already shows an auto-generated numeric ID present as soon as the page loads (verified live, e.g. '0370'). CLARIFICATION (wording fix, not a mismatch): this ID does not change when First/Last Name are entered — 'observe the auto-generated Employee ID' means confirming it is present by default, not that it is generated in response to typing the name.
+  4. Edit the Employee Id field to a unique custom value. FRAGILE (CSS, no accessible name/placeholder exists on this input — verified live): page.locator('.oxd-input-group').filter({ hasText: /^Employee Id$/ }).locator('input').
+    - expect: The custom alphanumeric Employee Id is accepted and retained in the field (verified live with value 'QA588333').
+  5. Toggle on 'Create Login Details'. WARNING (verified live, matches the documented hazard already noted in playwright.config.js): do NOT click the raw <input type=checkbox> — it has no accessible name and its sibling <span class="oxd-switch-input"> intercepts pointer events, so a direct click hangs until the action timeout. Use the working FRAGILE CSS locator instead: page.locator('.oxd-switch-input').first().click().
+    - expect: Toggling on reveals Username, Status (radio buttons 'Enabled' / 'Disabled' — reliable via getByRole('radio', { name: 'Enabled' }) / getByRole('radio', { name: 'Disabled' })), Password, and Confirm Password fields. 'Enabled' is selected by default (verified live).
+  6. Fill Username with a unique value (FRAGILE CSS, no accessible name/placeholder: page.locator('.oxd-input-group').filter({ hasText: /^Username$/ }).locator('input')). Fill Password and Confirm Password with a matching strong password (FRAGILE CSS: page.locator('.oxd-input-group').filter({ hasText: /^Password$/ }).locator('input') and .filter({ hasText: /^Confirm Password$/ }).locator('input') respectively — the ^...$ anchors are required because 'Confirm Password' also contains the substring 'Password', verified live both groups exist). Leave the Status radio on 'Enabled' (getByRole('radio', { name: 'Enabled' })).
+    - expect: A password-strength indicator (e.g. 'Strongest') appears once a sufficiently complex password is entered (verified live), and the 'Enabled' radio remains selected.
+  7. Click the 'Save' button (getByRole('button', { name: 'Save' })).
+    - expect: The form submits successfully and the browser navigates to the new employee's Personal Details page (URL pattern /web/index.php/pim/viewPersonalDetails/empNumber/<n>, verified live e.g. empNumber/167), where the page heading shows the entered First Name + Last Name and the Employee Id field shows the value that was set in this scenario.
+  8. Navigate to PIM > Employee List (same locators as the baseline step). In the Employee Name search field (FRAGILE CSS — there are two identical 'Type for hints...' autocomplete fields on this page, Employee Name and Supervisor Name, so an unscoped getByPlaceholder is ambiguous, verified live: page.locator('.oxd-input-group').filter({ hasText: /^Employee Name$/ }).getByPlaceholder('Type for hints...')), type the unique first+last name, wait for and click the matching suggestion in the autocomplete dropdown (.oxd-autocomplete-dropdown div), then click 'Search' (getByRole('button', { name: 'Search' })).
+    - expect: The list filters to exactly the new record, shown as '(1) Record Found' (singular wording — verified live it drops the trailing 's' for a count of exactly 1), and the single row's cells show the correct Employee Id and correct First Name / Last Name. CLARIFICATION (verified live, not a mismatch): the row's Employment Status column is blank for an employee created with only Personal Details and no Job tab entry — this is expected app behavior; do not assert a specific Employment Status text on this page.
+  9. To verify the login credentials' Enabled/Disabled status (a distinct concept from the Employee List's Employment Status column), navigate to Admin > User Management > Users (direct URL: /web/index.php/admin/viewSystemUsers), fill the Username filter with the unique username created earlier (FRAGILE CSS: page.locator('.oxd-input-group').filter({ hasText: /^Username$/ }).locator('input')), and click 'Search' (getByRole('button', { name: 'Search' })).
+    - expect: Exactly one row is returned showing the Username, User Role 'ESS', the Employee Name matching the created employee, and Status 'Enabled' (verified live) — confirming the login account was created with the Enabled status selected earlier.
+  10. Return to PIM > Employee List with no search filters applied. In the 'Id' column header, click the sort icon (FRAGILE CSS, scoped to avoid ambiguity: page.locator('.oxd-table-header-cell', { hasText: 'Id' }).first().locator('.oxd-icon').first()) to open its Ascending/Descending menu, then click 'Ascending' scoped to that same header (idHeader.getByText('Ascending', { exact: true })). Every column header renders its own hidden Ascending/Descending menu in the DOM — an unscoped getByText('Ascending') resolves to 7 elements (verified live), so the click must stay scoped to the Id header's own menu.
+    - expect: The full record set (not just the visible page) re-sorts by Employee Id in ascending order. CLARIFICATION (verified live, not a mismatch): the sort is lexicographic/string-based, not numeric — observed order included '0001', '0007', '0034', '0039', '00392', '0042' — so assert only that the new employee's Employee Id appears in the position consistent with ascending string sort, not strict numeric order.
+  11. With no search filters applied, read the '(N) Records Found' text on the Employee List.
+    - expect: The total record count equals the baseline captured in the first step, plus 1 — confirming the newly added employee is included in the overall managed employee list count.
