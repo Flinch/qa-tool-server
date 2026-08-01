@@ -74,6 +74,20 @@ router.post('/test-runs', verifySecret, async (req, res) => {
     let runId
 
     if (correlation_id) {
+      // A user-cancelled run stays cancelled — the GH workflow keeps running
+      // after an app-side cancel (stopping the actual workflow is a known
+      // later fix), so its report arriving minutes later must not silently
+      // resurrect the run. Checked BEFORE the update (not folded into its
+      // WHERE) because a no-match there would fall through to the INSERT
+      // fallback below and create a duplicate orphan row instead.
+      const { rows: cancelledRows } = await db.query(
+        `SELECT id FROM test_runs WHERE correlation_id=$1 AND status='cancelled'`,
+        [correlation_id]
+      )
+      if (cancelledRows[0]) {
+        return res.status(200).json({ received: true, ignored: 'run was cancelled by the user', run_id: cancelledRows[0].id })
+      }
+
       const { rows } = await db.query(
         `UPDATE test_runs
          SET status=$1, total=$2, passed=$3, failed=$4, skipped=$5,

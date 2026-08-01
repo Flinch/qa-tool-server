@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { query as controlQuery } from '../db/pool.js'
 import { requireAuth, requireRole, verifyToken } from '../middleware/auth.js'
 import { requireTenantAccess } from '../middleware/tenantAccess.js'
-import { subscribe, unsubscribe } from '../lib/sse.js'
+import { subscribe, unsubscribe, broadcast } from '../lib/sse.js'
 import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileStaleGenerationRuns, triggerTestCaseRerun, triggerHealRun, triggerAuthSetupRun } from '../lib/automationTrigger.js'
 import { getPrStatus } from '../lib/githubPrStatus.js'
 import { listSuiteFiles, matchTestCaseToFile } from '../lib/githubSuiteFiles.js'
@@ -206,6 +206,33 @@ router.post('/runs/:runId/rerun', ...staffOnlyChain, async (req, res) => {
     res.status(202).json(newRun)
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message })
+  }
+})
+
+// POST /runs/:runId/cancel — user-initiated stop from the frontend. App-side
+// only for now: the underlying GH Actions workflow keeps running (cancelling
+// it for real is a known later fix), which is exactly why the /test-runs
+// results webhook refuses to overwrite a cancelled row — the workflow's
+// eventual report must not resurrect a run the user already dismissed.
+// Guarded to non-terminal statuses so cancelling a just-finished run can't
+// clobber real results that landed between page render and click.
+router.post('/runs/:runId/cancel', ...staffOnlyChain, async (req, res) => {
+  try {
+    const { rows } = await req.db.query(
+      `UPDATE test_runs
+       SET status='cancelled', completed_at=NOW()
+       WHERE id=$1 AND project_id=$2 AND status IN ('pending','running')
+       RETURNING id`,
+      [req.params.runId, req.params.id]
+    )
+    if (!rows[0]) return res.status(409).json({ error: 'Run not found or already finished' })
+
+    // Same event a real completion emits — any open Automation page reloads
+    // its run list and clears its running-suite spinner/polling off this.
+    broadcast(req.tenantId, 'run_completed', { run_id: rows[0].id })
+    res.json({ cancelled: true, run_id: rows[0].id })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
   }
 })
 

@@ -467,6 +467,18 @@ ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
 -- display order. Lets the frontend log viewer (AutomationPage.jsx's
 -- GenerationLogModal) show the full transcript for a run that's still in
 -- progress AND one that already finished, not just a live tail.
+-- test_runs.status gains 'cancelled' — a user-initiated stop from the
+-- frontend (see automation.js's POST /runs/:runId/cancel). Terminal, like
+-- completed/failed: the stale-run sweep ignores it, and the /test-runs
+-- results webhook deliberately does NOT overwrite it (the GH workflow keeps
+-- running for now — cancelling the actual workflow is a known later fix —
+-- so its eventual report must not silently resurrect a run the user
+-- already dismissed). Same drop-then-recreate pattern as the other CHECK
+-- migrations above.
+ALTER TABLE test_runs DROP CONSTRAINT IF EXISTS test_runs_status_check;
+ALTER TABLE test_runs ADD CONSTRAINT test_runs_status_check
+  CHECK (status IN ('pending','running','completed','failed','cancelled'));
+
 CREATE TABLE IF NOT EXISTS generation_run_logs (
   id                 SERIAL PRIMARY KEY,
   generation_run_id  INTEGER REFERENCES generation_runs(id) ON DELETE CASCADE,
