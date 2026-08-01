@@ -5,43 +5,56 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 // One batched call covering every requirement passed in, not one call per
 // requirement — same cost-amortizing principle already established for the
-// planner/generator pipeline (see DECISIONS.md). Returns the parsed array
-// with each item tagged by requirementId; does not touch the database —
-// callers own inserting into test_cases and linking via
-// requirement_test_cases.
-export async function generateTestCasesForRequirements(requirements) {
-  const list = requirements
-    .map(r => `[id=${r.id}] Title: ${r.title}\nDescription: ${r.description || '(none)'}`)
-    .join('\n\n')
+// planner/generator pipeline. Unlike the old generateTestCasesForRequirements
+// (blind insert-only), this DIFFS each requirement's proposed test case set
+// against whatever's already linked to it, same "modified/removed/new,
+// unmentioned = unchanged" shape requirements.js's own upload/diff endpoint
+// and generateCriticalFlows.js already use. Does not touch the database —
+// callers own applying the reviewed diff.
+//
+// `requirements` — each item: { id, title, description, testCases: [{id,
+// title, type, steps, expected}] } — testCases is that requirement's
+// CURRENTLY linked test cases (empty array for a requirement with none yet).
+export async function reviewTestCasesForRequirements(requirements) {
+  const list = requirements.map(r => {
+    const existing = (r.testCases || []).length > 0
+      ? r.testCases.map(tc => {
+          const steps = (tc.steps || []).map((s, i) => `    ${i + 1}. ${s}`).join('\n')
+          return `  [id=${tc.id}] Title: ${tc.title}\n  Type: ${tc.type}\n  Steps:\n${steps}\n  Expected: ${tc.expected || '(none)'}`
+        }).join('\n\n')
+      : '  (none tracked yet)'
+    return `[requirementId=${r.id}] Title: ${r.title}\nDescription: ${r.description || '(none)'}\nCurrently linked test cases:\n${existing}`
+  }).join('\n\n---\n\n')
 
-  const prompt = `You are a senior QA engineer. For each of the following requirements, generate one or more test cases that verify it.
+  const prompt = `You are a senior QA engineer. For each of the following requirements, decide what test case(s) SHOULD exist to verify it right now, and classify the difference against what's currently linked to it.
 
-Return ONLY a valid JSON array with no preamble, no markdown, no explanation. Each object must have:
-- "requirementId": number — which requirement this test case is for; must match one of the ids given below
-- "title": string — clear, specific test case name
-- "type": one of "functional" | "integration" | "e2e"
-- "steps": array of strings — one action per step, in order. Do NOT prefix each string with a number or "Step N:" — the UI renders these in a numbered list already
-- "expected": string — the expected result
-${AUTOMATION_GUIDANCE}
+Requirements (each with its title/description and its currently-linked test cases, if any):
+${list}
+
+Return ONLY a valid JSON array with no preamble, no markdown, no explanation. One object per requirement that needs ANY change — omit a requirement entirely if its existing test cases are still accurate as-is. Each object:
+{
+  "requirementId": 12,
+  "modified": [{"id": 45, "title": "...", "type": "functional", "steps": ["...", "..."], "expected": "...", "automationCandidate": false, "automationReasoning": ""}],
+  "removed": [46],
+  "new": [{"title": "...", "type": "functional", "steps": ["...", "..."], "expected": "...", "automationCandidate": false, "automationReasoning": ""}]
+}
 
 Rules:
-- Aim for 1-2 focused test cases per requirement — the core happy path, plus one edge case only if clearly warranted
-- No redundant or overlapping tests
-- Every requirement id listed below must have at least one test case
+- "modified": existing test cases (use their real id, from the "Currently linked test cases" list above) whose title/steps/expected should change because the requirement's actual meaning changed. Only include one here if it genuinely needs to change — not for stylistic rewording.
+- "removed": ids of existing test cases that no longer verify anything real about this requirement (e.g. the requirement narrowed or a scenario it covered no longer applies).
+- "new": genuinely new test cases needed to cover this requirement that aren't already represented by an existing (kept or modified) one. Do not propose a new one that duplicates an existing, still-valid test case.
+- Any existing test case not mentioned in "modified" or "removed" is assumed still accurate — do not list it, and do not regenerate requirements that need no change at all (omit them from the array).
+- "steps": array of strings, one action per step, in order. Do NOT prefix each string with a number or "Step N:" — the UI renders these in a numbered list already.
+- "type": one of "functional" | "integration" | "e2e".
+- Aim for 1-2 focused test cases total per requirement (existing + new combined) — the core happy path, plus one edge case only if clearly warranted. No redundant or overlapping tests.
+${AUTOMATION_GUIDANCE}`
 
-Requirements:
-${list}`
-
-  // A flat budget truncates on bulk generation once there are enough
-  // requirements — the old (now-removed) freeform endpoint scaled this by
-  // mode (2000 for ~4-8 test cases, 4000 for ~12-20). This scales by actual
-  // input size instead, since a single call here can cover anywhere from 1
-  // to a whole project's worth of uncovered requirements. Floor of 4000
-  // keeps the single-requirement path at least as generous as the old
-  // proven-working flat value (never a regression there); scales up past
-  // that for bulk; capped at 8192, the safe ceiling already proven
-  // elsewhere in this app for this model.
-  const maxTokens = Math.min(8192, Math.max(4000, requirements.length * 900))
+  // Scales with how many requirements + how much existing test-case content
+  // there is to hold in mind, same reasoning as generateCriticalFlows.js's
+  // budget — floor keeps small batches at least as generous as the old
+  // flat-generation value, capped at the safe ceiling proven elsewhere.
+  const existingCount = requirements.reduce((n, r) => n + (r.testCases?.length || 0), 0)
+  const maxTokens = Math.min(8192, Math.max(4000, (requirements.length + existingCount) * 400))
 
   const message = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',

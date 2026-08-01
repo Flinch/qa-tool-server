@@ -11,6 +11,12 @@ const staffOnly = requireRole('qa_engineer', 'admin')
 
 // GET /projects/:id/test-cases — staff + read-only clients who are project members
 router.get('/', async (req, res) => {
+  // ?archived=true flips the default list to ONLY archived rows — a
+  // toggle, not an additive filter, matching TestCasesPage's "Archived" tab
+  // rather than a checkbox that widens the normal list. Every existing row
+  // has archived_at=NULL today, so the default (no param) is byte-for-byte
+  // today's behavior.
+  const showArchived = req.query.archived === 'true'
   try {
     // is_automated: does this TC actually have real generated automation
     // (an automated_test_cases roster row resolved back to it), as opposed
@@ -43,7 +49,7 @@ router.get('/', async (req, res) => {
          SELECT test_case_id, requirement_id FROM flow_requirements
        ) links ON links.test_case_id = tc.id
        LEFT JOIN requirements r ON r.id = links.requirement_id AND r.status = 'active'
-       WHERE tc.project_id=$1
+       WHERE tc.project_id=$1 AND tc.archived_at IS ${showArchived ? 'NOT NULL' : 'NULL'}
        GROUP BY tc.id
        ORDER BY tc.created_at DESC`,
       [req.params.id]
@@ -242,7 +248,7 @@ router.delete('/:tcId', staffOnly, async (req, res) => {
 })
 
 router.patch('/:tcId', staffOnly, async (req, res) => {
-  const { status, title, type, steps, expected, automationCandidate, automationReasoning, platform, feature_id } = req.body
+  const { status, title, type, steps, expected, automationCandidate, automationReasoning, platform, feature_id, archived } = req.body
 
   const fields = []
   const values = []
@@ -278,6 +284,12 @@ router.patch('/:tcId', staffOnly, async (req, res) => {
   }
   if (feature_id !== undefined) {
     fields.push(`feature_id=$${i++}`); values.push(feature_id || null)
+  }
+  // Manual archive/restore — the same archived_at column the diff-apply
+  // route and archiveIfOrphaned set automatically, exposed here so a staffer
+  // can hide a test case by hand or bring one back from the Archived tab.
+  if (archived !== undefined) {
+    fields.push(`archived_at=$${i++}`); values.push(archived ? new Date() : null)
   }
 
   if (fields.length === 0) return res.status(400).json({ error: 'No fields to update' })

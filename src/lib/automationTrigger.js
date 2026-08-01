@@ -27,6 +27,10 @@ const GITHUB_MOBILE_REF = process.env.GITHUB_MOBILE_REF || 'master'
 // workflow per platform, same web/mobile split as every other pipeline here.
 const GITHUB_HEAL_WORKFLOW_ID = process.env.GITHUB_HEAL_WORKFLOW_ID // e.g. "heal-test.yml"
 const GITHUB_MOBILE_HEAL_WORKFLOW_ID = process.env.GITHUB_MOBILE_HEAL_WORKFLOW_ID // e.g. "heal-mobile-test.yml"
+// Generates and PR-gates a project's per-project login flow (see
+// tests/auth-setups/, lib/authSetupStatus.js). Web-only — there's no
+// login-flow concept for mobile's self-contained Maestro flows.
+const GITHUB_AUTH_SETUP_WORKFLOW_ID = process.env.GITHUB_AUTH_SETUP_WORKFLOW_ID // e.g. "generate-auth-setup.yml"
 
 // A run that's been sitting in pending/running this long almost certainly
 // means CI never reported back (crashed runner, workflow misconfigured,
@@ -363,6 +367,68 @@ export async function triggerHealRun({ db, tenantId, projectId, suiteId, testCas
           correlation_id: correlationId,
           file_path: filePath,
         },
+      }),
+    }
+  )
+
+  if (!ghRes.ok) {
+    const errText = (await ghRes.text()).slice(0, 500)
+    await db.query(
+      `UPDATE generation_runs SET status='failed', error_message=$2, completed_at=NOW() WHERE id=$1`,
+      [rows[0].id, `GitHub Actions dispatch failed: ${errText}`]
+    )
+    throw new TriggerError(502, `GitHub Actions dispatch failed: ${errText}`)
+  }
+
+  return rows[0]
+}
+
+// Generates this project's per-project login flow (tests/auth-setups/) from
+// its configured target_url/credentials, runs it for real inside CI, and
+// opens a PR — see lib/authSetupStatus.js for how the resulting run gates
+// regular generation/execution until that PR is merged. Modeled directly on
+// triggerHealRun above: same dispatch mechanics, no suite/test-case ids
+// (this isn't suite-scoped — suite_id stays NULL).
+export async function triggerAuthSetupRun({ db, tenantId, projectId, userId }) {
+  if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
+    throw new TriggerError(500, 'Test generation workflow is not configured on the server')
+  }
+  if (!GITHUB_AUTH_SETUP_WORKFLOW_ID) {
+    throw new TriggerError(500, 'No auth-setup generation workflow configured')
+  }
+
+  const { rows: configRows } = await db.query(
+    `SELECT target_url FROM project_test_config WHERE project_id=$1`,
+    [projectId]
+  )
+  const targetUrl = configRows[0]?.target_url
+  if (!targetUrl) {
+    throw new TriggerError(400, 'This project has no custom target URL configured — set one on its Test Environment first')
+  }
+
+  const correlationId = crypto.randomUUID()
+
+  // target_title reused to stash the target this run was generated against
+  // — see authSetupStatus.js's staleness check.
+  const { rows } = await db.query(
+    `INSERT INTO generation_runs (project_id, suite_id, correlation_id, status, kind, target_title, created_by)
+     VALUES ($1,NULL,$2,'pending','auth_setup',$3,$4) RETURNING *`,
+    [projectId, correlationId, targetUrl, userId]
+  )
+  await recordDispatch(correlationId, tenantId, 'generation_run')
+
+  const ghRes = await fetch(
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${GITHUB_AUTH_SETUP_WORKFLOW_ID}/dispatches`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ref: 'master',
+        inputs: { correlation_id: correlationId },
       }),
     }
   )

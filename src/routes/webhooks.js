@@ -282,6 +282,7 @@ router.get('/generation-payload/:correlationId', verifySecret, async (req, res) 
       engine: run.suite_engine,
       ...platformFields,
       test_credentials: env.credentials,
+      auth_setup_file: env.authSetupFile,
       plans: await exportPlansForTestCases(db, run.project_id, run.test_case_ids, run.suite_platform, run.suite_engine),
     })
   } catch (e) {
@@ -309,7 +310,14 @@ router.get('/run-config/:correlationId', verifySecret, async (req, res) => {
        UNION ALL
        SELECT gr.project_id, s.platform AS suite_platform
        FROM generation_runs gr JOIN automation_suites s ON s.id = gr.suite_id
-       WHERE gr.correlation_id = $1 AND gr.kind = 'heal'`,
+       WHERE gr.correlation_id = $1 AND gr.kind = 'heal'
+       UNION ALL
+       -- auth_setup runs aren't suite-scoped (suite_id is NULL) — no join,
+       -- and 'web' is hardcoded since login-flow generation is a
+       -- Playwright-only concept today (no mobile equivalent).
+       SELECT gr.project_id, 'web' AS suite_platform
+       FROM generation_runs gr
+       WHERE gr.correlation_id = $1 AND gr.kind = 'auth_setup'`,
       [req.params.correlationId]
     )
     const run = runRows[0]
@@ -321,6 +329,7 @@ router.get('/run-config/:correlationId', verifySecret, async (req, res) => {
       api_base_url: env.apiBaseUrl,
       app_id: env.mobileAppId,
       test_credentials: env.credentials,
+      auth_setup_file: env.authSetupFile,
     })
   } catch (e) {
     res.status(500).json({ error: e.message })

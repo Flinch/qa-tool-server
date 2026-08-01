@@ -440,4 +440,25 @@ CREATE TABLE IF NOT EXISTS project_test_config (
   updated_by            TEXT,
   updated_at            TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- generation_runs.kind gains 'auth_setup' — the auth-setup generation
+-- pipeline (see lib/authSetupStatus.js, lib/automationTrigger.js's
+-- triggerAuthSetupRun): rows of this kind have suite_id=NULL (not
+-- suite-scoped) and reuse target_title to stash the target_url they were
+-- generated against, so status resolution can detect a stale run after a
+-- project's target changes. Same drop-then-recreate pattern as
+-- automation_suites_engine_check above.
+ALTER TABLE generation_runs DROP CONSTRAINT IF EXISTS generation_runs_kind_check;
+ALTER TABLE generation_runs ADD CONSTRAINT generation_runs_kind_check
+  CHECK (kind IN ('generate','heal','auth_setup'));
+
+-- Archived (not deleted) state for test_cases — set when a test case loses
+-- its LAST linked requirement, either via the diff-based generation review
+-- (lib/archiveOrphans.js, requirements.js's generate-test-cases/apply) or
+-- the existing manual "Unlink" action. NULL = visible in the default Test
+-- Cases list (every existing row today, unchanged); non-null = hidden by
+-- default, viewable via GET /test-cases?archived=true. Deliberately only
+-- transition-triggered, not retroactive — a test case that already has zero
+-- links today stays exactly as visible as it is now.
+ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
 `

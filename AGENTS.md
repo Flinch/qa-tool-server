@@ -232,3 +232,33 @@ not UI navigation:
   Behavior mismatch policy above: `test.fixme()` with a
   `// POSSIBLE REGRESSION:` comment, never a rewritten assertion.
 - Apply the minimal fix. Never refactor passing tests during a heal.
+
+## Auth setup generation (per-project login flows)
+
+A single shared `tests/auth.setup.ts` can't serve every project — this repo
+is multi-tenant, and different projects' apps have genuinely different login
+forms. Projects with a custom target URL (see `project_test_config`) get
+their own generated file instead: `tests/auth-setups/project-<id>.setup.ts`.
+Projects with no custom target keep using the original shared
+`tests/auth.setup.ts`/`helpers/auth.ts` untouched.
+
+- **Self-contained**: a per-project file does not import from
+  `helpers/auth.ts` — write the login steps directly in the file, since the
+  flow is specific to that one project's app.
+- **Real credentials, never hardcoded**: fill fields from
+  `process.env.TEST_USER_NAME`/`TEST_USER_PASSWORD`, exactly like the
+  original shared helper does.
+- **Generic success assertion**: assert something true of ANY successful
+  login (the password field/login form is gone, the URL left the login
+  path) — never an app-specific hardcoded string like a display name or
+  welcome text, since the agent generating this has no prior knowledge of
+  the target app's post-login UI beyond what it just observed live.
+- **Locator policy**: same strict priority order as the main Locator policy
+  above (role + accessible name first).
+- **Bounded verification loop**: after writing the file, actually run it
+  (`npx playwright test --project=setup`, which picks up this specific file
+  via `playwright.config.js`'s env-scoped `testMatch`). If it fails, revise
+  and re-run — up to 3 attempts total. Stop after that with the best-effort
+  version rather than looping indefinitely; the CI workflow's own objective
+  verify step and the PR review are the real safety net, not an unbounded
+  agent loop.

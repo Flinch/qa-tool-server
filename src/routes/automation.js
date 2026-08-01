@@ -3,9 +3,10 @@ import { query as controlQuery } from '../db/pool.js'
 import { requireAuth, requireRole, verifyToken } from '../middleware/auth.js'
 import { requireTenantAccess } from '../middleware/tenantAccess.js'
 import { subscribe, unsubscribe } from '../lib/sse.js'
-import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileStaleGenerationRuns, triggerTestCaseRerun, triggerHealRun } from '../lib/automationTrigger.js'
+import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileStaleGenerationRuns, triggerTestCaseRerun, triggerHealRun, triggerAuthSetupRun } from '../lib/automationTrigger.js'
 import { getPrStatus } from '../lib/githubPrStatus.js'
 import { listSuiteFiles, matchTestCaseToFile } from '../lib/githubSuiteFiles.js'
+import { isAuthSetupBlocking, getAuthSetupStatus } from '../lib/authSetupStatus.js'
 
 const router = Router({ mergeParams: true })
 
@@ -365,7 +366,32 @@ router.post('/runs/trigger', ...staffOnlyChain, async (req, res) => {
   if (!suite_id) return res.status(400).json({ error: 'suite_id is required' })
 
   try {
+    if (await isAuthSetupBlocking(req.db, req.params.id)) {
+      const authSetupStatus = await getAuthSetupStatus(req.db, req.params.id)
+      return res.status(409).json({
+        error: "This project's login flow needs to be generated and its PR merged before tests can be generated or run",
+        authSetupStatus,
+      })
+    }
     const run = await triggerSuiteRun({ db: req.db, tenantId: req.tenantId, projectId: req.params.id, suiteId: suite_id, userId: req.userId })
+    res.status(202).json(run)
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message })
+  }
+})
+
+// POST /auth-setup/generate — kick off generation of this project's
+// per-project login flow (target/credentials -> agent -> PR). See
+// lib/authSetupStatus.js for how the resulting run gates /generate and
+// /runs/trigger below until its PR is merged.
+router.post('/auth-setup/generate', ...staffOnlyChain, async (req, res) => {
+  try {
+    const run = await triggerAuthSetupRun({
+      db: req.db,
+      tenantId: req.tenantId,
+      projectId: req.params.id,
+      userId: req.userId,
+    })
     res.status(202).json(run)
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message })
@@ -378,6 +404,13 @@ router.post('/generate', ...staffOnlyChain, async (req, res) => {
   if (!suite_id) return res.status(400).json({ error: 'suite_id is required' })
 
   try {
+    if (await isAuthSetupBlocking(req.db, req.params.id)) {
+      const authSetupStatus = await getAuthSetupStatus(req.db, req.params.id)
+      return res.status(409).json({
+        error: "This project's login flow needs to be generated and its PR merged before tests can be generated or run",
+        authSetupStatus,
+      })
+    }
     const run = await triggerGenerationRun({
       db: req.db,
       tenantId: req.tenantId,

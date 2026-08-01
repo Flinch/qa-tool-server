@@ -1,0 +1,101 @@
+name: Generate Auth Setup
+
+on:
+  workflow_dispatch:
+    inputs:
+      correlation_id:
+        description: 'Correlation ID linking this run back to a pending generation_runs row (kind=auth_setup)'
+        required: true
+        type: string
+
+permissions:
+  contents: write # needed to push the auth-setup branch
+  pull-requests: write # needed to open the PR
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      # Same reasoning as generate-tests.yml's identical step — a fresh CI
+      # checkout is always an untrusted workspace, and --permission-mode
+      # dontAsk silently denies tools like Write in one without this.
+      - name: Trust this workspace for Claude Code
+        run: |
+          node -e "
+            const fs = require('fs');
+            const file = process.env.HOME + '/.claude.json';
+            const config = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf-8')) : {};
+            config.projects = config.projects || {};
+            config.projects[process.env.GITHUB_WORKSPACE] = {
+              ...(config.projects[process.env.GITHUB_WORKSPACE] || {}),
+              hasTrustDialogAccepted: true,
+            };
+            fs.writeFileSync(file, JSON.stringify(config));
+          "
+
+      # Resolves this run's project via dispatch_index and writes
+      # TARGET_URL/TEST_USER_*/AUTH_SETUP_FILE to $GITHUB_ENV — same script
+      # playwright.yml/heal-test.yml already use.
+      - name: Fetch test environment
+        env:
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+          WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+        run: node .github/scripts/fetch-run-config.js
+
+      - name: Generate login flow
+        env:
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+          WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          GENERATION_COST_CAP_USD: ${{ vars.GENERATION_COST_CAP_USD || '5' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node .github/scripts/generate-auth-setup.js
+
+      # Objective, independent verification — not trusted from the script's
+      # own self-report. continue-on-error so a failing login doesn't hard-
+      # fail the job; its outcome just flags the PR below for closer review.
+      # The gate other generation/execution actually depends on
+      # (lib/authSetupStatus.js) is "PR merged", not this outcome — a human
+      # reviewing a PR titled UNVERIFIED is the real safety net here.
+      - name: Verify login flow
+        id: verify
+        continue-on-error: true
+        run: npx playwright test "$AUTH_SETUP_FILE" --project=setup
+
+      - name: Open PR with generated login flow
+        id: pr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: auth-setup/${{ inputs.correlation_id }}
+          title: "Generated login flow: ${{ env.AUTH_SETUP_FILE }} (${{ steps.verify.outcome == 'success' && 'verified ✓' || '⚠️ UNVERIFIED' }})"
+          commit-message: "Add generated auth setup for ${{ env.AUTH_SETUP_FILE }}"
+          add-paths: tests/auth-setups/**
+          body: |
+            Automatically generated login flow (correlation id `${{ inputs.correlation_id }}`).
+
+            ${{ steps.verify.outcome == 'success' && 'A real run against the configured target confirmed this successfully logs in.' || '⚠️ A real run against the configured target could NOT confirm a successful login. Review this closely — test it yourself — before merging.' }}
+
+            Other test generation and execution for this project stays blocked until this PR is merged.
+
+      - name: Report completion
+        env:
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+          WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          PR_URL: ${{ steps.pr.outputs.pull-request-url }}
+          BRANCH_NAME: auth-setup/${{ inputs.correlation_id }}
+        run: node .github/scripts/report-generation-complete.js

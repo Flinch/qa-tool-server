@@ -3,7 +3,8 @@ import Anthropic from '@anthropic-ai/sdk'
 import { requireAuth, requireRole } from '../middleware/auth.js'
 import { requireTenantAccess } from '../middleware/tenantAccess.js'
 import { extractDocumentText } from '../lib/extractDocumentText.js'
-import { generateTestCasesForRequirements } from '../lib/generateTestCasesFromRequirements.js'
+import { reviewTestCasesForRequirements } from '../lib/generateTestCasesFromRequirements.js'
+import { archiveIfOrphaned } from '../lib/archiveOrphans.js'
 
 const router = Router({ mergeParams: true })
 router.use(requireAuth)
@@ -277,93 +278,143 @@ router.post('/apply-diff', staffOnly, async (req, res) => {
   }
 })
 
-// POST /:reqId/generate-test-case — the only way a single requirement gets
-// a test case generated for it. Rejects (400) if it already has one — a
-// real server-side gate, not just a hidden button, so a stale page or a
-// direct API call can't create a duplicate.
-router.post('/:reqId/generate-test-case', staffOnly, async (req, res) => {
+// POST /generate-test-cases/review — diffs each in-scope requirement's
+// PROPOSED test case set against what's currently linked to it, same
+// review-before-write shape as POST /upload and critical-flows/review. No
+// writes. `requirementIds` omitted = every active requirement in the
+// project (matches critical-flows' "whole active set" scope); provided =
+// just those — this is how the single-requirement UI entry points reuse
+// this same route instead of needing their own.
+router.post('/generate-test-cases/review', staffOnly, async (req, res) => {
+  const { requirementIds } = req.body
+
   try {
-    const { rows: reqRows } = await req.db.query(
-      `SELECT r.id, r.title, r.description, r.platform, r.feature_id, COUNT(DISTINCT rtc.test_case_id)::int AS linked_test_case_count
-       FROM requirements r
-       LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
-       WHERE r.id=$1 AND r.project_id=$2 AND r.status='active'
-       GROUP BY r.id`,
-      [req.params.reqId, req.params.id]
+    const { rows: requirements } = await req.db.query(
+      Array.isArray(requirementIds) && requirementIds.length > 0
+        ? `SELECT id, title, description, platform, feature_id FROM requirements
+           WHERE project_id=$1 AND status='active' AND id = ANY($2::int[]) ORDER BY id`
+        : `SELECT id, title, description, platform, feature_id FROM requirements
+           WHERE project_id=$1 AND status='active' ORDER BY id`,
+      Array.isArray(requirementIds) && requirementIds.length > 0 ? [req.params.id, requirementIds] : [req.params.id]
     )
-    const requirement = reqRows[0]
-    if (!requirement) return res.status(404).json({ error: 'Requirement not found' })
-    if (requirement.linked_test_case_count > 0) {
-      return res.status(400).json({ error: 'This requirement already has a linked test case' })
+    if (requirements.length === 0) return res.status(400).json({ error: 'No matching active requirements' })
+
+    const { rows: linkedRows } = await req.db.query(
+      `SELECT rtc.requirement_id, tc.id, tc.title, tc.type, tc.steps, tc.expected, tc.automation_candidate, tc.automation_reasoning,
+         COUNT(DISTINCT b.id)::int AS bug_count
+       FROM requirement_test_cases rtc
+       JOIN test_cases tc ON tc.id = rtc.test_case_id AND tc.archived_at IS NULL
+       LEFT JOIN bugs b ON b.test_case_id = tc.id
+       WHERE rtc.requirement_id = ANY($1::int[])
+       GROUP BY rtc.requirement_id, tc.id`,
+      [requirements.map(r => r.id)]
+    )
+    const tcById = new Map(linkedRows.map(tc => [tc.id, tc]))
+    const byRequirement = new Map(requirements.map(r => [r.id, []]))
+    for (const tc of linkedRows) byRequirement.get(tc.requirement_id).push(tc)
+
+    const rawDiff = await reviewTestCasesForRequirements(
+      requirements.map(r => ({ ...r, testCases: byRequirement.get(r.id) }))
+    )
+
+    // Flatten the AI's per-requirement diffs into one combined diff, same
+    // shape criticalFlows.js's review route returns — each modified/new
+    // item keeps its requirementId so the review UI can tag it and apply
+    // knows where to link it.
+    const modified = []
+    const removed = []
+    const newItems = []
+    const requirementTitleById = Object.fromEntries(requirements.map(r => [r.id, r.title]))
+    let reviewedCount = 0
+
+    for (const entry of rawDiff) {
+      const requirement = requirements.find(r => r.id === entry.requirementId)
+      if (!requirement) continue
+      reviewedCount++
+
+      for (const m of entry.modified || []) {
+        if (!tcById.has(m.id)) continue
+        modified.push({ ...m, requirementId: requirement.id, old: tcById.get(m.id) })
+      }
+      for (const id of entry.removed || []) {
+        if (!tcById.has(id)) continue
+        removed.push({ ...tcById.get(id), requirementId: requirement.id })
+      }
+      for (const n of entry.new || []) {
+        newItems.push({ ...n, requirementId: requirement.id, platform: requirement.platform, feature_id: requirement.feature_id })
+      }
     }
 
-    const generated = await generateTestCasesForRequirements([requirement])
-
-    const inserted = []
-    for (const tc of generated) {
-      const { rows } = await req.db.query(
-        `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by, platform, feature_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-        [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId, requirement.platform, requirement.feature_id]
-      )
-      await req.db.query(
-        `INSERT INTO requirement_test_cases (requirement_id, test_case_id) VALUES ($1,$2)`,
-        [requirement.id, rows[0].id]
-      )
-      inserted.push({ ...rows[0], bug_count: 0 })
-    }
-
-    res.status(201).json({ testCases: inserted, linked_test_case_count: inserted.length })
+    res.json({
+      diff: { modified, removed, new: newItems },
+      unchangedCount: requirements.length - reviewedCount,
+      requirementTitleById,
+    })
   } catch (e) {
-    console.error('Requirement generate-test-case error:', e)
+    console.error('Requirements generate-test-cases review error:', e)
     res.status(500).json({ error: e.message })
   }
 })
 
-// POST /generate-test-cases — bulk: every active requirement with zero
-// linked test cases, in one batched AI call.
-router.post('/generate-test-cases', staffOnly, async (req, res) => {
+// POST /generate-test-cases/apply — commits a user-reviewed diff from
+// POST /generate-test-cases/review. Transactional, same reasoning as
+// criticalFlows.js's /apply — a test case row and its requirement_test_cases
+// link have to land together.
+router.post('/generate-test-cases/apply', staffOnly, async (req, res) => {
+  const { modified = [], removed = [], new: added = [] } = req.body
+
+  const client = await req.db.connect()
   try {
-    const { rows: uncovered } = await req.db.query(
-      `SELECT r.id, r.title, r.description, r.platform, r.feature_id
-       FROM requirements r
-       LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
-       WHERE r.project_id=$1 AND r.status='active'
-       GROUP BY r.id
-       HAVING COUNT(DISTINCT rtc.test_case_id) = 0`,
-      [req.params.id]
-    )
-    if (uncovered.length === 0) {
-      return res.status(400).json({ error: 'Every requirement already has a linked test case' })
+    await client.query('BEGIN')
+
+    const modifiedIds = []
+    for (const m of modified) {
+      const { rows } = await client.query(
+        `UPDATE test_cases SET title=$1, type=$2, steps=$3, expected=$4, automation_candidate=$5, automation_reasoning=$6, updated_at=NOW()
+         WHERE id=$7 AND project_id=$8 RETURNING id`,
+        [m.title, m.type, JSON.stringify(m.steps || []), m.expected || '', !!m.automationCandidate, m.automationReasoning || null, m.id, req.params.id]
+      )
+      if (rows[0]) modifiedIds.push(rows[0].id)
     }
 
-    const generated = await generateTestCasesForRequirements(uncovered)
-    const platformByRequirement = Object.fromEntries(uncovered.map(r => [r.id, r.platform]))
-    const featureByRequirement = Object.fromEntries(uncovered.map(r => [r.id, r.feature_id]))
+    // Unlink from THIS requirement only — a test case linked to more than
+    // one requirement (via the separate "+ Link test cases" action) is left
+    // fully intact if it still covers another one. archiveIfOrphaned only
+    // actually hides it once that was its LAST remaining link.
+    const unlinkedIds = []
+    const archivedIds = []
+    for (const r of removed) {
+      const { rowCount } = await client.query(
+        `DELETE FROM requirement_test_cases WHERE requirement_id=$1 AND test_case_id=$2`,
+        [r.requirementId, r.id]
+      )
+      if (rowCount === 0) continue
+      unlinkedIds.push(r.id)
+      if (await archiveIfOrphaned(client, req.params.id, r.id)) archivedIds.push(r.id)
+    }
 
-    const byRequirement = {}
-    for (const tc of generated) {
-      const { rows } = await req.db.query(
+    const inserted = []
+    for (const n of added) {
+      const { rows } = await client.query(
         `INSERT INTO test_cases (project_id, title, type, steps, expected, automation_candidate, automation_reasoning, created_by, platform, feature_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-        [req.params.id, tc.title, tc.type, JSON.stringify(tc.steps || []), tc.expected || '', !!tc.automationCandidate, tc.automationReasoning || null, req.userId, platformByRequirement[tc.requirementId] || 'web', featureByRequirement[tc.requirementId] || null]
+        [req.params.id, n.title, n.type, JSON.stringify(n.steps || []), n.expected || '', !!n.automationCandidate, n.automationReasoning || null, req.userId, n.platform || 'web', n.feature_id || null]
       )
-      await req.db.query(
+      await client.query(
         `INSERT INTO requirement_test_cases (requirement_id, test_case_id) VALUES ($1,$2)`,
-        [tc.requirementId, rows[0].id]
+        [n.requirementId, rows[0].id]
       )
-      ;(byRequirement[tc.requirementId] ||= []).push({ ...rows[0], bug_count: 0 })
+      inserted.push({ ...rows[0], bug_count: 0 })
     }
 
-    const summary = uncovered.map(r => ({
-      requirementId: r.id,
-      testCases: byRequirement[r.id] || [],
-    }))
-
-    res.status(201).json({ generated: summary, totalTestCases: generated.length })
+    await client.query('COMMIT')
+    res.json({ modifiedIds, unlinkedIds, archivedIds, inserted })
   } catch (e) {
-    console.error('Requirement bulk generate-test-cases error:', e)
+    await client.query('ROLLBACK')
+    console.error('Requirements generate-test-cases apply error:', e)
     res.status(500).json({ error: e.message })
+  } finally {
+    client.release()
   }
 })
 
@@ -426,6 +477,10 @@ router.delete('/:reqId/test-cases/:tcId', staffOnly, async (req, res) => {
       `DELETE FROM requirement_test_cases WHERE requirement_id=$1 AND test_case_id=$2`,
       [req.params.reqId, req.params.tcId]
     )
+    // Manually unlinking a test case's last requirement archives it too —
+    // same rule the diff-apply route above follows, so the two paths that
+    // can remove a requirement link stay consistent.
+    await archiveIfOrphaned(req.db, req.params.id, req.params.tcId)
     res.status(204).end()
   } catch (e) {
     res.status(500).json({ error: e.message })

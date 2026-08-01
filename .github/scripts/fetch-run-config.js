@@ -6,8 +6,8 @@ import http from 'http'
 // heal-mobile-test.yml): they run already-generated Maestro flows against
 // an already-connected device with the app id baked into the flow YAML at
 // generation time — no TARGET_URL/credentials concept applies there at
-// all. This step only ever gets wired into playwright.yml and
-// heal-test.yml.
+// all. This step is wired into playwright.yml, heal-test.yml, and
+// generate-auth-setup.yml.
 const { CORRELATION_ID, WEBHOOK_BASE_URL, WEBHOOK_SECRET, GITHUB_ENV } = process.env
 
 function getJson(url, secret) {
@@ -37,6 +37,7 @@ function writeEnv(config) {
   if (config.test_credentials?.username) lines.push(`TEST_USER_NAME=${config.test_credentials.username}`)
   if (config.test_credentials?.password) lines.push(`TEST_USER_PASSWORD=${config.test_credentials.password}`)
   if (config.test_credentials?.displayName) lines.push(`TEST_USER_DISPLAY_NAME=${config.test_credentials.displayName}`)
+  if (config.auth_setup_file) lines.push(`AUTH_SETUP_FILE=${config.auth_setup_file}`)
 
   if (lines.length === 0) return
   if (GITHUB_ENV) {

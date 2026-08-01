@@ -5,6 +5,7 @@ import { requireTenantAccess } from '../middleware/tenantAccess.js'
 import { listVisibleTenants } from '../db/tenantRegistry.js'
 import { resolveTenantPool } from '../db/tenantPool.js'
 import { getPrStatus } from '../lib/githubPrStatus.js'
+import { getAuthSetupStatus } from '../lib/authSetupStatus.js'
 import { computeFlakyTests } from '../lib/flakyTests.js'
 import { generateAdvisorInsights } from '../lib/qualityAdvisor.js'
 
@@ -128,6 +129,7 @@ router.get('/:id/test-config', requireTenantAccess, requireRole('qa_engineer', '
       mobile_app_id_android: config?.mobile_app_id_android || null,
       hasCredentials: !!creds?.password,
       credentialUsername: creds?.username || null,
+      authSetupStatus: await getAuthSetupStatus(req.db, req.params.id),
     })
   } catch (e) {
     res.status(500).json({ error: e.message })

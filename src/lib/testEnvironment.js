@@ -33,10 +33,18 @@ export async function resolveTestEnvironment(db, projectId, platform) {
     ? (config.mobile_app_id_android || MOBILE_APP_ID_BY_PLATFORM.android)
     : null
 
+  // Only a project with its own configured target_url gets a per-project
+  // auth-setup file — one that falls back to the shared demo default has no
+  // custom login flow to generate, and keeps using tests/auth.setup.ts
+  // exactly as before (see authSetupStatus.js for the same "custom target"
+  // check used to decide whether the auth-setup gate applies at all).
+  const authSetupFile = config.target_url ? `tests/auth-setups/project-${projectId}.setup.ts` : null
+
   return {
     targetUrl,
     apiBaseUrl,
     mobileAppId,
     credentials: config.test_credentials || null,
+    authSetupFile,
   }
 }

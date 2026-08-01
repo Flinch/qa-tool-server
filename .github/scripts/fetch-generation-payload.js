@@ -60,6 +60,7 @@ function writeEnv(payload) {
   if (payload.test_credentials?.username) lines.push(`TEST_USER_NAME=${payload.test_credentials.username}`)
   if (payload.test_credentials?.password) lines.push(`TEST_USER_PASSWORD=${payload.test_credentials.password}`)
   if (payload.test_credentials?.displayName) lines.push(`TEST_USER_DISPLAY_NAME=${payload.test_credentials.displayName}`)
+  if (payload.auth_setup_file) lines.push(`AUTH_SETUP_FILE=${payload.auth_setup_file}`)
 
   if (lines.length === 0) return
   if (GITHUB_ENV) {
