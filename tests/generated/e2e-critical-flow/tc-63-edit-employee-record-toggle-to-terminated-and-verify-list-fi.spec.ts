@@ -66,10 +66,13 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
       await page.getByRole('button', { name: 'Terminate Employment' }).click();
 
       const dialog = page.getByRole('dialog');
-      const todayIso = new Date().toISOString().slice(0, 10);
-      const terminationDateInput = dialog.getByRole('textbox', { name: 'D, dd M yyyy' });
-      await terminationDateInput.fill(todayIso);
-      await expect(terminationDateInput).not.toHaveValue(todayIso, { timeout: 1 }).catch(() => {});
+      // FRAGILE: the date input's accessible name is its placeholder text, which is
+      // "yyyy-dd-mm" (day before month), not a standard ISO "yyyy-mm-dd" — verified live.
+      const today = new Date();
+      const todayForField = `${today.getFullYear()}-${String(today.getDate()).padStart(2, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+      const terminationDateInput = dialog.getByRole('textbox', { name: 'yyyy-dd-mm' });
+      await terminationDateInput.fill(todayForField);
+      await expect(terminationDateInput).not.toHaveValue(todayForField, { timeout: 1 }).catch(() => {});
 
       // FRAGILE: the date picker's calendar popover sometimes stays open after filling and
       // intercepts subsequent clicks (confirmed live, though not on every run); close it
@@ -111,6 +114,12 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
       .locator('.oxd-input-group')
       .filter({ has: page.locator('label', { hasText: 'Include' }) });
 
+    // FRAGILE: a "No Records Found" info toast (auto-dismissing) briefly renders at the same
+    // time as the persistent "No Records Found" text in the results panel, which makes an
+    // unscoped getByText ambiguous (strict mode violation) right after the search — verified
+    // live. Scope to the main content container, which excludes the toast overlay.
+    const resultsPanel = page.locator('.orangehrm-paper-container');
+
     // 5. Navigate to PIM > Employee List. With the default filters (Include = "Current Employees
     // Only"), type the employee's first name into the "Employee Name" field, then click "Search".
     await test.step('Navigate to PIM > Employee List, with the default Include filter type the employee\'s first name into "Employee Name", then click "Search"', async () => {
@@ -122,7 +131,7 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
 
       // Expect: the terminated employee no longer appears in the default active-employees view
       // — the results table shows "No Records Found".
-      await expect(page.getByText('No Records Found')).toBeVisible();
+      await expect(resultsPanel.getByText('No Records Found')).toBeVisible();
     });
 
     // 6. On the filter panel, open the "Include" dropdown, select "Past Employees Only", re-enter
@@ -161,7 +170,7 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
       // Expect: a "Successfully Deleted" toast appears immediately, and the list for the same
       // "Past Employees Only" + name filter now shows "No Records Found" (count 1 -> 0).
       await expect(page.getByText('Successfully Deleted')).toBeVisible();
-      await expect(page.getByText('No Records Found')).toBeVisible();
+      await expect(resultsPanel.getByText('No Records Found')).toBeVisible();
     });
   });
 });
