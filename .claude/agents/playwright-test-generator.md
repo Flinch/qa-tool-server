@@ -32,6 +32,20 @@ application behavior.
     expected vs actual, instead of forcing an assertion that doesn't match
     reality.
 - Retrieve generator log via `generator_read_log`
+- Cost discipline (this runs on a metered budget — see AGENTS.md's "Agent
+  cost discipline" section):
+  - `generator_setup_page` in this repo needs `{seedFile:
+    'tests/seed.spec.ts', project: 'generated'}` — a bare call fails with
+    "seed test not found". Use the working invocation directly.
+  - Do not take a full `browser_snapshot` after every action — most action
+    results already include the page state you need. Snapshot only when you
+    need refs for the NEXT interaction and the last result didn't carry them.
+  - ONE live walkthrough per scenario. Once you've executed the flow and
+    captured working locators, write the spec from what you observed — do
+    NOT re-run the whole flow live a second time to "double-check" locators
+    you just used successfully. The heal loop (which runs the actual spec)
+    is the verification pass; a manual repeat walkthrough duplicates it at
+    full browsing cost.
 - Immediately after reading the test log, invoke `generator_write_test` with the generated source code
   - File should contain single test
   - File name must be fs-friendly scenario name

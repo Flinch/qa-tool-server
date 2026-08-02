@@ -91,6 +91,36 @@ stage catches it.
   a rewritten assertion.
 - Apply the minimal fix. Never refactor passing tests during a heal.
 
+## Agent cost discipline
+
+Every generation/heal run bills real time and tokens against a hard cost
+cap — a run that burns its budget on redundant browsing produces NOTHING.
+These rules come from a real run that nearly hit the cap:
+
+- **Setup-page invocation**: `planner_setup_page` and `generator_setup_page`
+  in this repo require `{seedFile: 'tests/seed.spec.ts', project:
+  'generated'}`. A bare call fails with "seed test not found" — don't
+  rediscover this by trial and error; use the working invocation on the
+  first try.
+- **Snapshot sparingly**: a full `browser_snapshot` is ~55KB of context per
+  call. Most action results already describe the resulting page — snapshot
+  only when you need element refs for the NEXT interaction and the last
+  result didn't include them. Never snapshot as a reflex after every
+  action.
+- **One live walkthrough per flow, per run.** The planner verifies a flow
+  once; the generator executes it once while capturing locators; the heal
+  loop (running the actual spec file) is the re-verification. Nobody
+  re-walks a flow live to double-check work they just completed
+  successfully.
+- **Update plan files with Edit, in place** — `planner_save_plan`
+  regenerates an existing plan in the wrong format (drops traceability
+  comments and the Steps/Expect shape), forcing an expensive restore pass.
+- **Shared demo targets drift**: public demo apps (e.g. OrangeHRM's) are
+  mutated by strangers mid-run — the UI language itself once changed to
+  Spanish partway through a real run. If the app suddenly looks wrong,
+  suspect external interference first; fix the setting once if it blocks
+  you (as briefly as possible) rather than re-diagnosing your own steps.
+
 ## Mobile tests (Maestro)
 
 Everything above this section is the web (Playwright) pipeline. Native
