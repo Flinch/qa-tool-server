@@ -11,6 +11,10 @@ on:
         description: 'Repo-relative path to the single failing Maestro flow file to heal'
         required: true
         type: string
+      context:
+        description: 'Optional free-text context from the user for the healer agent (e.g. "flaky, run 10+ times")'
+        required: false
+        type: string
 
 permissions:
   contents: write # needed to push the healed-mobile-tests branch
@@ -56,6 +60,7 @@ jobs:
         env:
           CORRELATION_ID: ${{ inputs.correlation_id }}
           FILE_PATH: ${{ inputs.file_path }}
+          CONTEXT: ${{ inputs.context }}
           WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
           GENERATION_COST_CAP_USD: ${{ vars.GENERATION_COST_CAP_USD || '5' }}
@@ -72,6 +77,7 @@ jobs:
           add-paths: ${{ inputs.file_path }}
           body: |
             Automated "diagnose and heal" fix for a Maestro flow that was failing in real suite execution (correlation id `${{ inputs.correlation_id }}`).
+            ${{ inputs.context && format('**User-provided context:** {0}', inputs.context) || '' }}
 
             Review carefully before merging — if the healer left a `# POSSIBLE REGRESSION` comment + `flagged-regression` tag instead of a passing flow, that means the app's real behavior changed rather than the flow being wrong.
 

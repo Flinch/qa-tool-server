@@ -54,10 +54,16 @@ wrong/missing behavior, and do not wait indefinitely for a state that will
 not occur. A flagged real bug is more valuable than a green test, whichever
 stage catches it.
 
-- **Planner**: stop verifying that scenario, note the contradiction directly
-  in the plan file (`<!-- BEHAVIOR MISMATCH: expected ..., actual ... -->`),
-  and move on to the next plan in the batch rather than retrying or waiting
-  for the expected state to appear.
+- **Planner**: the WEB planner is browserless (see Agent cost discipline
+  below) and cannot observe live behavior — its mismatch duty is limited to
+  what's visible from the documents alone: a plan whose steps contradict
+  its own Expect line, or a "flag as blocked" marker from planExport. Flag
+  those with a comment in the plan file; live contradictions are discovered
+  at generation/healing instead. The API planner still live-verifies with
+  `curl` and follows the original rule: stop verifying that scenario, note
+  the contradiction directly in the plan file
+  (`<!-- BEHAVIOR MISMATCH: expected ..., actual ... -->`), and move on to
+  the next plan rather than retrying or waiting for the expected state.
 - **Generator**: if a plan carries a BEHAVIOR MISMATCH marker, or the
   contradiction only becomes apparent while implementing, still write the
   file — mark the test `test.fixme()` with a `// POSSIBLE REGRESSION:`
@@ -97,21 +103,22 @@ Every generation/heal run bills real time and tokens against a hard cost
 cap — a run that burns its budget on redundant browsing produces NOTHING.
 These rules come from a real run that nearly hit the cap:
 
-- **Setup-page invocation**: `planner_setup_page` and `generator_setup_page`
-  in this repo require `{seedFile: 'tests/seed.spec.ts', project:
-  'generated'}`. A bare call fails with "seed test not found" — don't
-  rediscover this by trial and error; use the working invocation on the
-  first try.
+- **Setup-page invocation**: `generator_setup_page` in this repo requires
+  `{seedFile: 'tests/seed.spec.ts', project: 'generated'}`. A bare call
+  fails with "seed test not found" — don't rediscover this by trial and
+  error; use the working invocation on the first try. (The WEB planner has
+  no browser at all — no setup-page tool applies to it.)
 - **Snapshot sparingly**: a full `browser_snapshot` is ~55KB of context per
   call. Most action results already describe the resulting page — snapshot
   only when you need element refs for the NEXT interaction and the last
   result didn't include them. Never snapshot as a reflex after every
   action.
-- **One live walkthrough per flow, per run.** The planner verifies a flow
-  once; the generator executes it once while capturing locators; the heal
-  loop (running the actual spec file) is the re-verification. Nobody
-  re-walks a flow live to double-check work they just completed
-  successfully.
+- **One live walkthrough per run.** The WEB planner is browserless (repo
+  review only); the generator's single walkthrough is the ONLY live
+  browsing in the run, and it doubles as verification while capturing
+  locators; the heal loop (running the actual spec file) is the
+  re-verification after that. Nobody re-walks a flow live to double-check
+  work they just completed successfully.
 - **Update plan files with Edit, in place** — `planner_save_plan`
   regenerates an existing plan in the wrong format (drops traceability
   comments and the Steps/Expect shape), forcing an expensive restore pass.

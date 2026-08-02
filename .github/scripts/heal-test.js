@@ -17,6 +17,7 @@ import http from 'http'
 const {
   CORRELATION_ID,
   FILE_PATH,
+  CONTEXT,
   WEBHOOK_BASE_URL,
   WEBHOOK_SECRET,
   GENERATION_COST_CAP_USD = '5',
@@ -187,8 +188,11 @@ async function runAgent(prompt) {
 
 async function main() {
   await reportPhaseOnce('healing')
+  const contextNote = CONTEXT?.trim()
+    ? ` Additional context from the user, follow it as an instruction alongside the rules below: "${CONTEXT.trim()}"`
+    : ''
   await runAgent(
-    `Use the playwright-test-healer agent to fix any failing tests in ${FILE_PATH}, following AGENTS.md conventions. Do not weaken assertions — if a failure means app behavior changed rather than the test being wrong, mark it with test.fixme() and a POSSIBLE REGRESSION comment instead of forcing it to pass.`
+    `Use the playwright-test-healer agent to fix any failing tests in ${FILE_PATH}, following AGENTS.md conventions. Do not weaken assertions — if a failure means app behavior changed rather than the test being wrong, mark it with test.fixme() and a POSSIBLE REGRESSION comment instead of forcing it to pass.${contextNote}`
   )
 
   await reportPhaseOnce('opening_pr')

@@ -325,7 +325,7 @@ export async function triggerGenerationRun({ db, tenantId, projectId, suiteId, t
 // elements — a real linked test case if the failing result resolved to one,
 // empty if it's an orphan title with no tc-<id> match) since healing doesn't
 // require the stricter link triggerGenerationRun enforces.
-export async function triggerHealRun({ db, tenantId, projectId, suiteId, testCaseIds, targetTitle, filePath, userId }) {
+export async function triggerHealRun({ db, tenantId, projectId, suiteId, testCaseIds, targetTitle, filePath, context, userId }) {
   if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
     throw new TriggerError(500, 'Test generation workflow is not configured on the server')
   }
@@ -366,6 +366,9 @@ export async function triggerHealRun({ db, tenantId, projectId, suiteId, testCas
         inputs: {
           correlation_id: correlationId,
           file_path: filePath,
+          // workflow_dispatch inputs must all be strings — omit entirely
+          // rather than send '' so the workflow's own default (none) applies.
+          ...(context ? { context } : {}),
         },
       }),
     }

@@ -242,7 +242,7 @@ router.post('/runs/:runId/cancel', ...staffOnlyChain, async (req, res) => {
 // a real linked test_case_id from the roster for traceability, then
 // dispatches the healer directly at that file via triggerHealRun.
 router.post('/runs/:runId/heal', ...staffOnlyChain, async (req, res) => {
-  const { result_id } = req.body
+  const { result_id, context } = req.body
   if (!result_id) return res.status(400).json({ error: 'result_id is required' })
 
   try {
@@ -283,6 +283,7 @@ router.post('/runs/:runId/heal', ...staffOnlyChain, async (req, res) => {
       testCaseIds,
       targetTitle: result.test_title,
       filePath: file.path,
+      context: typeof context === 'string' ? context.slice(0, 2000) : undefined,
       userId: req.userId,
     })
     res.status(202).json(newRun)

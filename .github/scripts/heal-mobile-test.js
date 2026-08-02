@@ -17,6 +17,7 @@ import http from 'http'
 const {
   CORRELATION_ID,
   FILE_PATH,
+  CONTEXT,
   WEBHOOK_BASE_URL,
   WEBHOOK_SECRET,
   GENERATION_COST_CAP_USD = '5',
@@ -187,8 +188,11 @@ async function runAgent(prompt) {
 
 async function main() {
   await reportPhaseOnce('healing')
+  const contextNote = CONTEXT?.trim()
+    ? ` Additional context from the user, follow it as an instruction alongside the rules below: "${CONTEXT.trim()}"`
+    : ''
   await runAgent(
-    `Use the maestro-test-healer agent to fix the failing flow at ${FILE_PATH}, following AGENTS.md's "Mobile tests (Maestro)" conventions. Do not weaken assertions — if the failure means app behavior changed rather than the flow being wrong, add a "# POSSIBLE REGRESSION" comment and a flagged-regression tag instead of forcing it to pass.`
+    `Use the maestro-test-healer agent to fix the failing flow at ${FILE_PATH}, following AGENTS.md's "Mobile tests (Maestro)" conventions. Do not weaken assertions — if the failure means app behavior changed rather than the flow being wrong, add a "# POSSIBLE REGRESSION" comment and a flagged-regression tag instead of forcing it to pass.${contextNote}`
   )
 
   // Script's job ends here, same handoff as generate-mobile-tests.js — the
