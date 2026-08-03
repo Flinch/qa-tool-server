@@ -49,15 +49,22 @@ const GITHUB_ORANGEHRM_WORKFLOW_ID = process.env.GITHUB_ORANGEHRM_WORKFLOW_ID //
 const GITHUB_ORANGEHRM_HEAL_WORKFLOW_ID = process.env.GITHUB_ORANGEHRM_HEAL_WORKFLOW_ID // e.g. "heal-test-orangehrm.yml"
 const ORANGEHRM_SELF_HOSTED_PROJECT_ID = 7
 
+// Number(...) because every caller here passes projectId straight through
+// from req.params.id (a route param — always a string, e.g. "7"), while
+// this constant is a real number. Strict equality against a bare
+// ORANGEHRM_SELF_HOSTED_PROJECT_ID silently never matched a string
+// "7" — confirmed live: a real dispatch through POST /runs/trigger fell
+// through to the default workflow despite GITHUB_ORANGEHRM_WORKFLOW_ID
+// being set correctly.
 function webSuiteWorkflowId(projectId) {
-  if (projectId === ORANGEHRM_SELF_HOSTED_PROJECT_ID && GITHUB_ORANGEHRM_WORKFLOW_ID) {
+  if (Number(projectId) === ORANGEHRM_SELF_HOSTED_PROJECT_ID && GITHUB_ORANGEHRM_WORKFLOW_ID) {
     return GITHUB_ORANGEHRM_WORKFLOW_ID
   }
   return GITHUB_WORKFLOW_ID
 }
 
 function webHealWorkflowId(projectId) {
-  if (projectId === ORANGEHRM_SELF_HOSTED_PROJECT_ID && GITHUB_ORANGEHRM_HEAL_WORKFLOW_ID) {
+  if (Number(projectId) === ORANGEHRM_SELF_HOSTED_PROJECT_ID && GITHUB_ORANGEHRM_HEAL_WORKFLOW_ID) {
     return GITHUB_ORANGEHRM_HEAL_WORKFLOW_ID
   }
   return GITHUB_HEAL_WORKFLOW_ID
