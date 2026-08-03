@@ -168,7 +168,13 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       if (r.status !== 'failed') continue
 
       const testCase = testCasesByResult.get(r)
-      const bugTitle = `Automated failure: ${testCase ? testCase.title : r.test_title}`
+      // r.test_title already carries the "TC-<id>: ..." prefix for a web
+      // Playwright title (see the roster-linking comment above), but
+      // testCase.title from test_cases is the bare title with no prefix —
+      // using it directly here silently dropped the TC number exactly when
+      // a real linked test case was found. Rebuild it explicitly instead of
+      // relying on whichever string happened to already have it.
+      const bugTitle = `Automated failure: ${testCase ? `TC-${testCase.id}: ${testCase.title}` : r.test_title}`
 
       // Dedup against repeat failures of the same test in the same suite —
       // a nightly cron failing every night shouldn't file a fresh bug each

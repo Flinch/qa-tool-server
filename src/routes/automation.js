@@ -7,6 +7,7 @@ import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileSta
 import { getPrStatus } from '../lib/githubPrStatus.js'
 import { listSuiteFiles, matchTestCaseToFile } from '../lib/githubSuiteFiles.js'
 import { isAuthSetupBlocking, getAuthSetupStatus } from '../lib/authSetupStatus.js'
+import { generateFailureDiagnosis } from '../lib/diagnoseFailure.js'
 
 const router = Router({ mergeParams: true })
 
@@ -408,6 +409,74 @@ router.post('/runs/:runId/heal', ...staffOnlyChain, async (req, res) => {
     res.status(202).json(newRun)
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message })
+  }
+})
+
+// POST /runs/:runId/diagnose — explains WHY one specific failed result
+// failed, separately from healing it: environmental/flaky noise vs a real
+// regression the test correctly caught. Read-only and synchronous (one
+// Claude call, no CI dispatch, no PR) — this is the fast "what happened"
+// step; /heal above is the slow, expensive "fix it" step. Deliberately its
+// own endpoint rather than folded into /heal so a teammate can look before
+// deciding whether a real (costed) heal dispatch is even warranted.
+router.post('/runs/:runId/diagnose', ...staffOnlyChain, async (req, res) => {
+  const { result_id } = req.body
+  if (!result_id) return res.status(400).json({ error: 'result_id is required' })
+
+  try {
+    const { rows: runRows } = await req.db.query(`
+      SELECT tr.*, s.id AS suite_id, s.name AS suite_name
+      FROM test_runs tr JOIN automation_suites s ON s.id = tr.suite_id
+      WHERE tr.id=$1 AND tr.project_id=$2
+    `, [req.params.runId, req.params.id])
+    if (!runRows[0]) return res.status(404).json({ error: 'Run not found' })
+    const run = runRows[0]
+
+    const { rows: resultRows } = await req.db.query(
+      `SELECT * FROM test_run_results WHERE id=$1 AND test_run_id=$2`,
+      [result_id, req.params.runId]
+    )
+    if (!resultRows[0]) return res.status(404).json({ error: 'Result not found on this run' })
+    const result = resultRows[0]
+    if (result.status !== 'failed') {
+      return res.status(400).json({ error: 'Only a failed result can be diagnosed' })
+    }
+
+    // Best-effort linked test case, for real steps/expected context — same
+    // roster lookup /heal already does for traceability.
+    const { rows: tcRows } = await req.db.query(`
+      SELECT tc.steps, tc.expected FROM automated_test_cases atc
+      JOIN test_cases tc ON tc.id = atc.test_case_id
+      WHERE atc.suite_id=$1 AND atc.title=$2 AND atc.test_case_id IS NOT NULL
+    `, [run.suite_id, result.test_title])
+    const linked = tcRows[0] || null
+
+    // Recent history of this exact test in this suite, real runs only (same
+    // tr.scope='suite' convention used throughout automation.js) — a
+    // diagnostic re-run's own result never counts toward "the" run history,
+    // and the run currently being diagnosed is excluded so it isn't counted
+    // against itself.
+    const { rows: history } = await req.db.query(`
+      SELECT trr.status, trr.error_message
+      FROM test_run_results trr
+      JOIN test_runs tr2 ON tr2.id = trr.test_run_id
+      WHERE tr2.suite_id=$1 AND trr.test_title=$2 AND tr2.scope='suite' AND tr2.id != $3
+      ORDER BY tr2.completed_at DESC NULLS LAST
+      LIMIT 5
+    `, [run.suite_id, result.test_title, run.id])
+
+    const diagnosis = await generateFailureDiagnosis({
+      testTitle: result.test_title,
+      suiteName: run.suite_name,
+      errorMessage: result.error_message || '(no error message recorded)',
+      steps: linked?.steps ? (Array.isArray(linked.steps) ? linked.steps.join('\n') : linked.steps) : null,
+      expected: linked?.expected || null,
+      history,
+    })
+
+    res.json(diagnosis)
+  } catch (e) {
+    res.status(500).json({ error: e.message })
   }
 })
 
