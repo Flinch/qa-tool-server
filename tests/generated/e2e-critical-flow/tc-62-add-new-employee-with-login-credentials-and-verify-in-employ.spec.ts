@@ -187,9 +187,18 @@ test.describe('TC-62 — Add new employee with login credentials and verify in e
         const pagination = page.getByRole('navigation', { name: 'Pagination Navigation' });
         const bodyRows = page.getByRole('row').filter({ has: page.getByRole('cell') });
 
+        // This shared demo's pagination control can take longer than the global 30s
+        // actionTimeout to re-render after the sort click, especially under concurrent load
+        // from other test runs (same variability documented on step 9 above). Waiting for the
+        // control to actually be visible first — with a longer explicit timeout — means a slow
+        // render fails fast on this wait instead of burning the whole click's timeout budget
+        // (and therefore most of the 120s test timeout) stuck on one toPass() iteration
+        // (timing only, not a locator/behavior change).
+        await expect(pagination).toBeVisible({ timeout: 45_000 });
+
         // Always start from page 1 via its own numeric label, not a positional index — this
         // works whether we're already on page 1 or a retry left us on a later page.
-        await pagination.getByRole('button', { name: '1', exact: true }).click();
+        await pagination.getByRole('button', { name: '1', exact: true }).click({ timeout: 45_000 });
         await expect(bodyRows.first()).toBeVisible();
 
         const allIds: string[] = [];
@@ -205,7 +214,9 @@ test.describe('TC-62 — Add new employee with login credentials and verify in e
           // live. It is absent entirely on the last page.
           const nextButton = pagination.locator('button:has(.bi-chevron-right)');
           if ((await nextButton.count()) === 0) break;
-          await nextButton.click();
+          // Same slow-render risk as the page-1 click above, so the same explicit timeout
+          // (timing only).
+          await nextButton.click({ timeout: 45_000 });
           await expect(bodyRows.first()).toBeVisible();
         }
 
