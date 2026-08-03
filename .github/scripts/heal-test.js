@@ -21,7 +21,14 @@ const {
   WEBHOOK_BASE_URL,
   WEBHOOK_SECRET,
   GENERATION_COST_CAP_USD = '5',
-  AGENT_TIMEOUT_MS = String(15 * 60 * 1000),
+  // Bumped from 15 after two real heal attempts (TC-63, TC-65 — 2026-08-03)
+  // were killed mid-edit with real progress made (files already changed,
+  // re-verification just not reached yet), not stuck/looping. Both needed
+  // multiple diagnose-edit-verify cycles against a slow/occasionally-flaky
+  // shared demo (even login itself intermittently failed on one run) —
+  // same "ran out of clock time on legitimate work" situation that already
+  // justified generate-mobile-tests.js's identical 15->25 bump.
+  AGENT_TIMEOUT_MS = String(25 * 60 * 1000),
 } = process.env
 
 const COST_CAP = Number(GENERATION_COST_CAP_USD)
