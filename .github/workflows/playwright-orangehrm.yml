@@ -6,12 +6,19 @@ name: Playwright Tests (OrangeHRM self-hosted)
 # demo caused this project — concurrent-login collisions with other CI runs
 # (and with total strangers, since it's a public demo), data drift (e.g. a
 # hardcoded employee name silently stops resolving because someone else
-# deleted that record), an ever-growing shared candidate list, and someone
-# changing the login credentials on the frontend without telling CI (see
-# docker/orangehrm-seed/README.md for the full story).
+# deleted that record), and an ever-growing shared candidate list.
 #
 # See docker/orangehrm-seed/README.md for what seed.sql/Conf.php are and how
 # they were produced.
+#
+# target_url/credentials are NOT hardcoded here — same convention as every
+# other project: staff sets them on the frontend (project_test_config, see
+# routes/projects.js's test-config endpoints), and fetch-run-config.js pulls
+# them at run time. Since the seed always boots to the exact same
+# http://localhost:8080/ + qatooladmin/QaTool2026!Seed, that's what's saved
+# there for project 7 — a stable value even though the containers behind it
+# are ephemeral per-run. Only the container spin-up/teardown is special to
+# this workflow; the config lookup is identical to every other project.
 
 on:
   workflow_dispatch:
@@ -84,18 +91,24 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps
 
-      # Fixed, known credentials from the seed — not pulled from
-      # project_test_config, and not editable from the frontend. That's the
-      # whole point: nobody can silently change these out from under CI the
-      # way project 7's external-URL credentials were (see the login
-      # investigation in DECISIONS.md-adjacent history).
+      # Per-project target URL/credentials/auth-setup-file — same step as
+      # playwright.yml, writing TARGET_URL/TEST_USER_*/AUTH_SETUP_FILE to
+      # $GITHUB_ENV. project_test_config for project 7 is set to
+      # http://localhost:8080/ + qatooladmin/QaTool2026!Seed (the seed's
+      # fixed values), so this resolves to the same thing every run without
+      # hardcoding it here. Must run before Authenticate, same as
+      # playwright.yml.
+      - name: Fetch test environment
+        if: inputs.run_correlation_id != ''
+        env:
+          CORRELATION_ID: ${{ inputs.run_correlation_id }}
+          WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+        run: node .github/scripts/fetch-run-config.js
+
       - name: Determine suite
         id: suite
         run: |
-          echo "TARGET_URL=http://localhost:8080/" >> "$GITHUB_ENV"
-          echo "TEST_USER_NAME=qatooladmin" >> "$GITHUB_ENV"
-          echo "TEST_USER_PASSWORD=QaTool2026!Seed" >> "$GITHUB_ENV"
-          echo "AUTH_SETUP_FILE=tests/auth-setups/project-7.setup.ts" >> "$GITHUB_ENV"
           SLUG="${{ inputs.suite_slug }}"
           echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
           if [ -n "${{ inputs.file_paths }}" ]; then
