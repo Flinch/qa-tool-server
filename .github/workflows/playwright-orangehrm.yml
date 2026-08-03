@@ -1,0 +1,138 @@
+name: Playwright Tests (OrangeHRM self-hosted)
+
+# Project-7-specific variant of playwright.yml: runs against a private,
+# ephemeral, self-hosted OrangeHRM instance instead of the shared public demo
+# (opensource-demo.orangehrmlive.com). Eliminates every flakiness class that
+# demo caused this project — concurrent-login collisions with other CI runs
+# (and with total strangers, since it's a public demo), data drift (e.g. a
+# hardcoded employee name silently stops resolving because someone else
+# deleted that record), an ever-growing shared candidate list, and someone
+# changing the login credentials on the frontend without telling CI (see
+# docker/orangehrm-seed/README.md for the full story).
+#
+# See docker/orangehrm-seed/README.md for what seed.sql/Conf.php are and how
+# they were produced.
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite_slug:
+        description: 'Which suite to run (matches a folder under tests/) — required because automationTrigger.js always sends it for web-platform dispatches; workflow_dispatch rejects undeclared inputs'
+        required: true
+        type: string
+      run_correlation_id:
+        description: 'Correlation ID linking this run back to a pending row in the DB'
+        required: false
+        type: string
+      file_paths:
+        description: 'Space-separated, repo-relative spec file paths to run instead of the whole suite (diagnostic re-run of specific failed tests)'
+        required: false
+        type: string
+
+permissions:
+  contents: write # needed to push the report to the gh-pages branch
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Explicit `docker run` steps, not a `services:` block — GitHub
+      # Actions provisions `services:` containers before `actions/checkout`
+      # runs, so they can't mount a file from this checkout. These steps run
+      # after checkout instead, once docker/orangehrm-seed/* actually exists
+      # on the runner's disk.
+      - name: Start self-hosted OrangeHRM (db + web)
+        run: |
+          docker network create ohrm-net
+          docker run -d --name db --network ohrm-net \
+            -e MYSQL_ROOT_PASSWORD=rootpass123 \
+            -e MYSQL_DATABASE=orangehrm \
+            -e MYSQL_USER=orangehrm \
+            -e MYSQL_PASSWORD=orangehrm123 \
+            -v "${{ github.workspace }}/docker/orangehrm-seed:/docker-entrypoint-initdb.d:ro" \
+            mariadb:10.4
+          docker run -d --name web --network ohrm-net -p 8080:80 \
+            -v "${{ github.workspace }}/docker/orangehrm-seed/Conf.php:/var/www/html/lib/confs/Conf.php:ro" \
+            orangehrm/orangehrm:5.9
+
+      # The db container runs seed.sql on its own first boot, and the web
+      # container needs Apache/PHP-FPM to come up — poll instead of a fixed
+      # sleep, since either can vary under runner load.
+      - name: Wait for OrangeHRM to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null http://localhost:8080/web/index.php/auth/login; then
+              echo "OrangeHRM is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "OrangeHRM never became ready" >&2
+          docker logs db || true
+          docker logs web || true
+          exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      # Fixed, known credentials from the seed — not pulled from
+      # project_test_config, and not editable from the frontend. That's the
+      # whole point: nobody can silently change these out from under CI the
+      # way project 7's external-URL credentials were (see the login
+      # investigation in DECISIONS.md-adjacent history).
+      - name: Determine suite
+        id: suite
+        run: |
+          echo "TARGET_URL=http://localhost:8080/" >> "$GITHUB_ENV"
+          echo "TEST_USER_NAME=qatooladmin" >> "$GITHUB_ENV"
+          echo "TEST_USER_PASSWORD=QaTool2026!Seed" >> "$GITHUB_ENV"
+          SLUG="${{ inputs.suite_slug }}"
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+          if [ -n "${{ inputs.file_paths }}" ]; then
+            echo "path=${{ inputs.file_paths }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=tests/$SLUG tests/generated/$SLUG" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Playwright tests
+        continue-on-error: true
+        env:
+          CI: true
+        run: npx playwright test ${{ steps.suite.outputs.path }}
+
+      - name: Deploy report to GitHub Pages
+        if: always()
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./playwright-report
+          destination_dir: reports/${{ github.run_id }}
+          keep_files: true
+
+      - name: Report results to QA Tool
+        if: always()
+        env:
+          SUITE_SLUG: ${{ steps.suite.outputs.slug }}
+          TRIGGER_TYPE: manual
+          RUN_CORRELATION_ID: ${{ inputs.run_correlation_id }}
+          PROJECT_ID: ${{ vars.QA_TOOL_PROJECT_ID }}
+          REPORT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/reports/${{ github.run_id }}/index.html
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+        run: node .github/scripts/report-results.js
+
+      - name: Tear down OrangeHRM containers
+        if: always()
+        run: |
+          docker rm -f db web || true
+          docker network rm ohrm-net || true

@@ -5,12 +5,11 @@ import { test, expect } from '@playwright/test';
 import { createVacancy } from '../../../helpers/project-7/createVacancy';
 import { createCandidate } from '../../../helpers/project-7/createCandidate';
 
-// The list's "Date of Application" column (and the Add Candidate/Interview date inputs) render
-// in yyyy-dd-mm order (day before month, confirmed live: values like "2024-29-03" are only
-// valid if day=29/month=03) rather than the standard yyyy-mm-dd — same quirk documented in
-// helpers/project-7/createEmployee.ts's sibling spec for this app's date inputs.
+// FIXED: the list's "Date of Application" column renders in standard ISO yyyy-mm-dd order —
+// re-verified live against the self-hosted instance (a prior comment here claimed yyyy-dd-mm
+// day-before-month, which no longer matches).
 function parseListDate(text: string): Date {
-  const [year, day, month] = text.split('-').map(Number);
+  const [year, month, day] = text.split('-').map(Number);
   return new Date(year, month - 1, day);
 }
 
@@ -202,12 +201,14 @@ test.describe('TC-65 — Add candidate for a vacancy and progress through the hi
       await interviewerSuggestion.click();
 
       // FIXED (was flaky): matching the date field by its placeholder-derived accessible name
-      // ("yyyy-dd-mm") ties the locator to whatever date format this shared demo's global
-      // Localization setting currently has active — already confirmed elsewhere in this app
-      // (TC-63's Termination Date) to drift over time and silently break. Scoped by the "Date"
-      // label via the oxd-input-group wrapper instead, immune to the format in use.
+      // ties the locator to whatever date format this app's global Localization setting
+      // currently has active — already confirmed elsewhere in this app (TC-63's Termination
+      // Date) to drift over time and silently break. Scoped by the "Date" label via the
+      // oxd-input-group wrapper instead, immune to the format in use. The value itself still
+      // needs to match the app's current order though — re-verified live as standard ISO
+      // yyyy-mm-dd (see parseListDate's comment above for the same finding).
       const today = new Date();
-      const todayForField = `${today.getFullYear()}-${String(today.getDate()).padStart(2, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+      const todayForField = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
       const dateGroup = page.locator('.oxd-input-group').filter({ hasText: /^Date\*/ });
       await dateGroup.locator('input').fill(todayForField);
 

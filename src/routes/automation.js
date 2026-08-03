@@ -9,6 +9,8 @@ import { listSuiteFiles, matchTestCaseToFile } from '../lib/githubSuiteFiles.js'
 import { isAuthSetupBlocking, getAuthSetupStatus } from '../lib/authSetupStatus.js'
 import { generateFailureDiagnosis } from '../lib/diagnoseFailure.js'
 
+const { GITHUB_OWNER, GITHUB_REPO } = process.env
+
 const router = Router({ mergeParams: true })
 
 const staffOnly = requireRole('qa_engineer', 'admin')
@@ -684,9 +686,19 @@ router.get('/generation-runs', ...staffOnlyChain, async (req, res) => {
     // code) just to know whether a PR landed. Runs in parallel, fails open
     // per-row (see githubPrStatus.js) so one bad lookup can't 500 the panel.
     const withPrStatus = await Promise.all(withFailedIds.map(async r => {
-      if (!r.pr_url) return r
-      const prStatus = await getPrStatus(r.pr_url)
-      return { ...r, pr_status: prStatus }
+      if (r.pr_url) {
+        const prStatus = await getPrStatus(r.pr_url)
+        return { ...r, pr_status: prStatus }
+      }
+      // A failed heal that still has a branch_name (no PR) is a checkpoint —
+      // the agent got killed before finishing, but whatever it had already
+      // changed on disk was committed and pushed rather than discarded (see
+      // heal-test.js's checkpointProgress). Surface it as a plain branch
+      // link since there's no PR to check status on.
+      if (r.branch_name && GITHUB_OWNER && GITHUB_REPO) {
+        return { ...r, branch_url: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/tree/${r.branch_name}` }
+      }
+      return r
     }))
     res.json(withPrStatus)
   } catch (e) {

@@ -9,10 +9,13 @@
 // (AGENTS.md requires "re-run after every fix, never mark something fixed
 // without a real passing run") — this script doesn't re-check pass/fail.
 
-import { spawn } from 'child_process'
+import { spawn, execFile } from 'child_process'
+import { promisify } from 'util'
 import readline from 'readline'
 import https from 'https'
 import http from 'http'
+
+const execFileAsync = promisify(execFile)
 
 const {
   CORRELATION_ID,
@@ -61,6 +64,30 @@ function postJson(url, body) {
     })
     req.on('error', reject)
     req.write(payload)
+    req.end()
+  })
+}
+
+function getJson(url) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url)
+    const lib = u.protocol === 'https:' ? https : http
+    const req = lib.request(u, {
+      method: 'GET',
+      headers: { 'x-webhook-secret': WEBHOOK_SECRET },
+    }, res => {
+      let data = ''
+      res.on('data', c => data += c)
+      res.on('end', () => {
+        console.log(`${u.pathname} -> ${res.statusCode}`)
+        try {
+          resolve(JSON.parse(data))
+        } catch (e) {
+          reject(e)
+        }
+      })
+    })
+    req.on('error', reject)
     req.end()
   })
 }
@@ -193,13 +220,77 @@ async function runAgent(prompt) {
   return result
 }
 
+// A stateless CI job otherwise has no memory that a previous attempt at
+// this exact test ever happened, and repeats the same diagnosis work from
+// scratch every time (confirmed live, 2026-08-03: two independent TC-65
+// heal attempts, hours apart, independently rediscovered the same root
+// cause). Only the agent's own narration lines are included, not raw tool
+// traffic — that's normally where the actual diagnosis lives.
+function formatPriorAttempts(attempts) {
+  if (!attempts || attempts.length === 0) return ''
+  const blocks = attempts.map((a, i) => {
+    const outcome = a.status === 'completed' && a.pr_url
+      ? `completed, opened ${a.pr_url}`
+      : a.status === 'failed'
+        ? `failed — ${a.error_message || '(no error message recorded)'}`
+        : a.status
+    const narrationText = a.narration?.length > 0 ? a.narration.join('\n') : '(no narration recorded)'
+    return `Attempt ${i + 1} (${a.started_at}, ${outcome}):\n${narrationText}`
+  })
+  return `\n\nPRIOR ATTEMPTS AT THIS EXACT TEST (most recent first) — do not waste time re-deriving a diagnosis these already reached; verify it's still accurate and build on it, or explain why it's now wrong before trying something else:\n\n${blocks.join('\n\n')}`
+}
+
+// Every prior failed heal (TC-63, TC-65 — 2026-08-03) discarded 100% of its
+// progress on timeout: nothing gets committed until the very end, so a
+// killed agent's correct diagnosis and real file edits just vanish, and the
+// next attempt starts from zero. This is the other half of that fix — on
+// any failure, whatever the agent already changed on disk (still there;
+// SIGKILL only kills the agent subprocess, not the filesystem writes it
+// already made) gets committed and pushed to its own checkpoint branch
+// instead of being silently lost. Deliberately a distinct branch name from
+// the success path's healed-tests/<correlation_id> (created by
+// create-pull-request in the workflow) so this never collides with it.
+const CHECKPOINT_BRANCH = `healed-tests/${CORRELATION_ID}-checkpoint`
+
+async function checkpointProgress(reasonForFailure) {
+  try {
+    const { stdout: statusOutput } = await execFileAsync('git', ['status', '--porcelain'])
+    if (!statusOutput.trim()) {
+      console.log('No uncommitted changes to checkpoint.')
+      return null
+    }
+
+    await execFileAsync('git', ['config', 'user.email', 'healer-bot@qa-tool.local'])
+    await execFileAsync('git', ['config', 'user.name', 'QA Tool Healer'])
+    await execFileAsync('git', ['checkout', '-b', CHECKPOINT_BRANCH])
+    await execFileAsync('git', ['add', '-A'])
+    await execFileAsync('git', [
+      'commit', '-m',
+      `Checkpoint: partial heal progress at ${FILE_PATH}\n\nAgent was interrupted before finishing: ${reasonForFailure}\n\nNot verified passing — review before using.`,
+    ])
+    await execFileAsync('git', ['push', 'origin', `HEAD:refs/heads/${CHECKPOINT_BRANCH}`])
+    console.log(`Checkpointed partial progress to branch ${CHECKPOINT_BRANCH}`)
+    return CHECKPOINT_BRANCH
+  } catch (e) {
+    console.error('Failed to checkpoint partial progress (continuing to report failure anyway):', e.message)
+    return null
+  }
+}
+
 async function main() {
   await reportPhaseOnce('healing')
+
+  const history = await getJson(`${WEBHOOK_BASE_URL}/heal-history/${CORRELATION_ID}`).catch(e => {
+    console.error('Failed to fetch prior heal attempts (continuing without them):', e.message)
+    return { attempts: [] }
+  })
+  const priorAttemptsNote = formatPriorAttempts(history.attempts)
+
   const contextNote = CONTEXT?.trim()
     ? ` Additional context from the user, follow it as an instruction alongside the rules below: "${CONTEXT.trim()}"`
     : ''
   await runAgent(
-    `Use the playwright-test-healer agent to fix any failing tests in ${FILE_PATH}, following AGENTS.md conventions. Do not weaken assertions — if a failure means app behavior changed rather than the test being wrong, mark it with test.fixme() and a POSSIBLE REGRESSION comment instead of forcing it to pass.${contextNote}`
+    `Use the playwright-test-healer agent to fix any failing tests in ${FILE_PATH}, following AGENTS.md conventions. Do not weaken assertions — if a failure means app behavior changed rather than the test being wrong, mark it with test.fixme() and a POSSIBLE REGRESSION comment instead of forcing it to pass.${contextNote}${priorAttemptsNote}`
   )
 
   await reportPhaseOnce('opening_pr')
@@ -212,7 +303,11 @@ main().then(async () => {
   process.exit(0)
 }).catch(async err => {
   console.error('Heal run failed:', err.message)
-  await reportEvent('failed', { error_message: err.message.slice(0, 2000) }).catch(() => {})
+  const checkpointBranch = await checkpointProgress(err.message)
+  await reportEvent('failed', {
+    error_message: err.message.slice(0, 2000),
+    branch_name: checkpointBranch || undefined,
+  }).catch(() => {})
   clearInterval(logFlushInterval)
   await flushLogs().catch(() => {})
   process.exit(1)

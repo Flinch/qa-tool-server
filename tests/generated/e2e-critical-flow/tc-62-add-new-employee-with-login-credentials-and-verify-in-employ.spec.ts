@@ -186,38 +186,55 @@ test.describe('TC-62 — Add new employee with login credentials and verify in e
       await expect(async () => {
         const pagination = page.getByRole('navigation', { name: 'Pagination Navigation' });
         const bodyRows = page.getByRole('row').filter({ has: page.getByRole('cell') });
+        await expect(bodyRows.first()).toBeVisible({ timeout: 45_000 });
 
-        // This shared demo's pagination control can take longer than the global 30s
-        // actionTimeout to re-render after the sort click, especially under concurrent load
-        // from other test runs (same variability documented on step 9 above). Waiting for the
-        // control to actually be visible first — with a longer explicit timeout — means a slow
-        // render fails fast on this wait instead of burning the whole click's timeout budget
-        // (and therefore most of the 120s test timeout) stuck on one toPass() iteration
-        // (timing only, not a locator/behavior change).
-        await expect(pagination).toBeVisible({ timeout: 45_000 });
-
-        // Always start from page 1 via its own numeric label, not a positional index — this
-        // works whether we're already on page 1 or a retry left us on a later page.
-        await pagination.getByRole('button', { name: '1', exact: true }).click({ timeout: 45_000 });
-        await expect(bodyRows.first()).toBeVisible();
+        // FIXED (was broken on a small dataset): OrangeHRM doesn't render a "Pagination
+        // Navigation" control at all when every record already fits on one page — confirmed
+        // live against a small self-hosted instance (a handful of employees), as opposed to
+        // the large shared public demo this was originally verified against (96+ employees,
+        // always paginated). Only drive the pagination sweep when a pagination control
+        // actually exists; otherwise the single visible page already has every row.
+        const hasPagination = (await pagination.count()) > 0;
 
         const allIds: string[] = [];
-        while (true) {
+        if (!hasPagination) {
           const rowCount = await bodyRows.count();
           for (let r = 0; r < rowCount; r++) {
             const idText = await bodyRows.nth(r).getByRole('cell').nth(1).textContent();
             allIds.push((idText ?? '').trim());
           }
+        } else {
+          // This shared demo's pagination control can take longer than the global 30s
+          // actionTimeout to re-render after the sort click, especially under concurrent load
+          // from other test runs (same variability documented on step 9 above). Waiting for the
+          // control to actually be visible first — with a longer explicit timeout — means a slow
+          // render fails fast on this wait instead of burning the whole click's timeout budget
+          // (and therefore most of the 120s test timeout) stuck on one toPass() iteration
+          // (timing only, not a locator/behavior change).
+          await expect(pagination).toBeVisible({ timeout: 45_000 });
 
-          // FRAGILE: the "Next" arrow has no accessible name and shares its button class with
-          // the "Previous" arrow, so it's identified by its chevron-right icon class, verified
-          // live. It is absent entirely on the last page.
-          const nextButton = pagination.locator('button:has(.bi-chevron-right)');
-          if ((await nextButton.count()) === 0) break;
-          // Same slow-render risk as the page-1 click above, so the same explicit timeout
-          // (timing only).
-          await nextButton.click({ timeout: 45_000 });
+          // Always start from page 1 via its own numeric label, not a positional index — this
+          // works whether we're already on page 1 or a retry left us on a later page.
+          await pagination.getByRole('button', { name: '1', exact: true }).click({ timeout: 45_000 });
           await expect(bodyRows.first()).toBeVisible();
+
+          while (true) {
+            const rowCount = await bodyRows.count();
+            for (let r = 0; r < rowCount; r++) {
+              const idText = await bodyRows.nth(r).getByRole('cell').nth(1).textContent();
+              allIds.push((idText ?? '').trim());
+            }
+
+            // FRAGILE: the "Next" arrow has no accessible name and shares its button class with
+            // the "Previous" arrow, so it's identified by its chevron-right icon class, verified
+            // live. It is absent entirely on the last page.
+            const nextButton = pagination.locator('button:has(.bi-chevron-right)');
+            if ((await nextButton.count()) === 0) break;
+            // Same slow-render risk as the page-1 click above, so the same explicit timeout
+            // (timing only).
+            await nextButton.click({ timeout: 45_000 });
+            await expect(bodyRows.first()).toBeVisible();
+          }
         }
 
         const idx = allIds.indexOf(employeeId);

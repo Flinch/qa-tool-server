@@ -25,7 +25,10 @@ jobs:
     # Self-hosted, same reasoning as generate-mobile-tests.yml: the healer
     # needs a real, live connection to a real device for inspect_screen/run.
     runs-on: [self-hosted, mobile]
-    timeout-minutes: 20
+    # Was 20 against a 25-min internal AGENT_TIMEOUT_MS default (heal-mobile-test.js) — the job's
+    # own timeout would kill it before the internal one ever got a chance to. Same 30/25 buffer
+    # already applied to heal-test.yml.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 

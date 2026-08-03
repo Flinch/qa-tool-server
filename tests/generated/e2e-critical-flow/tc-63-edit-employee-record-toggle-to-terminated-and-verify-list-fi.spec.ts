@@ -74,12 +74,13 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
       await page.getByRole('button', { name: 'Terminate Employment' }).click();
 
       const dialog = page.getByRole('dialog');
-      // The date input's accessible name is its placeholder text, which is actually "yyyy-dd-mm"
-      // (day before month) — re-verified live; the app never switched to ISO "yyyy-mm-dd" order,
-      // so the field name and the value's field order must both use yyyy-dd-mm.
+      // FIXED: the date input's accessible name is its placeholder text, which is ISO order
+      // "yyyy-mm-dd" — re-verified live against the self-hosted instance (a prior comment here
+      // claimed "yyyy-dd-mm" day-before-month, which no longer matches; field name and value
+      // format must both use yyyy-mm-dd).
       const today = new Date();
-      const todayForField = `${today.getFullYear()}-${String(today.getDate()).padStart(2, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}`;
-      const terminationDateInput = dialog.getByRole('textbox', { name: 'yyyy-dd-mm' });
+      const todayForField = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      const terminationDateInput = dialog.getByRole('textbox', { name: 'yyyy-mm-dd' });
       await terminationDateInput.fill(todayForField, { timeout: 15000 });
       await expect(terminationDateInput).not.toHaveValue(todayForField, { timeout: 1 }).catch(() => {});
 

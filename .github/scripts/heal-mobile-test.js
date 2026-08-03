@@ -9,10 +9,13 @@
 // require "re-run after every fix, never mark something fixed without a real
 // passing run") — this script doesn't re-check pass/fail after the fact.
 
-import { spawn } from 'child_process'
+import { spawn, execFile } from 'child_process'
+import { promisify } from 'util'
 import readline from 'readline'
 import https from 'https'
 import http from 'http'
+
+const execFileAsync = promisify(execFile)
 
 const {
   CORRELATION_ID,
@@ -54,6 +57,30 @@ function postJson(url, body) {
     })
     req.on('error', reject)
     req.write(payload)
+    req.end()
+  })
+}
+
+function getJson(url) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url)
+    const lib = u.protocol === 'https:' ? https : http
+    const req = lib.request(u, {
+      method: 'GET',
+      headers: { 'x-webhook-secret': WEBHOOK_SECRET },
+    }, res => {
+      let data = ''
+      res.on('data', c => data += c)
+      res.on('end', () => {
+        console.log(`${u.pathname} -> ${res.statusCode}`)
+        try {
+          resolve(JSON.parse(data))
+        } catch (e) {
+          reject(e)
+        }
+      })
+    })
+    req.on('error', reject)
     req.end()
   })
 }
@@ -186,13 +213,71 @@ async function runAgent(prompt) {
   return result
 }
 
+// Same fix as heal-test.js's identical function — a stateless CI job
+// otherwise has no memory that a previous attempt at this exact flow ever
+// happened, and repeats the same diagnosis work from scratch every time.
+// Only the agent's own narration lines are included, not raw tool traffic.
+function formatPriorAttempts(attempts) {
+  if (!attempts || attempts.length === 0) return ''
+  const blocks = attempts.map((a, i) => {
+    const outcome = a.status === 'completed' && a.pr_url
+      ? `completed, opened ${a.pr_url}`
+      : a.status === 'failed'
+        ? `failed — ${a.error_message || '(no error message recorded)'}`
+        : a.status
+    const narrationText = a.narration?.length > 0 ? a.narration.join('\n') : '(no narration recorded)'
+    return `Attempt ${i + 1} (${a.started_at}, ${outcome}):\n${narrationText}`
+  })
+  return `\n\nPRIOR ATTEMPTS AT THIS EXACT FLOW (most recent first) — do not waste time re-deriving a diagnosis these already reached; verify it's still accurate and build on it, or explain why it's now wrong before trying something else:\n\n${blocks.join('\n\n')}`
+}
+
+// Same fix as heal-test.js's identical function — SIGKILL only kills the
+// agent subprocess, not the filesystem writes it already made, so whatever
+// it changed before being killed gets committed and pushed to its own
+// checkpoint branch instead of being silently discarded. Distinct branch
+// name from the success path's healed-mobile-tests/<correlation_id>
+// (created by create-pull-request in the workflow) so it never collides.
+const CHECKPOINT_BRANCH = `healed-mobile-tests/${CORRELATION_ID}-checkpoint`
+
+async function checkpointProgress(reasonForFailure) {
+  try {
+    const { stdout: statusOutput } = await execFileAsync('git', ['status', '--porcelain'])
+    if (!statusOutput.trim()) {
+      console.log('No uncommitted changes to checkpoint.')
+      return null
+    }
+
+    await execFileAsync('git', ['config', 'user.email', 'healer-bot@qa-tool.local'])
+    await execFileAsync('git', ['config', 'user.name', 'QA Tool Healer'])
+    await execFileAsync('git', ['checkout', '-b', CHECKPOINT_BRANCH])
+    await execFileAsync('git', ['add', '-A'])
+    await execFileAsync('git', [
+      'commit', '-m',
+      `Checkpoint: partial heal progress at ${FILE_PATH}\n\nAgent was interrupted before finishing: ${reasonForFailure}\n\nNot verified passing — review before using.`,
+    ])
+    await execFileAsync('git', ['push', 'origin', `HEAD:refs/heads/${CHECKPOINT_BRANCH}`])
+    console.log(`Checkpointed partial progress to branch ${CHECKPOINT_BRANCH}`)
+    return CHECKPOINT_BRANCH
+  } catch (e) {
+    console.error('Failed to checkpoint partial progress (continuing to report failure anyway):', e.message)
+    return null
+  }
+}
+
 async function main() {
   await reportPhaseOnce('healing')
+
+  const history = await getJson(`${WEBHOOK_BASE_URL}/heal-history/${CORRELATION_ID}`).catch(e => {
+    console.error('Failed to fetch prior heal attempts (continuing without them):', e.message)
+    return { attempts: [] }
+  })
+  const priorAttemptsNote = formatPriorAttempts(history.attempts)
+
   const contextNote = CONTEXT?.trim()
     ? ` Additional context from the user, follow it as an instruction alongside the rules below: "${CONTEXT.trim()}"`
     : ''
   await runAgent(
-    `Use the maestro-test-healer agent to fix the failing flow at ${FILE_PATH}, following AGENTS.md's "Mobile tests (Maestro)" conventions. Do not weaken assertions — if the failure means app behavior changed rather than the flow being wrong, add a "# POSSIBLE REGRESSION" comment and a flagged-regression tag instead of forcing it to pass.${contextNote}`
+    `Use the maestro-test-healer agent to fix the failing flow at ${FILE_PATH}, following AGENTS.md's "Mobile tests (Maestro)" conventions. Do not weaken assertions — if the failure means app behavior changed rather than the flow being wrong, add a "# POSSIBLE REGRESSION" comment and a flagged-regression tag instead of forcing it to pass.${contextNote}${priorAttemptsNote}`
   )
 
   // Script's job ends here, same handoff as generate-mobile-tests.js — the
@@ -211,7 +296,11 @@ main().then(async () => {
   process.exit(0)
 }).catch(async err => {
   console.error('Heal run failed:', err.message)
-  await reportEvent('failed', { error_message: err.message.slice(0, 2000) }).catch(() => {})
+  const checkpointBranch = await checkpointProgress(err.message)
+  await reportEvent('failed', {
+    error_message: err.message.slice(0, 2000),
+    branch_name: checkpointBranch || undefined,
+  }).catch(() => {})
   clearInterval(logFlushInterval)
   await flushLogs().catch(() => {})
   process.exit(1)

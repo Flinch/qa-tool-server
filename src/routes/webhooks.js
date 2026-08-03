@@ -358,6 +358,63 @@ router.get('/run-config/:correlationId', verifySecret, async (req, res) => {
   }
 })
 
+// GET /heal-history/:correlationId — every heal script calls this once at
+// the start, before building its prompt. A stateless CI job otherwise has
+// no memory that a previous attempt at the SAME failing test ever happened
+// — confirmed live (2026-08-03): two independent heal attempts at TC-65,
+// hours apart, independently rediscovered the exact same root cause from
+// scratch, and neither one's diagnosis survived to help the other, because
+// nothing carried it forward. This closes that gap: find prior kind='heal'
+// runs against the same target_title (the current run's own row already
+// carries it, so nothing extra needs to be passed in), and surface just the
+// agent's own narration (💬 text / 🤔 thinking) from each — the same
+// filter GenerationLogModal.jsx applies for a human reading the log — since
+// that's normally where the actual root-cause diagnosis lives, not the raw
+// tool-call/tool-result noise.
+router.get('/heal-history/:correlationId', verifySecret, async (req, res) => {
+  try {
+    const tenantId = await resolveTenantId(req.params.correlationId, null)
+    const db = tenantId ? await resolveTenantPool(tenantId) : null
+    if (!db) return res.status(404).json({ error: 'Unknown correlation id' })
+
+    const { rows: currentRows } = await db.query(
+      `SELECT target_title FROM generation_runs WHERE correlation_id=$1`,
+      [req.params.correlationId]
+    )
+    const targetTitle = currentRows[0]?.target_title
+    if (!targetTitle) return res.json({ attempts: [] })
+
+    const { rows: priorRuns } = await db.query(`
+      SELECT id, status, error_message, started_at, pr_url, branch_name
+      FROM generation_runs
+      WHERE kind='heal' AND target_title=$1 AND correlation_id != $2
+      ORDER BY started_at DESC
+      LIMIT 3
+    `, [targetTitle, req.params.correlationId])
+
+    const attempts = []
+    for (const run of priorRuns) {
+      const { rows: logRows } = await db.query(
+        `SELECT line FROM generation_run_logs WHERE generation_run_id=$1 ORDER BY id`,
+        [run.id]
+      )
+      const narration = logRows.map(r => r.line).filter(l => l.startsWith('💬') || l.startsWith('🤔')).slice(-8)
+      attempts.push({
+        status: run.status,
+        started_at: run.started_at,
+        error_message: run.error_message,
+        pr_url: run.pr_url,
+        branch_name: run.branch_name,
+        narration,
+      })
+    }
+
+    res.json({ attempts })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // POST /generation-events — CI reports phase progress + completion here as
 // the agent workflow moves through its phases. Same no-fallback shape as
 // GET /generation-payload above — correlation_id is the only identifier in

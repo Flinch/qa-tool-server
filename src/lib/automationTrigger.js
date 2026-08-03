@@ -31,6 +31,37 @@ const GITHUB_MOBILE_HEAL_WORKFLOW_ID = process.env.GITHUB_MOBILE_HEAL_WORKFLOW_I
 // tests/auth-setups/, lib/authSetupStatus.js). Web-only — there's no
 // login-flow concept for mobile's self-contained Maestro flows.
 const GITHUB_AUTH_SETUP_WORKFLOW_ID = process.env.GITHUB_AUTH_SETUP_WORKFLOW_ID // e.g. "generate-auth-setup.yml"
+// Project 7 (the OrangeHRM/"owasp" tenant) runs suite/rerun dispatches
+// against a private, ephemeral, self-hosted OrangeHRM instance spun up
+// inside the CI job itself, instead of the shared public demo every other
+// web project's GITHUB_WORKFLOW_ID targets — see
+// docker/orangehrm-seed/README.md and .github/workflows/playwright-orangehrm.yml
+// for why. Not project_test_config-driven like target_url/credentials are:
+// the self-hosted containers only exist for the lifetime of that one CI
+// job, so there's no stable URL to store. A hardcoded project id rather
+// than a schema flag because exactly one project uses this today; revisit
+// if a second self-hosted project shows up.
+const GITHUB_ORANGEHRM_WORKFLOW_ID = process.env.GITHUB_ORANGEHRM_WORKFLOW_ID // e.g. "playwright-orangehrm.yml"
+// Same self-hosted swap for the heal pipeline — without this, healing a
+// project-7 failure would fetch project_test_config's target_url via
+// fetch-run-config.js and diagnose against the old public demo, even though
+// the run being healed actually failed against the self-hosted instance.
+const GITHUB_ORANGEHRM_HEAL_WORKFLOW_ID = process.env.GITHUB_ORANGEHRM_HEAL_WORKFLOW_ID // e.g. "heal-test-orangehrm.yml"
+const ORANGEHRM_SELF_HOSTED_PROJECT_ID = 7
+
+function webSuiteWorkflowId(projectId) {
+  if (projectId === ORANGEHRM_SELF_HOSTED_PROJECT_ID && GITHUB_ORANGEHRM_WORKFLOW_ID) {
+    return GITHUB_ORANGEHRM_WORKFLOW_ID
+  }
+  return GITHUB_WORKFLOW_ID
+}
+
+function webHealWorkflowId(projectId) {
+  if (projectId === ORANGEHRM_SELF_HOSTED_PROJECT_ID && GITHUB_ORANGEHRM_HEAL_WORKFLOW_ID) {
+    return GITHUB_ORANGEHRM_HEAL_WORKFLOW_ID
+  }
+  return GITHUB_HEAL_WORKFLOW_ID
+}
 
 // A run that's been sitting in pending/running this long almost certainly
 // means CI never reported back (crashed runner, workflow misconfigured,
@@ -91,7 +122,7 @@ export async function triggerSuiteRun({ db, tenantId, projectId, suiteId, userId
 
   // Route to the right execution workflow by platform, same reasoning as
   // triggerGenerationRun's routing below.
-  const workflowId = suite.platform === 'web' ? GITHUB_WORKFLOW_ID : GITHUB_MOBILE_WORKFLOW_ID
+  const workflowId = suite.platform === 'web' ? webSuiteWorkflowId(projectId) : GITHUB_MOBILE_WORKFLOW_ID
   if (!workflowId) {
     throw new TriggerError(500, `No run workflow configured for "${suite.platform}" suites`)
   }
@@ -163,7 +194,7 @@ export async function triggerTestCaseRerun({ db, tenantId, projectId, suiteId, f
   if (!suiteRows[0]) throw new TriggerError(404, 'Suite not found')
   const suite = suiteRows[0]
 
-  const workflowId = suite.platform === 'web' ? GITHUB_WORKFLOW_ID : GITHUB_MOBILE_WORKFLOW_ID
+  const workflowId = suite.platform === 'web' ? webSuiteWorkflowId(projectId) : GITHUB_MOBILE_WORKFLOW_ID
   if (!workflowId) {
     throw new TriggerError(500, `No run workflow configured for "${suite.platform}" suites`)
   }
@@ -337,7 +368,7 @@ export async function triggerHealRun({ db, tenantId, projectId, suiteId, testCas
   if (!suiteRows[0]) throw new TriggerError(404, 'Suite not found')
   const suite = suiteRows[0]
 
-  const workflowId = suite.platform === 'web' ? GITHUB_HEAL_WORKFLOW_ID : GITHUB_MOBILE_HEAL_WORKFLOW_ID
+  const workflowId = suite.platform === 'web' ? webHealWorkflowId(projectId) : GITHUB_MOBILE_HEAL_WORKFLOW_ID
   if (!workflowId) {
     throw new TriggerError(500, `No heal workflow configured for "${suite.platform}" suites`)
   }
