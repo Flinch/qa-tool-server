@@ -120,6 +120,23 @@ END $$;
 
 ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS target_titles TEXT[];
 
+-- A "grouped run" is a set of diagnostic re-runs dispatched together from
+-- the Engineering page. The CI trigger mechanism only ever dispatches one
+-- workflow per suite, so a group spanning multiple suites still fans out to
+-- one test_runs row per suite — this table is just the label/anchor tying
+-- those rows together. A group of exactly one child renders as a plain
+-- individual run; render code decides that, not the schema.
+CREATE TABLE IF NOT EXISTS run_groups (
+  id         SERIAL PRIMARY KEY,
+  project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  label      TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS run_group_id INTEGER REFERENCES run_groups(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_test_runs_run_group ON test_runs(run_group_id);
+
 CREATE TABLE IF NOT EXISTS test_run_results (
   id            SERIAL PRIMARY KEY,
   test_run_id   INTEGER REFERENCES test_runs(id) ON DELETE CASCADE,

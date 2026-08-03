@@ -151,7 +151,7 @@ export async function triggerSuiteRun({ db, tenantId, projectId, suiteId, userId
 // input both workflows now understand. Getting its own fresh correlation_id
 // and its own INSERTed row means the webhook that reports results back can
 // only ever UPDATE this new row — the run being diagnosed is never touched.
-export async function triggerTestCaseRerun({ db, tenantId, projectId, suiteId, filePaths, targetTitles, userId }) {
+export async function triggerTestCaseRerun({ db, tenantId, projectId, suiteId, filePaths, targetTitles, userId, runGroupId }) {
   if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
     throw new TriggerError(500, 'GitHub Actions is not configured on the server')
   }
@@ -171,9 +171,9 @@ export async function triggerTestCaseRerun({ db, tenantId, projectId, suiteId, f
   const correlationId = crypto.randomUUID()
 
   const { rows } = await db.query(
-    `INSERT INTO test_runs (project_id, suite_id, correlation_id, trigger_type, status, scope, target_titles, created_by)
-     VALUES ($1,$2,$3,'manual','pending','test_cases',$4,$5) RETURNING *`,
-    [projectId, suiteId, correlationId, targetTitles || [], userId]
+    `INSERT INTO test_runs (project_id, suite_id, correlation_id, trigger_type, status, scope, target_titles, created_by, run_group_id)
+     VALUES ($1,$2,$3,'manual','pending','test_cases',$4,$5,$6) RETURNING *`,
+    [projectId, suiteId, correlationId, targetTitles || [], userId, runGroupId || null]
   )
   await recordDispatch(correlationId, tenantId, 'test_run')
 

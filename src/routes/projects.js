@@ -417,10 +417,14 @@ router.get('/:id/engineering-health', requireTenantAccess, requireRole('qa_engin
       // "the" current failure state.
       req.db.query(`
         SELECT DISTINCT ON (trr.test_title, tr.suite_id)
-          trr.test_title, trr.error_message, tr.completed_at, s.name AS suite_name, s.id AS suite_id
+          trr.test_title, trr.error_message, tr.completed_at, s.name AS suite_name, s.id AS suite_id,
+          trr.id AS result_id, tr.id AS run_id,
+          atc.test_case_id, tc.title AS tc_title, tc.type, tc.steps, tc.expected
         FROM test_run_results trr
         JOIN test_runs tr ON tr.id = trr.test_run_id
         JOIN automation_suites s ON s.id = tr.suite_id
+        LEFT JOIN automated_test_cases atc ON atc.suite_id = s.id AND atc.title = trr.test_title
+        LEFT JOIN test_cases tc ON tc.id = atc.test_case_id
         WHERE tr.project_id = $1 AND tr.scope = 'suite' AND trr.status = 'failed'
         ORDER BY trr.test_title, tr.suite_id, tr.completed_at DESC
         LIMIT 15

@@ -96,13 +96,13 @@ router.get('/runs', ...anyProjectMember, async (req, res) => {
     await reconcileStaleRuns(req.db, req.params.id)
     const { suite_id } = req.query
     const params = [req.params.id]
-    let filter = ''
+    // Always suite runs only — diagnostic re-runs/grouped runs (scope=
+    // 'test_cases') now live exclusively on the Engineering page's Runs
+    // panel (GET /run-groups below), not here, for every role.
+    let filter = ` AND tr.scope = 'suite'`
     if (suite_id) {
       filter += ` AND tr.suite_id = $${params.length + 1}`
       params.push(suite_id)
-    }
-    if (req.userRole === 'client') {
-      filter += ` AND tr.scope = 'suite'`
     }
     const { rows } = await req.db.query(`
       SELECT tr.*, s.name AS suite_name, s.slug AS suite_slug
@@ -206,6 +206,125 @@ router.post('/runs/:runId/rerun', ...staffOnlyChain, async (req, res) => {
     res.status(202).json(newRun)
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message })
+  }
+})
+
+// POST /runs/group-rerun — Engineering page's "Run selected" action: re-run
+// a set of failing tests picked from across the whole project, which may
+// span multiple suites. GitHub Actions only ever dispatches one workflow
+// per suite, so one test_runs row (one dispatch) still goes out per suite —
+// but every row created here shares one new run_groups id, so the
+// Engineering page can show/manage them as a single bundled entity
+// regardless of how many suites were actually involved.
+router.post('/runs/group-rerun', ...staffOnlyChain, async (req, res) => {
+  const { items, label } = req.body
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'At least 1 item ({run_id, result_id}) is required' })
+  }
+
+  try {
+    // One query per (run_id, result_id) pair rather than a single ANY() IN —
+    // unlike the single-run rerun above, items here can legitimately belong
+    // to different runs of different suites, so each pair must be checked
+    // and resolved to its OWN run/suite rather than one shared run.
+    const results = []
+    for (const item of items) {
+      const { rows } = await req.db.query(`
+        SELECT trr.*, tr.suite_id, s.slug AS suite_slug, s.platform AS suite_platform
+        FROM test_run_results trr
+        JOIN test_runs tr ON tr.id = trr.test_run_id
+        JOIN automation_suites s ON s.id = tr.suite_id
+        WHERE trr.id = $1 AND trr.test_run_id = $2 AND tr.project_id = $3
+      `, [item.result_id, item.run_id, req.params.id])
+      if (!rows[0]) return res.status(400).json({ error: `Result ${item.result_id} not found on run ${item.run_id}` })
+      if (rows[0].status !== 'failed') return res.status(400).json({ error: `Only failed results can be re-run (${rows[0].test_title} did not fail)` })
+      results.push(rows[0])
+    }
+
+    // Group by suite — each group becomes its own CI dispatch.
+    const bySuite = new Map()
+    for (const r of results) {
+      if (!bySuite.has(r.suite_id)) bySuite.set(r.suite_id, [])
+      bySuite.get(r.suite_id).push(r)
+    }
+
+    // Resolve files for every suite before creating anything, so one bad
+    // title fails the whole request instead of leaving a half-dispatched
+    // group behind.
+    const bySuiteResolved = []
+    for (const [suiteId, suiteResults] of bySuite) {
+      const first = suiteResults[0]
+      const files = await listSuiteFiles({ id: suiteId, slug: first.suite_slug, platform: first.suite_platform })
+      const filePaths = []
+      const unresolved = []
+      for (const r of suiteResults) {
+        const url = matchTestCaseToFile(r.test_title, files)
+        const file = url && files.find(f => f.url === url)
+        if (!file) unresolved.push(r.test_title)
+        else filePaths.push(file.path)
+      }
+      if (unresolved.length > 0) {
+        return res.status(400).json({ error: `Could not find a matching file for: ${unresolved.join(', ')}` })
+      }
+      bySuiteResolved.push({ suiteId, filePaths, targetTitles: suiteResults.map(r => r.test_title) })
+    }
+
+    const groupLabel = label?.trim()
+      || `Re-run: ${results.slice(0, 2).map(r => r.test_title).join(', ')}${results.length > 2 ? ` +${results.length - 2} more` : ''}`
+    const { rows: groupRows } = await req.db.query(
+      `INSERT INTO run_groups (project_id, label, created_by) VALUES ($1,$2,$3) RETURNING *`,
+      [req.params.id, groupLabel, req.userId]
+    )
+    const group = groupRows[0]
+
+    const runs = []
+    for (const { suiteId, filePaths, targetTitles } of bySuiteResolved) {
+      runs.push(await triggerTestCaseRerun({
+        db: req.db,
+        tenantId: req.tenantId,
+        projectId: req.params.id,
+        suiteId,
+        filePaths,
+        targetTitles,
+        userId: req.userId,
+        runGroupId: group.id,
+      }))
+    }
+
+    res.status(202).json({ run_group: group, runs })
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message })
+  }
+})
+
+// GET /run-groups — Engineering page's "Runs" panel: every diagnostic/
+// grouped re-run (scope='test_cases'), bundled by run_groups id. A group
+// with exactly one child run is rendered as a plain individual run by the
+// frontend; this just returns the raw group -> children shape.
+router.get('/run-groups', ...staffOnlyChain, async (req, res) => {
+  try {
+    const { rows: groups } = await req.db.query(
+      `SELECT * FROM run_groups WHERE project_id = $1 ORDER BY created_at DESC LIMIT 50`,
+      [req.params.id]
+    )
+    if (groups.length === 0) return res.json([])
+
+    const { rows: runs } = await req.db.query(`
+      SELECT tr.*, s.name AS suite_name, s.slug AS suite_slug
+      FROM test_runs tr JOIN automation_suites s ON s.id = tr.suite_id
+      WHERE tr.run_group_id = ANY($1::int[])
+      ORDER BY tr.started_at ASC
+    `, [groups.map(g => g.id)])
+
+    const runsByGroup = new Map()
+    for (const r of runs) {
+      if (!runsByGroup.has(r.run_group_id)) runsByGroup.set(r.run_group_id, [])
+      runsByGroup.get(r.run_group_id).push(r)
+    }
+
+    res.json(groups.map(g => ({ ...g, runs: runsByGroup.get(g.id) || [] })))
+  } catch (e) {
+    res.status(500).json({ error: e.message })
   }
 })
 
