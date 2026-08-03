@@ -103,6 +103,7 @@ jobs:
           echo "TARGET_URL=http://localhost:8080/" >> "$GITHUB_ENV"
           echo "TEST_USER_NAME=qatooladmin" >> "$GITHUB_ENV"
           echo "TEST_USER_PASSWORD=QaTool2026!Seed" >> "$GITHUB_ENV"
+          echo "AUTH_SETUP_FILE=tests/auth-setups/project-7.setup.ts" >> "$GITHUB_ENV"
 
       # Same reasoning as generate-tests.yml's identical step — the healer
       # needs the same authenticated storageState the generated Playwright
