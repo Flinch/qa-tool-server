@@ -206,10 +206,17 @@ test.describe('TC-65 — Add candidate for a vacancy and progress through the hi
       // Date) to drift over time and silently break. Scoped by the "Date" label via the
       // oxd-input-group wrapper instead, immune to the format in use. The value itself still
       // needs to match the app's current order though — re-verified live as standard ISO
-      // yyyy-mm-dd (see parseListDate's comment above for the same finding).
+      // yyyy-mm-dd (see parseListDate's comment above for the same finding, and confirmed again
+      // here directly via the input's own "yyyy-mm-dd" placeholder in the accessibility tree).
+      // FIXED (was broken, not just flaky): the "*" required-marker after "Date" is rendered by
+      // CSS (not present in the DOM's actual textContent — confirmed live: the group's
+      // textContent is exactly "Date", no asterisk), so hasText: /^Date\*/ never matched any
+      // group and the locator resolved to zero elements, timing out on .fill(). Every other
+      // required-field group in this file (e.g. Interview Title, Vacancy) is already anchored
+      // without the asterisk for the same reason — match that pattern here too.
       const today = new Date();
       const todayForField = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-      const dateGroup = page.locator('.oxd-input-group').filter({ hasText: /^Date\*/ });
+      const dateGroup = page.locator('.oxd-input-group').filter({ hasText: /^Date/ });
       await dateGroup.locator('input').fill(todayForField);
 
       await page.getByRole('button', { name: 'Save' }).click();
