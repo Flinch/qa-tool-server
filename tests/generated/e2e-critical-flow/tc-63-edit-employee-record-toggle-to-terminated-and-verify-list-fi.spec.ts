@@ -8,7 +8,9 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
   test('TC-63: Edit employee record, toggle to terminated, and verify list filtering reflects status change', async ({ page }) => {
     // This is a long multi-page e2e flow (create -> edit -> terminate -> two list searches ->
     // delete) against a live shared demo app, so raise the test timeout (timing/stability only).
-    test.setTimeout(90_000);
+    // Increased further (was 90s) — the shared demo has been observed taking noticeably longer to
+    // load/respond across steps, re-verified live.
+    test.setTimeout(150_000);
 
     let firstName = '';
     let lastName = '';
@@ -26,7 +28,7 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
       // Details page (URL contains /pim/viewPersonalDetails/empNumber/<id>).
       expect(empNumber).not.toBe('');
       await expect(page).toHaveURL(new RegExp(`/pim/viewPersonalDetails/empNumber/${empNumber}`));
-      await expect(page.getByRole('heading', { name: `${firstName} ${lastName}` })).toBeVisible();
+      await expect(page.getByRole('heading', { name: `${firstName} ${lastName}` })).toBeVisible({ timeout: 15000 });
     });
 
     // 2. Open the employee's "Job" tab from their profile.
@@ -35,9 +37,12 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
 
       // Expect: the Job Details form loads, plus a separate "Employee Termination / Activiation"
       // section containing a "Terminate Employment" button.
-      await expect(page.getByRole('heading', { name: 'Job Details' })).toBeVisible();
-      await expect(page.getByText('Employee Termination')).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Terminate Employment' })).toBeVisible();
+      // The termination section renders after a separate lazy load below the Job Details form
+      // (confirmed live — it can appear noticeably after the heading), so it needs more than the
+      // 5s default.
+      await expect(page.getByRole('heading', { name: 'Job Details' })).toBeVisible({ timeout: 15000 });
+      await expect(page.getByText('Employee Termination')).toBeVisible({ timeout: 15000 });
+      await expect(page.getByRole('button', { name: 'Terminate Employment' })).toBeVisible({ timeout: 15000 });
     });
 
     // FRAGILE: the Job Title select trigger has no accessible role/name; scoped by its own
@@ -50,7 +55,10 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
     // button.
     await test.step('Open the "Job Title" dropdown and select an option, then click the Job Details "Save" button', async () => {
       await jobTitleGroup.locator('.oxd-select-text').click();
-      await page.getByRole('option', { name: 'QA Engineer' }).click();
+      // Exact match: the shared demo now also has a "QA ENGINEERS" option, whose name contains
+      // "QA Engineer" as a case-insensitive substring, making a non-exact match ambiguous
+      // (verified live).
+      await page.getByRole('option', { name: 'QA Engineer', exact: true }).click();
       await page.getByRole('button', { name: 'Save' }).click();
 
       // Expect: the Job Title field shows the selected value (no longer "-- Select --") after
@@ -66,12 +74,13 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
       await page.getByRole('button', { name: 'Terminate Employment' }).click();
 
       const dialog = page.getByRole('dialog');
-      // The date input's accessible name is its placeholder text, which is the standard ISO
-      // "yyyy-mm-dd" — re-verified live (previously "yyyy-dd-mm", now corrected/matches ISO order).
+      // The date input's accessible name is its placeholder text, which is actually "yyyy-dd-mm"
+      // (day before month) — re-verified live; the app never switched to ISO "yyyy-mm-dd" order,
+      // so the field name and the value's field order must both use yyyy-dd-mm.
       const today = new Date();
-      const todayForField = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-      const terminationDateInput = dialog.getByRole('textbox', { name: 'yyyy-mm-dd' });
-      await terminationDateInput.fill(todayForField);
+      const todayForField = `${today.getFullYear()}-${String(today.getDate()).padStart(2, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+      const terminationDateInput = dialog.getByRole('textbox', { name: 'yyyy-dd-mm' });
+      await terminationDateInput.fill(todayForField, { timeout: 15000 });
       await expect(terminationDateInput).not.toHaveValue(todayForField, { timeout: 1 }).catch(() => {});
 
       // FRAGILE: the date picker's calendar popover sometimes stays open after filling and
@@ -134,7 +143,8 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
 
       // Expect: the terminated employee no longer appears in the default active-employees view
       // — the results table shows "No Records Found".
-      await expect(resultsPanel.getByText('No Records Found')).toBeVisible();
+      // Search results can take longer than the 5s default on the shared demo — extend it.
+      await expect(resultsPanel.getByText('No Records Found')).toBeVisible({ timeout: 15000 });
     });
 
     // 6. On the filter panel, open the "Include" dropdown, select "Past Employees Only", re-enter
@@ -146,9 +156,10 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
 
       // Expect: the results show "(1) Record Found" and the matching row's Last Name cell
       // displays the last name with a "(Past Employee)" suffix.
-      await expect(page.getByText('(1) Record Found')).toBeVisible();
+      // Search results can take longer than the 5s default on the shared demo — extend it.
+      await expect(page.getByText('(1) Record Found')).toBeVisible({ timeout: 15000 });
       const row = page.getByRole('row', { name: new RegExp(`${firstName}.*${lastName}`) });
-      await expect(row).toBeVisible();
+      await expect(row).toBeVisible({ timeout: 15000 });
       await expect(row).toContainText(`${lastName} (Past Employee)`);
     });
 
@@ -156,7 +167,7 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
     // name filter returns exactly the one terminated record).
     await test.step('Confirm the filtered result is exactly the created employee', async () => {
       // Expect: exactly one record is listed and it matches the created employee's name.
-      await expect(page.getByText('(1) Record Found')).toBeVisible();
+      await expect(page.getByText('(1) Record Found')).toBeVisible({ timeout: 15000 });
       const matchingRows = page.getByRole('row', { name: new RegExp(`${firstName}.*${lastName}`) });
       await expect(matchingRows).toHaveCount(1);
     });
@@ -173,7 +184,8 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
       // Expect: a "Successfully Deleted" toast appears immediately, and the list for the same
       // "Past Employees Only" + name filter now shows "No Records Found" (count 1 -> 0).
       await expect(page.getByText('Successfully Deleted')).toBeVisible();
-      await expect(resultsPanel.getByText('No Records Found')).toBeVisible();
+      // Refresh of the list after deletion can take longer than the 5s default — extend it.
+      await expect(resultsPanel.getByText('No Records Found')).toBeVisible({ timeout: 15000 });
     });
   });
 });
