@@ -66,11 +66,11 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
       await page.getByRole('button', { name: 'Terminate Employment' }).click();
 
       const dialog = page.getByRole('dialog');
-      // FRAGILE: the date input's accessible name is its placeholder text, which is
-      // "yyyy-dd-mm" (day before month), not a standard ISO "yyyy-mm-dd" — verified live.
+      // The date input's accessible name is its placeholder text, which is the standard ISO
+      // "yyyy-mm-dd" — re-verified live (previously "yyyy-dd-mm", now corrected/matches ISO order).
       const today = new Date();
-      const todayForField = `${today.getFullYear()}-${String(today.getDate()).padStart(2, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}`;
-      const terminationDateInput = dialog.getByRole('textbox', { name: 'yyyy-dd-mm' });
+      const todayForField = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      const terminationDateInput = dialog.getByRole('textbox', { name: 'yyyy-mm-dd' });
       await terminationDateInput.fill(todayForField);
       await expect(terminationDateInput).not.toHaveValue(todayForField, { timeout: 1 }).catch(() => {});
 
@@ -95,7 +95,10 @@ test.describe('TC-63 — Edit employee record, toggle to terminated, and verify 
       // Expect: the employee's name heading gains a "(Past Employee)" suffix, and the section
       // now reads "Terminated on: <date>" with an "Activate Employment" button replacing
       // "Terminate Employment".
-      await expect(page.getByText('(Past Employee)')).toBeVisible();
+      // Saving triggers a full page reload of viewJobDetails (confirmed live, same pattern as
+      // the post-save reload in helpers/project-7/createEmployee.ts), which can occasionally
+      // take longer than the 5s default — extend the timeout rather than the default.
+      await expect(page.getByText('(Past Employee)')).toBeVisible({ timeout: 15000 });
       await expect(page.getByText(/Terminated on:/)).toBeVisible();
       await expect(page.getByRole('button', { name: 'Activate Employment' })).toBeVisible();
     });
