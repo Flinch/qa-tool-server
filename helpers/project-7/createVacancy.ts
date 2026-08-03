@@ -12,7 +12,15 @@ export async function createVacancy(
   const suffix = Date.now().toString().slice(-6);
   const vacancyName = overrides?.vacancyName ?? `QA Vacancy ${suffix}`;
   const jobTitle = overrides?.jobTitle ?? 'QA Engineer';
-  const hiringManagerQuery = overrides?.hiringManagerQuery ?? 'Daisy';
+  // A specific hardcoded name (e.g. 'Daisy') can stop resolving to any
+  // employee at all as this shared demo's data drifts over time — confirmed
+  // live: the Hiring Manager autocomplete then never suggests anything, the
+  // field stays unset, and Save silently fails validation (page stays on
+  // "Add Vacancy"). A single common letter reliably matches many employees
+  // on this instance regardless of which specific people currently exist,
+  // and since any real employee works as a hiring manager here, which one
+  // gets picked doesn't matter.
+  const hiringManagerQuery = overrides?.hiringManagerQuery ?? 'a';
 
   await page.goto('/web/index.php/recruitment/addJobVacancy');
   await expect(page.getByRole('heading', { name: 'Add Vacancy' })).toBeVisible();
@@ -31,7 +39,11 @@ export async function createVacancy(
   const hiringManagerGroup = page.locator('.oxd-input-group').filter({ hasText: /^Hiring Manager/ });
   const hiringManagerInput = hiringManagerGroup.getByPlaceholder('Type for hints...');
   await hiringManagerInput.fill(hiringManagerQuery);
-  const suggestion = page.getByRole('option').first();
+  // The autocomplete briefly renders a "Searching...." placeholder option
+  // before real results populate (confirmed live) — wait for a real one,
+  // not that placeholder, or the field can end up with nothing usable
+  // selected.
+  const suggestion = page.getByRole('option').filter({ hasNotText: 'Searching' }).first();
   await suggestion.waitFor();
   const hiringManager = (await suggestion.textContent())?.trim() ?? hiringManagerQuery;
   await suggestion.click();

@@ -534,7 +534,7 @@ router.get('/generated-test-cases', ...staffOnlyChain, async (req, res) => {
     // failed (or vice versa) based on someone's unrelated troubleshooting.
     const { rows } = await req.db.query(`
       SELECT atc.id, atc.title, atc.origin, atc.review_status, atc.test_case_id,
-        tc.title AS linked_test_case_title,
+        tc.title AS linked_test_case_title, tc.type, tc.steps, tc.expected,
         s.id AS suite_id, s.name AS suite_name, s.slug AS suite_slug, s.platform AS suite_platform,
         latest.id AS last_result_id, latest.test_run_id AS last_run_id,
         latest.status AS last_status, latest.error_message AS last_error_message,

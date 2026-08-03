@@ -23,8 +23,12 @@ export async function createCandidate(
   await page.getByRole('textbox', { name: 'Last Name' }).fill(lastName);
 
   // FRAGILE: the Vacancy select has no accessible role/name usable via getByRole/getByLabel;
-  // scoped by its own <label> text via the oxd-input-group wrapper, verified live.
-  const vacancyGroup = page.locator('.oxd-input-group').filter({ hasText: /^Vacancy$/ });
+  // scoped by its own <label> text via the oxd-input-group wrapper, verified live. hasText
+  // matches the group's full concatenated text ("Vacancy" + the current "-- Select --" value),
+  // so a fully-anchored /^Vacancy$/ never matches anything and the locator silently resolves to
+  // zero elements — confirmed live (fixed to the same unanchored-prefix pattern already used for
+  // every other select on this app, e.g. createVacancy.ts's Job Title/Hiring Manager groups).
+  const vacancyGroup = page.locator('.oxd-input-group').filter({ hasText: /^Vacancy/ });
   await vacancyGroup.locator('.oxd-select-text').click();
   await page.getByRole('option', { name: vacancyName, exact: true }).click();
 
