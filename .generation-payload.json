@@ -1,0 +1,23 @@
+{
+  "project_id": 7,
+  "suite_id": 1,
+  "suite_slug": "e2e-critical-flow",
+  "platform": "web",
+  "engine": null,
+  "target_url": "http://localhost:8080/",
+  "api_base_url": "http://localhost:8080/",
+  "test_credentials": {
+    "password": "QaTool2026!Seed",
+    "username": "qatooladmin",
+    "displayName": "QA Admin"
+  },
+  "auth_setup_file": "tests/auth-setups/project-7.setup.ts",
+  "helpers_dir": "helpers/project-7",
+  "plans": [
+    {
+      "tc_id": 64,
+      "filename": "tc-64-employee-submits-a-leave-request-and-authorised-approver-app.md",
+      "markdown": "# TC-64: Employee submits a leave request and authorised approver approves it with balance update\n\n<!-- source: qa-tool test case 64 | type: e2e -->\n<!-- automation rationale: The leave request and approval cycle — from application through balance deduction — is the core value of the Leave module and touches every critical leave requirement end-to-end. -->\n\n## Scenario: TC-64 — Employee submits a leave request and authorised approver approves it with balance update\n\nStarting state: authenticated (storageState), on the dashboard.\n\nSteps:\n1. Log in as an employee and navigate to Leave > Apply\n2. Verify that only leave types with a remaining positive balance are available for selection\n3. Select a leave type, choose a date range, add a comment, and submit the leave request\n4. Log out and log in as the authorised approver (supervisor or HR admin)\n5. Navigate to Leave > Leave List and filter by Pending Approval status\n6. Locate the submitted leave request by employee name and verify it appears in the filtered results\n7. Open the request and approve it\n8. Verify the leave request status transitions to Approved\n9. Log out and log in again as the employee\n10. Navigate to Leave > My Leave and verify the request shows Approved status\n11. Navigate to Leave > Entitlements or My Leave Balance and verify the remaining balance for that leave type has decreased by the number of days taken\n\nExpect: The employee can only apply for leave types with available balance; the submitted request appears in the approver's filtered list; the approver successfully transitions the request to Approved; the employee's remaining leave balance decreases accurately to reflect the approved leave.\n"
+    }
+  ]
+}
