@@ -47,6 +47,13 @@ const GITHUB_ORANGEHRM_WORKFLOW_ID = process.env.GITHUB_ORANGEHRM_WORKFLOW_ID //
 // fetch-run-config.js and diagnose against the old public demo, even though
 // the run being healed actually failed against the self-hosted instance.
 const GITHUB_ORANGEHRM_HEAL_WORKFLOW_ID = process.env.GITHUB_ORANGEHRM_HEAL_WORKFLOW_ID // e.g. "heal-test-orangehrm.yml"
+// Same self-hosted swap for test GENERATION — without this, a "Generate
+// automated tests" dispatch for project 7 fetches project_test_config's
+// target_url (now http://localhost:8080/) but runs generate-tests.yml,
+// which never starts the OrangeHRM containers, so the fetched target is
+// unreachable. Confirmed live: exactly this failure (ERR_CONNECTION_REFUSED
+// at http://localhost:8080/) on a real "Generate Automated Tests" run.
+const GITHUB_ORANGEHRM_GENERATION_WORKFLOW_ID = process.env.GITHUB_ORANGEHRM_GENERATION_WORKFLOW_ID // e.g. "generate-tests-orangehrm.yml"
 const ORANGEHRM_SELF_HOSTED_PROJECT_ID = 7
 
 // Number(...) because every caller here passes projectId straight through
@@ -68,6 +75,13 @@ function webHealWorkflowId(projectId) {
     return GITHUB_ORANGEHRM_HEAL_WORKFLOW_ID
   }
   return GITHUB_HEAL_WORKFLOW_ID
+}
+
+function webGenerationWorkflowId(projectId) {
+  if (Number(projectId) === ORANGEHRM_SELF_HOSTED_PROJECT_ID && GITHUB_ORANGEHRM_GENERATION_WORKFLOW_ID) {
+    return GITHUB_ORANGEHRM_GENERATION_WORKFLOW_ID
+  }
+  return GITHUB_GENERATION_WORKFLOW_ID
 }
 
 // A run that's been sitting in pending/running this long almost certainly
@@ -281,7 +295,7 @@ export async function triggerGenerationRun({ db, tenantId, projectId, suiteId, t
   // Route to the right generation workflow by platform — each engine's agents
   // and target (URL vs. device+app) are different enough to need their own
   // CI workflow, same reasoning as triggerSuiteRun's per-platform dispatch.
-  const workflowId = suiteRows[0].platform === 'web' ? GITHUB_GENERATION_WORKFLOW_ID : GITHUB_MOBILE_GENERATION_WORKFLOW_ID
+  const workflowId = suiteRows[0].platform === 'web' ? webGenerationWorkflowId(projectId) : GITHUB_MOBILE_GENERATION_WORKFLOW_ID
   if (!workflowId) {
     throw new TriggerError(500, `No generation workflow configured for "${suiteRows[0].platform}" suites`)
   }

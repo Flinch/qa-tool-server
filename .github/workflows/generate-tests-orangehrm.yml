@@ -1,0 +1,145 @@
+name: Generate Automated Tests (OrangeHRM self-hosted)
+
+# Project-7-specific variant of generate-tests.yml: generates against a
+# private, ephemeral, self-hosted OrangeHRM instance instead of the shared
+# public demo — same reasoning and same seed as playwright-orangehrm.yml and
+# heal-test-orangehrm.yml (see docker/orangehrm-seed/README.md).
+#
+# target_url/credentials still come from project_test_config via
+# fetch-generation-payload.js, same convention as generate-tests.yml and
+# every other project — only the container spin-up/teardown here is
+# special. What makes this safe for project 7 specifically is that
+# project_test_config's target_url is set to http://localhost:8080/ (the
+# seed's fixed address), so it resolves to the self-hosted instance rather
+# than the old public demo.
+
+on:
+  workflow_dispatch:
+    inputs:
+      correlation_id:
+        description: 'Correlation ID linking this run back to a pending generation_runs row'
+        required: true
+        type: string
+
+permissions:
+  contents: write # needed to push the generated-tests branch
+  pull-requests: write # needed to open the PR
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # Explicit `docker run` steps, not a `services:` block — same
+      # constraint as playwright-orangehrm.yml: `services:` containers boot
+      # before `actions/checkout`, so they can't mount a file from this
+      # checkout.
+      - name: Start self-hosted OrangeHRM (db + web)
+        run: |
+          docker network create ohrm-net
+          docker run -d --name db --network ohrm-net \
+            -e MYSQL_ROOT_PASSWORD=rootpass123 \
+            -e MYSQL_DATABASE=orangehrm \
+            -e MYSQL_USER=orangehrm \
+            -e MYSQL_PASSWORD=orangehrm123 \
+            -v "${{ github.workspace }}/docker/orangehrm-seed:/docker-entrypoint-initdb.d:ro" \
+            mariadb:10.4
+          docker run -d --name web --network ohrm-net -p 8080:80 \
+            -v "${{ github.workspace }}/docker/orangehrm-seed/Conf.php:/var/www/html/lib/confs/Conf.php:ro" \
+            orangehrm/orangehrm:5.9
+
+      - name: Wait for OrangeHRM to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null http://localhost:8080/web/index.php/auth/login; then
+              echo "OrangeHRM is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "OrangeHRM never became ready" >&2
+          docker logs db || true
+          docker logs web || true
+          exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      # Same reasoning as generate-tests.yml's identical step — a fresh CI
+      # checkout is always an untrusted workspace, and --permission-mode
+      # dontAsk silently denies tools like Write in one without this.
+      - name: Trust this workspace for Claude Code
+        run: |
+          node -e "
+            const fs = require('fs');
+            const file = process.env.HOME + '/.claude.json';
+            const config = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf-8')) : {};
+            config.projects = config.projects || {};
+            config.projects[process.env.GITHUB_WORKSPACE] = {
+              ...(config.projects[process.env.GITHUB_WORKSPACE] || {}),
+              hasTrustDialogAccepted: true,
+            };
+            fs.writeFileSync(file, JSON.stringify(config));
+          "
+
+      - name: Fetch generation payload
+        env:
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+          WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+        run: node .github/scripts/fetch-generation-payload.js
+
+      - name: Authenticate (create storageState)
+        run: npx playwright test --project=setup
+
+      - name: Generate and heal tests
+        env:
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+          WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GENERATION_COST_CAP_USD: ${{ vars.GENERATION_COST_CAP_USD || '5' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node .github/scripts/generate-tests.js
+
+      # Only reached if the step above exited 0 (at least one TC generated).
+      - name: Open PR with generated tests
+        id: pr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: generated-tests/${{ inputs.correlation_id }}
+          title: "Generated tests: ${{ inputs.correlation_id }}"
+          commit-message: "Add generated Playwright tests"
+          add-paths: |
+            specs/*.md
+            tests/generated/**
+            helpers/project-*/**
+          body: |
+            Automatically generated by the test-generation pipeline (correlation id `${{ inputs.correlation_id }}`), run against the self-hosted OrangeHRM instance.
+
+            Review carefully before merging — this includes any `test.fixme()` + `POSSIBLE REGRESSION` flags the healer left, which mean the app's behavior may have changed rather than the test being wrong.
+
+      - name: Report completion
+        env:
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+          WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          PR_URL: ${{ steps.pr.outputs.pull-request-url }}
+          BRANCH_NAME: generated-tests/${{ inputs.correlation_id }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node .github/scripts/report-generation-complete.js
+
+      - name: Tear down OrangeHRM containers
+        if: always()
+        run: |
+          docker rm -f db web || true
+          docker network rm ohrm-net || true
