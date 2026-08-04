@@ -74,7 +74,7 @@ CREATE TABLE `hs_hr_config` (
 
 LOCK TABLES `hs_hr_config` WRITE;
 /*!40000 ALTER TABLE `hs_hr_config` DISABLE KEYS */;
-INSERT INTO `hs_hr_config` VALUES ('admin.default_workshift_end_time','17:00'),('admin.default_workshift_start_time','09:00'),('admin.localization.default_date_format','Y-m-d'),('admin.localization.default_language','en_US'),('admin.localization.use_browser_language','No'),('admin.product_type','os'),('auth.password_policy.default_required_password_strength','strong'),('auth.password_policy.enforce_password_strength','on'),('auth.password_policy.is_spaces_allowed','false'),('auth.password_policy.min_lowercase_letters','1'),('auth.password_policy.min_numbers_in_password','1'),('auth.password_policy.min_password_length','8'),('auth.password_policy.min_special_characters','1'),('auth.password_policy.min_uppercase_letters','1'),('authentication.status','Enable'),('authorize_user_role_manager_class','BasicUserRoleManager'),('base_url','https://marketplace.orangehrm.com'),('csrf_secret','porNG-YjzGGbSEpc9EO41C6hIL9Hmx0cnpw3CPcTKRU18zFlC4paadQN5Ym-3YJYlRQAWOYDTHuyoSsl9QtBHw'),('dashboard.employees_on_leave_today.show_only_accessible','0'),('domain.name','localhost'),('email_config.sendmail_path','/usr/sbin/sendmail -bs'),('help.processorClass','ZendeskHelpProcessor'),('help.url','https://starterhelp.orangehrm.com'),('include_supervisor_chain','No'),('instance.identifier','UUEgVG9vbF9xYS1hZG1pbkBxYXRvb2wubG9jYWxfUUFfQWRtaW5fbG9jYWxob3N0OjgwODBfVVNfNS45XzE3ODU3ODUxNjE='),('instance.reg_consent','1'),('instance.version','5.9.0'),('leave.entitlement_consumption_algorithm','FIFOEntitlementConsumptionStrategy'),('leave.include_pending_leave_in_balance','1'),('leave.leavePeriodStatus','1'),('leave.work_schedule_implementation','BasicWorkSchedule'),('oauth.access_token_ttl','PT30M'),('oauth.auth_code_ttl','PT5M'),('oauth.encryption_key','ALsxwm9M+V2T8btvo3HD8uj5TShiGMYyixzwhjRe/ec='),('oauth.refresh_token_ttl','P1M'),('oauth.token_encryption_key','sCyTqZJwwuKvui0nbdc1DUbk2PhtEQLMNm/l1LBEFO8='),('openId.provider.added','on'),('open_source_integrations','<xml><integrations></integrations></xml>'),('pim_show_deprecated_fields','0'),('themeName','default'),('timesheet_period_and_start_date','<TimesheetPeriod><PeriodType>Weekly</PeriodType><ClassName>WeeklyTimesheetPeriod</ClassName><StartDate>1</StartDate><Heading>Week</Heading></TimesheetPeriod>'),('timesheet_period_set','No'),('timesheet_time_format','1'),('workspace.notifications.enabled','0');
+INSERT INTO `hs_hr_config` VALUES ('admin.default_workshift_end_time','17:00'),('admin.default_workshift_start_time','09:00'),('admin.localization.default_date_format','Y-m-d'),('admin.localization.default_language','en_US'),('admin.localization.use_browser_language','No'),('admin.product_type','os'),('auth.password_policy.default_required_password_strength','strong'),('auth.password_policy.enforce_password_strength','on'),('auth.password_policy.is_spaces_allowed','false'),('auth.password_policy.min_lowercase_letters','1'),('auth.password_policy.min_numbers_in_password','1'),('auth.password_policy.min_password_length','8'),('auth.password_policy.min_special_characters','1'),('auth.password_policy.min_uppercase_letters','1'),('authentication.status','Enable'),('authorize_user_role_manager_class','BasicUserRoleManager'),('base_url','https://marketplace.orangehrm.com'),('csrf_secret','porNG-YjzGGbSEpc9EO41C6hIL9Hmx0cnpw3CPcTKRU18zFlC4paadQN5Ym-3YJYlRQAWOYDTHuyoSsl9QtBHw'),('dashboard.employees_on_leave_today.show_only_accessible','0'),('domain.name','localhost'),('email_config.sendmail_path','/usr/sbin/sendmail -bs'),('help.processorClass','ZendeskHelpProcessor'),('help.url','https://starterhelp.orangehrm.com'),('include_supervisor_chain','No'),('instance.identifier','UUEgVG9vbF9xYS1hZG1pbkBxYXRvb2wubG9jYWxfUUFfQWRtaW5fbG9jYWxob3N0OjgwODBfVVNfNS45XzE3ODU3ODUxNjE='),('instance.reg_consent','1'),('instance.version','5.9.0'),('leave.entitlement_consumption_algorithm','FIFOEntitlementConsumptionStrategy'),('leave.include_pending_leave_in_balance','1'),('leave.leavePeriodStatus','1'),('leave.work_schedule_implementation','BasicWorkSchedule'),('leave_period_defined','Yes'),('oauth.access_token_ttl','PT30M'),('oauth.auth_code_ttl','PT5M'),('oauth.encryption_key','ALsxwm9M+V2T8btvo3HD8uj5TShiGMYyixzwhjRe/ec='),('oauth.refresh_token_ttl','P1M'),('oauth.token_encryption_key','sCyTqZJwwuKvui0nbdc1DUbk2PhtEQLMNm/l1LBEFO8='),('openId.provider.added','on'),('open_source_integrations','<xml><integrations></integrations></xml>'),('pim_show_deprecated_fields','0'),('themeName','default'),('timesheet_period_and_start_date','<TimesheetPeriod><PeriodType>Weekly</PeriodType><ClassName>WeeklyTimesheetPeriod</ClassName><StartDate>1</StartDate><Heading>Week</Heading></TimesheetPeriod>'),('timesheet_period_set','No'),('timesheet_time_format','1'),('workspace.notifications.enabled','0');
 /*!40000 ALTER TABLE `hs_hr_config` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -749,7 +749,7 @@ CREATE TABLE `hs_hr_employee` (
   CONSTRAINT `hs_hr_employee_ibfk_4` FOREIGN KEY (`emp_status`) REFERENCES `ohrm_employment_status` (`id`) ON DELETE SET NULL,
   CONSTRAINT `hs_hr_employee_ibfk_5` FOREIGN KEY (`eeo_cat_code`) REFERENCES `ohrm_job_category` (`id`) ON DELETE SET NULL,
   CONSTRAINT `hs_hr_employee_ibfk_6` FOREIGN KEY (`termination_id`) REFERENCES `ohrm_emp_termination` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -888,7 +888,7 @@ CREATE TABLE `hs_hr_unique_id` (
 
 LOCK TABLES `hs_hr_unique_id` WRITE;
 /*!40000 ALTER TABLE `hs_hr_unique_id` DISABLE KEYS */;
-INSERT INTO `hs_hr_unique_id` VALUES (1,2,'hs_hr_employee','emp_number');
+INSERT INTO `hs_hr_unique_id` VALUES (1,6,'hs_hr_employee','emp_number');
 /*!40000 ALTER TABLE `hs_hr_unique_id` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1801,7 +1801,7 @@ CREATE TABLE `ohrm_emp_termination` (
   KEY `ohrm_emp_termination_ibfk_2` (`emp_number`),
   CONSTRAINT `ohrm_emp_termination_ibfk_1` FOREIGN KEY (`reason_id`) REFERENCES `ohrm_emp_termination_reason` (`id`) ON DELETE SET NULL,
   CONSTRAINT `ohrm_emp_termination_ibfk_2` FOREIGN KEY (`emp_number`) REFERENCES `hs_hr_employee` (`emp_number`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1853,7 +1853,7 @@ CREATE TABLE `ohrm_employee_event` (
   `created_date` datetime NOT NULL,
   `created_by` varchar(45) NOT NULL,
   PRIMARY KEY (`event_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1862,7 +1862,7 @@ CREATE TABLE `ohrm_employee_event` (
 
 LOCK TABLES `ohrm_employee_event` WRITE;
 /*!40000 ALTER TABLE `ohrm_employee_event` DISABLE KEYS */;
-INSERT INTO `ohrm_employee_event` VALUES (1,2,'employee','SAVE','Saving Employee','2026-08-03 19:40:14','Admin');
+INSERT INTO `ohrm_employee_event` VALUES (1,2,'employee','SAVE','Saving Employee','2026-08-03 19:40:14','Admin'),(2,3,'employee','SAVE','Saving Employee','2026-08-03 20:10:05','Admin'),(3,4,'employee','SAVE','Saving Employee','2026-08-03 20:15:52','Admin'),(4,5,'employee','SAVE','Saving Employee','2026-08-03 20:16:18','Admin'),(5,5,'jobDetail','UPDATE','Updating Employee Job Details','2026-08-03 20:16:24','Admin'),(6,6,'employee','SAVE','Saving Employee','2026-08-03 20:17:21','Admin'),(7,6,'jobDetail','UPDATE','Updating Employee Job Details','2026-08-03 20:17:26','Admin');
 /*!40000 ALTER TABLE `ohrm_employee_event` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2347,7 +2347,7 @@ CREATE TABLE `ohrm_job_candidate` (
   PRIMARY KEY (`id`),
   KEY `ohrm_job_candidate_ibfk_1` (`added_person`),
   CONSTRAINT `ohrm_job_candidate_ibfk_1` FOREIGN KEY (`added_person`) REFERENCES `hs_hr_employee` (`emp_number`) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2416,7 +2416,7 @@ CREATE TABLE `ohrm_job_candidate_history` (
   CONSTRAINT `ohrm_job_candidate_history_ibfk_2` FOREIGN KEY (`vacancy_id`) REFERENCES `ohrm_job_vacancy` (`id`) ON DELETE SET NULL,
   CONSTRAINT `ohrm_job_candidate_history_ibfk_3` FOREIGN KEY (`interview_id`) REFERENCES `ohrm_job_interview` (`id`) ON DELETE SET NULL,
   CONSTRAINT `ohrm_job_candidate_history_ibfk_4` FOREIGN KEY (`performed_by`) REFERENCES `hs_hr_employee` (`emp_number`) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2446,7 +2446,7 @@ CREATE TABLE `ohrm_job_candidate_vacancy` (
   KEY `ohrm_job_candidate_vacancy_ibfk_2` (`vacancy_id`),
   CONSTRAINT `ohrm_job_candidate_vacancy_ibfk_1` FOREIGN KEY (`candidate_id`) REFERENCES `ohrm_job_candidate` (`id`) ON DELETE CASCADE,
   CONSTRAINT `ohrm_job_candidate_vacancy_ibfk_2` FOREIGN KEY (`vacancy_id`) REFERENCES `ohrm_job_vacancy` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2650,7 +2650,7 @@ CREATE TABLE `ohrm_job_vacancy` (
   KEY `ohrm_job_vacancy_ibfk_2` (`hiring_manager_id`),
   CONSTRAINT `ohrm_job_vacancy_ibfk_1` FOREIGN KEY (`job_title_code`) REFERENCES `ohrm_job_title` (`id`) ON DELETE CASCADE,
   CONSTRAINT `ohrm_job_vacancy_ibfk_2` FOREIGN KEY (`hiring_manager_id`) REFERENCES `hs_hr_employee` (`emp_number`) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2873,7 +2873,7 @@ CREATE TABLE `ohrm_leave_entitlement` (
   CONSTRAINT `ohrm_leave_entitlement_ibfk_2` FOREIGN KEY (`emp_number`) REFERENCES `hs_hr_employee` (`emp_number`) ON DELETE CASCADE,
   CONSTRAINT `ohrm_leave_entitlement_ibfk_3` FOREIGN KEY (`entitlement_type`) REFERENCES `ohrm_leave_entitlement_type` (`id`) ON DELETE CASCADE,
   CONSTRAINT `ohrm_leave_entitlement_ibfk_4` FOREIGN KEY (`created_by_id`) REFERENCES `ohrm_user` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2882,6 +2882,7 @@ CREATE TABLE `ohrm_leave_entitlement` (
 
 LOCK TABLES `ohrm_leave_entitlement` WRITE;
 /*!40000 ALTER TABLE `ohrm_leave_entitlement` DISABLE KEYS */;
+INSERT INTO `ohrm_leave_entitlement` VALUES (1,1,20.000000000000000,0.0000,1,'2026-01-01 00:00:00','2026-12-31 00:00:00','2026-08-04 15:56:44',NULL,1,0,1),(2,2,20.000000000000000,0.0000,1,'2026-01-01 00:00:00','2026-12-31 00:00:00','2026-08-04 15:56:44',NULL,1,0,1);
 /*!40000 ALTER TABLE `ohrm_leave_entitlement` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2952,7 +2953,7 @@ CREATE TABLE `ohrm_leave_period_history` (
   `leave_period_start_day` int(11) NOT NULL,
   `created_at` date NOT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2961,6 +2962,7 @@ CREATE TABLE `ohrm_leave_period_history` (
 
 LOCK TABLES `ohrm_leave_period_history` WRITE;
 /*!40000 ALTER TABLE `ohrm_leave_period_history` DISABLE KEYS */;
+INSERT INTO `ohrm_leave_period_history` VALUES (1,1,1,'2026-08-04');
 /*!40000 ALTER TABLE `ohrm_leave_period_history` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -3067,7 +3069,7 @@ CREATE TABLE `ohrm_leave_type` (
   PRIMARY KEY (`id`),
   KEY `operational_country_id` (`operational_country_id`),
   CONSTRAINT `ohrm_leave_type_ibfk_1` FOREIGN KEY (`operational_country_id`) REFERENCES `ohrm_operational_country` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3076,6 +3078,7 @@ CREATE TABLE `ohrm_leave_type` (
 
 LOCK TABLES `ohrm_leave_type` WRITE;
 /*!40000 ALTER TABLE `ohrm_leave_type` DISABLE KEYS */;
+INSERT INTO `ohrm_leave_type` VALUES (1,'QA Annual Leave',0,0,NULL),(2,'QA Unpaid Leave',0,0,NULL);
 /*!40000 ALTER TABLE `ohrm_leave_type` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -3150,7 +3153,7 @@ CREATE TABLE `ohrm_login` (
   `user_role_predefined` tinyint(1) NOT NULL,
   `login_time` timestamp NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=14 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3159,7 +3162,7 @@ CREATE TABLE `ohrm_login` (
 
 LOCK TABLES `ohrm_login` WRITE;
 /*!40000 ALTER TABLE `ohrm_login` DISABLE KEYS */;
-INSERT INTO `ohrm_login` VALUES (1,1,'qatooladmin','Admin',1,'2026-08-03 19:28:40');
+INSERT INTO `ohrm_login` VALUES (1,1,'qatooladmin','Admin',1,'2026-08-03 19:28:40'),(2,1,'qatooladmin','Admin',1,'2026-08-03 20:10:00'),(3,1,'qatooladmin','Admin',1,'2026-08-03 20:15:48'),(4,1,'qatooladmin','Admin',1,'2026-08-03 20:16:16'),(5,1,'qatooladmin','Admin',1,'2026-08-03 20:17:19'),(6,1,'qatooladmin','Admin',1,'2026-08-03 20:17:52'),(7,1,'qatooladmin','Admin',1,'2026-08-03 20:19:17'),(8,1,'qatooladmin','Admin',1,'2026-08-03 22:08:26'),(9,1,'qatooladmin','Admin',1,'2026-08-04 05:49:54'),(10,1,'qatooladmin','Admin',1,'2026-08-04 15:36:57'),(11,1,'qatooladmin','Admin',1,'2026-08-04 15:39:19'),(12,1,'qatooladmin','Admin',1,'2026-08-04 15:42:26'),(13,1,'qatooladmin','Admin',1,'2026-08-04 15:53:44');
 /*!40000 ALTER TABLE `ohrm_login` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -3245,7 +3248,7 @@ CREATE TABLE `ohrm_menu_item` (
 
 LOCK TABLES `ohrm_menu_item` WRITE;
 /*!40000 ALTER TABLE `ohrm_menu_item` DISABLE KEYS */;
-INSERT INTO `ohrm_menu_item` VALUES (1,'Admin',74,NULL,1,100,1,'{\"icon\":\"admin\"}'),(2,'User Management',NULL,1,2,100,1,NULL),(3,'Project Info',NULL,52,2,400,0,NULL),(4,'Customers',36,3,3,100,0,NULL),(5,'Projects',37,3,3,200,0,NULL),(6,'Job',NULL,1,2,300,1,NULL),(7,'Job Titles',23,6,3,100,1,NULL),(8,'Pay Grades',24,6,3,200,1,NULL),(9,'Employment Status',25,6,3,300,1,NULL),(10,'Job Categories',26,6,3,400,1,NULL),(11,'Work Shifts',27,6,3,500,1,NULL),(12,'Organization',NULL,1,2,400,1,NULL),(13,'General Information',20,12,3,100,1,NULL),(14,'Locations',21,12,3,200,1,NULL),(15,'Structure',22,12,3,300,1,NULL),(16,'Qualifications',NULL,1,2,500,1,NULL),(17,'Skills',28,16,3,100,1,NULL),(18,'Education',29,16,3,200,1,NULL),(19,'Licenses',30,16,3,300,1,NULL),(20,'Languages',31,16,3,400,1,NULL),(21,'Memberships',32,16,3,500,1,NULL),(22,'Nationalities',33,1,2,700,1,NULL),(23,'Configuration',NULL,1,2,900,1,NULL),(24,'Email Configuration',34,23,3,100,1,NULL),(25,'Email Subscriptions',35,23,3,200,1,NULL),(27,'Localization',38,23,3,300,1,NULL),(28,'Modules',39,23,3,400,1,NULL),(30,'PIM',75,NULL,1,200,1,'{\"icon\":\"pim\"}'),(31,'Configuration',NULL,30,2,100,1,NULL),(32,'Optional Fields',40,31,3,100,1,NULL),(33,'Custom Fields',41,31,3,200,1,NULL),(34,'Data Import',42,31,3,300,1,NULL),(35,'Reporting Methods',43,31,3,400,1,NULL),(36,'Termination Reasons',44,31,3,500,1,NULL),(37,'Employee List',5,30,2,200,1,NULL),(38,'Add Employee',4,30,2,300,1,NULL),(39,'Reports',45,30,2,400,1,NULL),(40,'My Info',46,NULL,1,700,1,'{\"icon\":\"myinfo\"}'),(41,'Leave',68,NULL,1,300,1,'{\"icon\":\"leave\"}'),(42,'Configure',NULL,41,2,500,0,NULL),(43,'Leave Period',47,42,3,100,0,NULL),(44,'Leave Types',7,42,3,200,0,NULL),(45,'Work Week',14,42,3,300,0,NULL),(46,'Holidays',11,42,3,400,0,NULL),(48,'Leave List',16,41,2,600,0,NULL),(49,'Assign Leave',17,41,2,700,0,NULL),(50,'My Leave',48,41,2,200,0,NULL),(51,'Apply',49,41,2,100,0,NULL),(52,'Time',67,NULL,1,400,1,'{\"icon\":\"time\"}'),(53,'Timesheets',NULL,52,2,100,0,NULL),(54,'My Timesheets',51,53,3,100,0,NULL),(55,'Employee Timesheets',52,53,3,200,0,NULL),(56,'Attendance',NULL,52,2,200,0,NULL),(57,'My Records',53,56,3,100,0,NULL),(58,'Punch In/Out',54,56,3,200,0,NULL),(59,'Employee Records',55,56,3,300,0,NULL),(60,'Configuration',56,56,3,400,0,NULL),(61,'Reports',NULL,52,2,300,0,NULL),(62,'Project Reports',57,61,3,100,0,NULL),(63,'Employee Reports',58,61,3,200,0,NULL),(64,'Attendance Summary',59,61,3,300,0,NULL),(65,'Recruitment',76,NULL,1,500,1,'{\"icon\":\"recruitment\"}'),(66,'Candidates',60,65,2,100,1,NULL),(67,'Vacancies',61,65,2,200,1,NULL),(74,'Entitlements',NULL,41,2,300,0,NULL),(75,'Add Entitlements',72,74,3,100,0,NULL),(76,'My Entitlements',70,74,3,300,0,NULL),(77,'Employee Entitlements',69,74,3,200,0,NULL),(78,'Reports',NULL,41,2,400,0,NULL),(79,'Leave Entitlements and Usage Report',78,78,3,100,0,NULL),(80,'My Leave Entitlements and Usage Report',79,78,3,200,0,NULL),(81,'Users',1,2,3,100,1,NULL),(82,'Dashboard',103,NULL,1,800,1,'{\"icon\":\"dashboard\"}'),(83,'Performance',130,NULL,1,700,1,'{\"icon\":\"performance\"}'),(84,'Configure',NULL,83,2,100,1,NULL),(85,'Manage Reviews',NULL,83,2,200,1,NULL),(86,'KPIs',105,84,3,100,1,NULL),(87,'Manage Reviews',111,85,3,100,1,NULL),(88,'My Reviews',106,85,3,200,1,NULL),(89,'Employee Reviews',110,85,3,300,1,NULL),(90,'Trackers',112,84,3,200,1,NULL),(91,'Employee Trackers',113,83,2,800,1,NULL),(92,'My Trackers',114,83,2,700,1,NULL),(93,'Directory',116,NULL,1,1000,1,'{\"icon\":\"directory\"}'),(94,'Social Media Authentication',117,23,3,500,1,NULL),(95,'Register OAuth Client',118,23,3,600,1,NULL),(96,'Maintenance',153,NULL,1,1200,1,'{\"icon\":\"maintenance\"}'),(97,'Purge Records',NULL,96,2,100,1,NULL),(98,'Access Records',121,96,2,200,1,NULL),(99,'Employee Records',119,97,3,200,1,NULL),(100,'Candidate Records',120,97,3,200,1,NULL),(101,'Buzz',123,NULL,1,1500,1,'{\"icon\":\"buzz\"}'),(102,'Language Packages',124,23,3,350,1,NULL),(103,'Corporate Branding',128,1,2,700,1,NULL),(104,'LDAP Configuration',169,23,3,1000,1,NULL),(105,'Claim',170,NULL,1,1300,1,'{\"icon\":\"claim\"}'),(106,'Configuration',NULL,105,2,100,1,NULL),(107,'Events',171,106,3,100,1,NULL),(108,'Expense Types',173,106,3,200,1,NULL),(109,'Submit Claim',175,105,2,100,1,NULL),(110,'My Claims',177,105,2,100,1,NULL),(111,'Employee Claims',180,105,2,100,1,NULL),(112,'Assign Claim',178,105,2,100,1,NULL),(113,'Workspace Notification Configuration',183,23,3,1100,1,NULL);
+INSERT INTO `ohrm_menu_item` VALUES (1,'Admin',74,NULL,1,100,1,'{\"icon\":\"admin\"}'),(2,'User Management',NULL,1,2,100,1,NULL),(3,'Project Info',NULL,52,2,400,0,NULL),(4,'Customers',36,3,3,100,0,NULL),(5,'Projects',37,3,3,200,0,NULL),(6,'Job',NULL,1,2,300,1,NULL),(7,'Job Titles',23,6,3,100,1,NULL),(8,'Pay Grades',24,6,3,200,1,NULL),(9,'Employment Status',25,6,3,300,1,NULL),(10,'Job Categories',26,6,3,400,1,NULL),(11,'Work Shifts',27,6,3,500,1,NULL),(12,'Organization',NULL,1,2,400,1,NULL),(13,'General Information',20,12,3,100,1,NULL),(14,'Locations',21,12,3,200,1,NULL),(15,'Structure',22,12,3,300,1,NULL),(16,'Qualifications',NULL,1,2,500,1,NULL),(17,'Skills',28,16,3,100,1,NULL),(18,'Education',29,16,3,200,1,NULL),(19,'Licenses',30,16,3,300,1,NULL),(20,'Languages',31,16,3,400,1,NULL),(21,'Memberships',32,16,3,500,1,NULL),(22,'Nationalities',33,1,2,700,1,NULL),(23,'Configuration',NULL,1,2,900,1,NULL),(24,'Email Configuration',34,23,3,100,1,NULL),(25,'Email Subscriptions',35,23,3,200,1,NULL),(27,'Localization',38,23,3,300,1,NULL),(28,'Modules',39,23,3,400,1,NULL),(30,'PIM',75,NULL,1,200,1,'{\"icon\":\"pim\"}'),(31,'Configuration',NULL,30,2,100,1,NULL),(32,'Optional Fields',40,31,3,100,1,NULL),(33,'Custom Fields',41,31,3,200,1,NULL),(34,'Data Import',42,31,3,300,1,NULL),(35,'Reporting Methods',43,31,3,400,1,NULL),(36,'Termination Reasons',44,31,3,500,1,NULL),(37,'Employee List',5,30,2,200,1,NULL),(38,'Add Employee',4,30,2,300,1,NULL),(39,'Reports',45,30,2,400,1,NULL),(40,'My Info',46,NULL,1,700,1,'{\"icon\":\"myinfo\"}'),(41,'Leave',68,NULL,1,300,1,'{\"icon\":\"leave\"}'),(42,'Configure',NULL,41,2,500,1,NULL),(43,'Leave Period',47,42,3,100,1,NULL),(44,'Leave Types',7,42,3,200,1,NULL),(45,'Work Week',14,42,3,300,1,NULL),(46,'Holidays',11,42,3,400,1,NULL),(48,'Leave List',16,41,2,600,1,NULL),(49,'Assign Leave',17,41,2,700,1,NULL),(50,'My Leave',48,41,2,200,1,NULL),(51,'Apply',49,41,2,100,1,NULL),(52,'Time',67,NULL,1,400,1,'{\"icon\":\"time\"}'),(53,'Timesheets',NULL,52,2,100,0,NULL),(54,'My Timesheets',51,53,3,100,0,NULL),(55,'Employee Timesheets',52,53,3,200,0,NULL),(56,'Attendance',NULL,52,2,200,0,NULL),(57,'My Records',53,56,3,100,0,NULL),(58,'Punch In/Out',54,56,3,200,0,NULL),(59,'Employee Records',55,56,3,300,0,NULL),(60,'Configuration',56,56,3,400,0,NULL),(61,'Reports',NULL,52,2,300,0,NULL),(62,'Project Reports',57,61,3,100,0,NULL),(63,'Employee Reports',58,61,3,200,0,NULL),(64,'Attendance Summary',59,61,3,300,0,NULL),(65,'Recruitment',76,NULL,1,500,1,'{\"icon\":\"recruitment\"}'),(66,'Candidates',60,65,2,100,1,NULL),(67,'Vacancies',61,65,2,200,1,NULL),(74,'Entitlements',NULL,41,2,300,1,NULL),(75,'Add Entitlements',72,74,3,100,1,NULL),(76,'My Entitlements',70,74,3,300,1,NULL),(77,'Employee Entitlements',69,74,3,200,1,NULL),(78,'Reports',NULL,41,2,400,1,NULL),(79,'Leave Entitlements and Usage Report',78,78,3,100,1,NULL),(80,'My Leave Entitlements and Usage Report',79,78,3,200,1,NULL),(81,'Users',1,2,3,100,1,NULL),(82,'Dashboard',103,NULL,1,800,1,'{\"icon\":\"dashboard\"}'),(83,'Performance',130,NULL,1,700,1,'{\"icon\":\"performance\"}'),(84,'Configure',NULL,83,2,100,1,NULL),(85,'Manage Reviews',NULL,83,2,200,1,NULL),(86,'KPIs',105,84,3,100,1,NULL),(87,'Manage Reviews',111,85,3,100,1,NULL),(88,'My Reviews',106,85,3,200,1,NULL),(89,'Employee Reviews',110,85,3,300,1,NULL),(90,'Trackers',112,84,3,200,1,NULL),(91,'Employee Trackers',113,83,2,800,1,NULL),(92,'My Trackers',114,83,2,700,1,NULL),(93,'Directory',116,NULL,1,1000,1,'{\"icon\":\"directory\"}'),(94,'Social Media Authentication',117,23,3,500,1,NULL),(95,'Register OAuth Client',118,23,3,600,1,NULL),(96,'Maintenance',153,NULL,1,1200,1,'{\"icon\":\"maintenance\"}'),(97,'Purge Records',NULL,96,2,100,1,NULL),(98,'Access Records',121,96,2,200,1,NULL),(99,'Employee Records',119,97,3,200,1,NULL),(100,'Candidate Records',120,97,3,200,1,NULL),(101,'Buzz',123,NULL,1,1500,1,'{\"icon\":\"buzz\"}'),(102,'Language Packages',124,23,3,350,1,NULL),(103,'Corporate Branding',128,1,2,700,1,NULL),(104,'LDAP Configuration',169,23,3,1000,1,NULL),(105,'Claim',170,NULL,1,1300,1,'{\"icon\":\"claim\"}'),(106,'Configuration',NULL,105,2,100,1,NULL),(107,'Events',171,106,3,100,1,NULL),(108,'Expense Types',173,106,3,200,1,NULL),(109,'Submit Claim',175,105,2,100,1,NULL),(110,'My Claims',177,105,2,100,1,NULL),(111,'Employee Claims',180,105,2,100,1,NULL),(112,'Assign Claim',178,105,2,100,1,NULL),(113,'Workspace Notification Configuration',183,23,3,1100,1,NULL);
 /*!40000 ALTER TABLE `ohrm_menu_item` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -4739,7 +4742,7 @@ CREATE TABLE `ohrm_user` (
   KEY `created_by` (`created_by`),
   CONSTRAINT `ohrm_user_ibfk_1` FOREIGN KEY (`emp_number`) REFERENCES `hs_hr_employee` (`emp_number`) ON DELETE CASCADE,
   CONSTRAINT `ohrm_user_ibfk_2` FOREIGN KEY (`user_role_id`) REFERENCES `ohrm_user_role` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -5087,4 +5090,4 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2026-08-03 19:43:09
+-- Dump completed on 2026-08-04 16:03:07

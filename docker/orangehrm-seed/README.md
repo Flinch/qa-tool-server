@@ -20,6 +20,23 @@ tests with a private, ephemeral, self-hosted instance — same app, same version
   - The admin login: username `qatooladmin`, password `QaTool2026!Seed` —
     fixed and known, not something that can drift or be changed via the
     frontend by someone unaware it will break CI.
+  - A defined Leave Period (calendar year, Jan 1 – Dec 31) — a fresh install
+    has **no** leave period configured at all, which makes every leave
+    endpoint (`/leave/leave-periods`, Add Leave Entitlement, Apply for
+    Leave) either 500 or show "No Records Found"/"Leave Period Start Date
+    Is Not Defined." Confirmed live: this cost a real generation run (TC-64)
+    its entire time budget rebuilding this from scratch.
+  - Two Leave Types: `QA Annual Leave` and `QA Unpaid Leave` — a fresh
+    install ships with zero leave types, so "apply for leave" and any
+    leave-type dropdown has nothing to select.
+  - A 20-day `QA Annual Leave` entitlement for the current leave period,
+    assigned to every seeded employee (`QA Admin`, `Baseline Manager`) —
+    without this, an employee can select the leave type but the balance is
+    0 and the application is rejected. Added via "Add Leave Entitlement" →
+    "Multiple Employees" (no Location/Sub Unit filter matches everyone) to
+    sidestep the "Individual Employee" autocomplete, which is unreliable
+    under browser automation (typed text truncates, suggestion clicks don't
+    commit).
 - **`Conf.php`** — the app-level DB connection config
   (`lib/confs/Conf.php` inside the `orangehrm/orangehrm` image), captured
   from a real install. It's a plain PHP class hardcoding `dbHost=db`,
