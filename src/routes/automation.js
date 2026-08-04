@@ -154,6 +154,12 @@ router.get('/runs/:runId', ...anyProjectMember, async (req, res) => {
 // title to its real committed file (same listSuiteFiles/matchTestCaseToFile
 // helpers the "View test cases" pages already use) and dispatches only
 // those files via triggerTestCaseRerun.
+//
+// Also creates its own size-1 run_groups row, same as /runs/group-rerun —
+// GET /run-groups (the Engineering page's "Runs" table) only ever looks at
+// test_runs rows with a run_group_id set, so without this the dispatch
+// really happens but is invisible there. A group of 1 renders as a plain
+// individual run on the frontend (see GET /run-groups' own comment).
 router.post('/runs/:runId/rerun', ...staffOnlyChain, async (req, res) => {
   const { result_ids } = req.body
   if (!Array.isArray(result_ids) || result_ids.length === 0) {
@@ -197,6 +203,12 @@ router.post('/runs/:runId/rerun', ...staffOnlyChain, async (req, res) => {
       return res.status(400).json({ error: `Could not find a matching file for: ${unresolved.join(', ')}` })
     }
 
+    const groupLabel = `Re-run: ${results.slice(0, 2).map(r => r.test_title).join(', ')}${results.length > 2 ? ` +${results.length - 2} more` : ''}`
+    const { rows: groupRows } = await req.db.query(
+      `INSERT INTO run_groups (project_id, label, created_by) VALUES ($1,$2,$3) RETURNING *`,
+      [req.params.id, groupLabel, req.userId]
+    )
+
     const newRun = await triggerTestCaseRerun({
       db: req.db,
       tenantId: req.tenantId,
@@ -205,6 +217,7 @@ router.post('/runs/:runId/rerun', ...staffOnlyChain, async (req, res) => {
       filePaths,
       targetTitles: results.map(r => r.test_title),
       userId: req.userId,
+      runGroupId: groupRows[0].id,
     })
     res.status(202).json(newRun)
   } catch (e) {
