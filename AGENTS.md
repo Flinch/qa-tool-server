@@ -113,6 +113,13 @@ These rules come from a real run that nearly hit the cap:
   only when you need element refs for the NEXT interaction and the last
   result didn't include them. Never snapshot as a reflex after every
   action.
+  **Exception — always recapture immediately after a navigation/URL change,
+  or after any "ref not found" / "does not match any elements" tool error.**
+  A ref from before the page changed is guaranteed stale; retrying it is not
+  cheaper than a fresh snapshot, it's a guaranteed failure that still costs a
+  turn. Confirmed live: a real generation run spent its entire 15-minute
+  budget retrying a stale ref after a sidebar navigation instead of
+  recapturing once, and was killed having produced nothing.
 - **One live walkthrough per run.** The WEB planner is browserless (repo
   review only); the generator's single walkthrough is the ONLY live
   browsing in the run, and it doubles as verification while capturing

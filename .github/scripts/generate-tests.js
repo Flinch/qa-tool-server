@@ -1,9 +1,12 @@
 import fs from 'fs'
 import path from 'path'
 import { execFile, spawn } from 'child_process'
+import { promisify } from 'util'
 import readline from 'readline'
 import https from 'https'
 import http from 'http'
+
+const execFileAsync = promisify(execFile)
 
 const {
   CORRELATION_ID,
@@ -48,8 +51,54 @@ function postJson(url, body) {
   })
 }
 
+function getJson(url) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url)
+    const lib = u.protocol === 'https:' ? https : http
+    const req = lib.request(u, {
+      method: 'GET',
+      headers: { 'x-webhook-secret': WEBHOOK_SECRET },
+    }, res => {
+      let data = ''
+      res.on('data', c => data += c)
+      res.on('end', () => {
+        console.log(`${u.pathname} -> ${res.statusCode}`)
+        try {
+          resolve(JSON.parse(data))
+        } catch (e) {
+          reject(e)
+        }
+      })
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
 function reportEvent(status, extra = {}) {
   return postJson(`${WEBHOOK_BASE_URL}/generation-events`, { correlation_id: CORRELATION_ID, status, github_run_url: GITHUB_RUN_URL || null, ...extra })
+}
+
+// A stateless CI job otherwise has no memory that a previous attempt at
+// generating this exact test case ever happened, and would repeat the same
+// live-walkthrough mistakes from scratch every time — confirmed live
+// (2026-08-04): TC-64 burned ~$7 stuck retrying a stale ref after a failed
+// sidebar click, and a blind retry has no way to know that already
+// happened. Only the agent's own narration lines are included, not raw tool
+// traffic — that's normally where the actual problem (and any workaround
+// found) is described.
+function formatPriorAttempts(attempts) {
+  if (!attempts || attempts.length === 0) return ''
+  const blocks = attempts.map((a, i) => {
+    const outcome = a.status === 'completed' && a.pr_url
+      ? `completed, opened ${a.pr_url}`
+      : a.status === 'failed'
+        ? `failed — ${a.error_message || '(no error message recorded)'}`
+        : a.status
+    const narrationText = a.narration?.length > 0 ? a.narration.join('\n') : '(no narration recorded)'
+    return `Attempt ${i + 1} (${a.started_at}, ${outcome}):\n${narrationText}`
+  })
+  return `\n\nPRIOR ATTEMPTS AT GENERATING THIS TEST CASE (most recent first) — do not repeat a mistake one of these already made (e.g. a selector/click target that didn't match, a stale ref, a stuck loop); verify what's still accurate and build on it, or explain why it's now wrong before trying something else:\n\n${blocks.join('\n\n')}`
 }
 
 // generation_runs has one status column for the whole run, not per TC (see
@@ -222,11 +271,57 @@ function runPlaywrightTest(targetDir) {
   })
 }
 
+// Every prior failed generation run (TC 64 — 2026-08-04, killed after a
+// 15-minute agent timeout stuck retrying a stale browser ref) discarded
+// 100% of its progress: nothing gets committed until the "Open PR" workflow
+// step, which GitHub Actions skips outright once this script exits 1 — so a
+// killed or cost-capped agent's real file writes (refined plans, partial or
+// complete spec files, extracted helpers) just vanish with the runner, and
+// the run's real dollar cost buys nothing durable. Same fix as
+// heal-test.js's checkpointProgress: on any hard failure, whatever's
+// actually on disk (SIGKILL only kills the agent subprocess, not the
+// filesystem writes it already made) gets committed and pushed to its own
+// checkpoint branch instead of being silently lost. Distinct branch name
+// from the success path's generated-tests/<correlation_id> (created by
+// create-pull-request in the workflow) so this never collides with it.
+const CHECKPOINT_BRANCH = `generated-tests/${CORRELATION_ID}-checkpoint`
+
+async function checkpointProgress(reasonForFailure) {
+  try {
+    const { stdout: statusOutput } = await execFileAsync('git', ['status', '--porcelain'])
+    if (!statusOutput.trim()) {
+      console.log('No uncommitted changes to checkpoint.')
+      return null
+    }
+
+    await execFileAsync('git', ['config', 'user.email', 'generator-bot@qa-tool.local'])
+    await execFileAsync('git', ['config', 'user.name', 'QA Tool Generator'])
+    await execFileAsync('git', ['checkout', '-b', CHECKPOINT_BRANCH])
+    await execFileAsync('git', ['add', '-A'])
+    await execFileAsync('git', [
+      'commit', '-m',
+      `Checkpoint: partial test generation progress\n\nAgent was interrupted before finishing: ${reasonForFailure}\n\nNot verified passing — review before using.`,
+    ])
+    await execFileAsync('git', ['push', 'origin', `HEAD:refs/heads/${CHECKPOINT_BRANCH}`])
+    console.log(`Checkpointed partial progress to branch ${CHECKPOINT_BRANCH}`)
+    return CHECKPOINT_BRANCH
+  } catch (e) {
+    console.error('Failed to checkpoint partial progress (continuing to report failure anyway):', e.message)
+    return null
+  }
+}
+
 async function main() {
   const payload = JSON.parse(fs.readFileSync('.generation-payload.json', 'utf-8'))
   const { suite_slug: suiteSlug, target_url: targetUrl, api_base_url: apiBaseUrl, engine, plans, helpers_dir: helpersDir } = payload
   const suiteDir = path.join('tests', 'generated', suiteSlug)
   fs.mkdirSync(suiteDir, { recursive: true })
+
+  const history = await getJson(`${WEBHOOK_BASE_URL}/generation-history/${CORRELATION_ID}`).catch(e => {
+    console.error('Failed to fetch prior generation attempts (continuing without them):', e.message)
+    return { attempts: [] }
+  })
+  const priorAttemptsNote = formatPriorAttempts(history.attempts)
 
   // API suites (engine='api') get a different agent trio — no browser
   // involved, verification is curl/fetch over Bash instead of
@@ -288,7 +383,8 @@ async function main() {
   } catch (err) {
     if (err instanceof CostCapExceededError) throw err
     const msg = `Planner batch failed, no TCs could be verified: ${err.message}`
-    await reportEvent('failed', { error_message: msg.slice(0, 2000) })
+    const checkpointBranch = await checkpointProgress(msg)
+    await reportEvent('failed', { error_message: msg.slice(0, 2000), branch_name: checkpointBranch || undefined })
     console.error(msg)
     process.exit(1)
   }
@@ -302,7 +398,7 @@ async function main() {
   try {
     const generatorList = entries.map(e => `- specs/${e.filename} -> ${e.specPath}`).join('\n')
     await runAgent(
-      `Use the ${agents.generator} agent to implement EACH of the following plans as its corresponding spec file, following ${conventions}. Process every entry in this list:\n${generatorList}${generatorHelperInstruction}`
+      `Use the ${agents.generator} agent to implement EACH of the following plans as its corresponding spec file, following ${conventions}. Process every entry in this list:\n${generatorList}${generatorHelperInstruction}${priorAttemptsNote}`
     )
   } catch (err) {
     // Don't bail immediately — some specs may have been written before the
@@ -332,7 +428,12 @@ async function main() {
   if (succeeded.length === 0) {
     const combined = results.map(r => `TC ${r.tc_id}: ${r.error}`).join('; ')
     const prefix = skipHealing ? 'Generation was cut short (cost cap or timeout) and nothing was generated successfully. ' : 'No test cases generated successfully. '
-    await reportEvent('failed', { error_message: `${prefix}${combined}`.slice(0, 2000) })
+    const reason = `${prefix}${combined}`
+    // No spec file exists (that's exactly this branch), but the planner may
+    // still have refined plan files worth keeping, and a partially-written
+    // helper file is possible even when the spec itself never landed.
+    const checkpointBranch = await checkpointProgress(reason)
+    await reportEvent('failed', { error_message: reason.slice(0, 2000), branch_name: checkpointBranch || undefined })
     console.error('Nothing generated — failing the run.')
     process.exit(1)
   }
@@ -373,7 +474,8 @@ main().then(async () => {
   process.exit(0)
 }).catch(async err => {
   console.error('Generation run failed:', err.message)
-  await reportEvent('failed', { error_message: err.message.slice(0, 2000) }).catch(() => {})
+  const checkpointBranch = await checkpointProgress(err.message).catch(() => null)
+  await reportEvent('failed', { error_message: err.message.slice(0, 2000), branch_name: checkpointBranch || undefined }).catch(() => {})
   clearInterval(logFlushInterval)
   await flushLogs().catch(() => {})
   process.exit(1)

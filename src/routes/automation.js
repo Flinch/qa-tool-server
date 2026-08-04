@@ -703,11 +703,12 @@ router.get('/generation-runs', ...staffOnlyChain, async (req, res) => {
         const prStatus = await getPrStatus(r.pr_url)
         return { ...r, pr_status: prStatus }
       }
-      // A failed heal that still has a branch_name (no PR) is a checkpoint —
-      // the agent got killed before finishing, but whatever it had already
-      // changed on disk was committed and pushed rather than discarded (see
-      // heal-test.js's checkpointProgress). Surface it as a plain branch
-      // link since there's no PR to check status on.
+      // A failed run (heal or generate) that still has a branch_name (no PR)
+      // is a checkpoint — the agent got killed before finishing, but
+      // whatever it had already changed on disk was committed and pushed
+      // rather than discarded (see heal-test.js/generate-tests.js's
+      // checkpointProgress). Surface it as a plain branch link since there's
+      // no PR to check status on.
       if (r.branch_name && GITHUB_OWNER && GITHUB_REPO) {
         return { ...r, branch_url: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/tree/${r.branch_name}` }
       }
