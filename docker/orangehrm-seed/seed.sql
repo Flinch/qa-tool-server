@@ -590,6 +590,7 @@ CREATE TABLE `hs_hr_emp_reportto` (
 
 LOCK TABLES `hs_hr_emp_reportto` WRITE;
 /*!40000 ALTER TABLE `hs_hr_emp_reportto` DISABLE KEYS */;
+INSERT INTO `hs_hr_emp_reportto` VALUES (1,2,1);
 /*!40000 ALTER TABLE `hs_hr_emp_reportto` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2799,7 +2800,7 @@ CREATE TABLE `ohrm_leave` (
   KEY `leave_type_id` (`leave_type_id`),
   CONSTRAINT `ohrm_leave_ibfk_1` FOREIGN KEY (`leave_request_id`) REFERENCES `ohrm_leave_request` (`id`) ON DELETE CASCADE,
   CONSTRAINT `ohrm_leave_ibfk_2` FOREIGN KEY (`leave_type_id`) REFERENCES `ohrm_leave_type` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2928,7 +2929,7 @@ CREATE TABLE `ohrm_leave_leave_entitlement` (
   KEY `leave_id` (`leave_id`),
   CONSTRAINT `ohrm_leave_leave_entitlement_ibfk_1` FOREIGN KEY (`entitlement_id`) REFERENCES `ohrm_leave_entitlement` (`id`) ON DELETE CASCADE,
   CONSTRAINT `ohrm_leave_leave_entitlement_ibfk_2` FOREIGN KEY (`leave_id`) REFERENCES `ohrm_leave` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2983,7 +2984,7 @@ CREATE TABLE `ohrm_leave_request` (
   KEY `ohrm_leave_request_ibfk_1` (`emp_number`),
   CONSTRAINT `ohrm_leave_request_ibfk_1` FOREIGN KEY (`emp_number`) REFERENCES `hs_hr_employee` (`emp_number`) ON DELETE CASCADE,
   CONSTRAINT `ohrm_leave_request_ibfk_2` FOREIGN KEY (`leave_type_id`) REFERENCES `ohrm_leave_type` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3153,7 +3154,7 @@ CREATE TABLE `ohrm_login` (
   `user_role_predefined` tinyint(1) NOT NULL,
   `login_time` timestamp NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=14 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=16 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3162,7 +3163,7 @@ CREATE TABLE `ohrm_login` (
 
 LOCK TABLES `ohrm_login` WRITE;
 /*!40000 ALTER TABLE `ohrm_login` DISABLE KEYS */;
-INSERT INTO `ohrm_login` VALUES (1,1,'qatooladmin','Admin',1,'2026-08-03 19:28:40'),(2,1,'qatooladmin','Admin',1,'2026-08-03 20:10:00'),(3,1,'qatooladmin','Admin',1,'2026-08-03 20:15:48'),(4,1,'qatooladmin','Admin',1,'2026-08-03 20:16:16'),(5,1,'qatooladmin','Admin',1,'2026-08-03 20:17:19'),(6,1,'qatooladmin','Admin',1,'2026-08-03 20:17:52'),(7,1,'qatooladmin','Admin',1,'2026-08-03 20:19:17'),(8,1,'qatooladmin','Admin',1,'2026-08-03 22:08:26'),(9,1,'qatooladmin','Admin',1,'2026-08-04 05:49:54'),(10,1,'qatooladmin','Admin',1,'2026-08-04 15:36:57'),(11,1,'qatooladmin','Admin',1,'2026-08-04 15:39:19'),(12,1,'qatooladmin','Admin',1,'2026-08-04 15:42:26'),(13,1,'qatooladmin','Admin',1,'2026-08-04 15:53:44');
+INSERT INTO `ohrm_login` VALUES (1,1,'qatooladmin','Admin',1,'2026-08-03 19:28:40'),(2,1,'qatooladmin','Admin',1,'2026-08-03 20:10:00'),(3,1,'qatooladmin','Admin',1,'2026-08-03 20:15:48'),(4,1,'qatooladmin','Admin',1,'2026-08-03 20:16:16'),(5,1,'qatooladmin','Admin',1,'2026-08-03 20:17:19'),(6,1,'qatooladmin','Admin',1,'2026-08-03 20:17:52'),(7,1,'qatooladmin','Admin',1,'2026-08-03 20:19:17'),(8,1,'qatooladmin','Admin',1,'2026-08-03 22:08:26'),(9,1,'qatooladmin','Admin',1,'2026-08-04 05:49:54'),(10,1,'qatooladmin','Admin',1,'2026-08-04 15:36:57'),(11,1,'qatooladmin','Admin',1,'2026-08-04 15:39:19'),(12,1,'qatooladmin','Admin',1,'2026-08-04 15:42:26'),(13,1,'qatooladmin','Admin',1,'2026-08-04 15:53:44'),(14,4,'baselinemanager','ESS',1,'2026-08-04 16:33:48'),(15,1,'qatooladmin','Admin',1,'2026-08-04 16:38:16');
 /*!40000 ALTER TABLE `ohrm_login` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -4742,7 +4743,7 @@ CREATE TABLE `ohrm_user` (
   KEY `created_by` (`created_by`),
   CONSTRAINT `ohrm_user_ibfk_1` FOREIGN KEY (`emp_number`) REFERENCES `hs_hr_employee` (`emp_number`) ON DELETE CASCADE,
   CONSTRAINT `ohrm_user_ibfk_2` FOREIGN KEY (`user_role_id`) REFERENCES `ohrm_user_role` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4751,7 +4752,7 @@ CREATE TABLE `ohrm_user` (
 
 LOCK TABLES `ohrm_user` WRITE;
 /*!40000 ALTER TABLE `ohrm_user` DISABLE KEYS */;
-INSERT INTO `ohrm_user` VALUES (1,1,1,'qatooladmin','$2y$12$KiLPP0KCeckbWwiaoUdlO.o5jdB0AmPyYTdrF/9LKaOm6EIPkCBDy',0,1,'2026-08-03 19:26:14',NULL,NULL,NULL);
+INSERT INTO `ohrm_user` VALUES (1,1,1,'qatooladmin','$2y$12$KiLPP0KCeckbWwiaoUdlO.o5jdB0AmPyYTdrF/9LKaOm6EIPkCBDy',0,1,'2026-08-03 19:26:14',NULL,NULL,NULL),(4,2,2,'baselinemanager','$2y$12$Q0LBU9gh2MPX2oTjsvoWxu9bb/0P8K29Vrywup3B7yuFn8B6fmG1K',0,1,'2026-08-04 16:29:26',NULL,NULL,1);
 /*!40000 ALTER TABLE `ohrm_user` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -5090,4 +5091,4 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2026-08-04 16:03:07
+-- Dump completed on 2026-08-04 16:41:18

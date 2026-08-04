@@ -37,6 +37,22 @@ tests with a private, ephemeral, self-hosted instance — same app, same version
     sidestep the "Individual Employee" autocomplete, which is unreliable
     under browser automation (typed text truncates, suggestion clicks don't
     commit).
+  - A second login, `baselinemanager` / `QaTool2026!Manager` (ESS role,
+    tied to the `Baseline Manager` employee), plus a Direct supervisor
+    relationship with `QA Admin` as the supervisor (Admin > User Management
+    for the login, PIM > Baseline Manager > Report-to > Assigned Supervisors
+    for the relationship). Needed for any "employee submits a leave request,
+    a different authorised approver approves it" flow — confirmed live that
+    OrangeHRM blocks self-approval regardless of role (a logged-in Admin's
+    own pending leave never appears in their own "My Actions" widget or as
+    an Approve/Reject action on their own request in Leave List). With only
+    one seeded login, a generation run has no way to exercise the approval
+    step at all and would otherwise have to build a second user + supervisor
+    link from scratch live, exactly the kind of setup cost this seed exists
+    to avoid. Verified end-to-end: `baselinemanager` applies for
+    `QA Annual Leave` → shows up as "(1) Leave Request to Approve" in
+    `qatooladmin`'s My Actions → Approve is available and updates the leave
+    balance correctly.
 - **`Conf.php`** — the app-level DB connection config
   (`lib/confs/Conf.php` inside the `orangehrm/orangehrm` image), captured
   from a real install. It's a plain PHP class hardcoding `dbHost=db`,
