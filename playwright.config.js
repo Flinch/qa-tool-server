@@ -18,6 +18,20 @@ const setupTestMatch = process.env.AUTH_SETUP_FILE
   ? new RegExp(escapeForRegex(process.env.AUTH_SETUP_FILE) + '$')
   : /auth\.setup\.ts$/
 
+// Specs that switch identities mid-test (log out and log back in as a
+// different user — see helpers/project-7/loginAs.ts) must NOT inherit the
+// single `.auth/user.json` session every other 'generated' spec starts
+// from. OrangeHRM's logout is a server-side session destroy, not a
+// client-local action, so when one of these runs in parallel with anything
+// else still holding that same inherited cookie (workers: 2 in CI), the
+// logout kills the OTHER test's session too, mid-test. Confirmed live: with
+// TC-64 sharing the 'generated' project's storageState, every suite run
+// kicked TC-63 and TC-65 to the login page mid-test (whichever two happened
+// to be running in the other worker at the time), while all three passed
+// individually — the exact same run just without the parallel collision.
+// Add any future spec that calls loginAs() here.
+const SELF_AUTH_SPECS = /tc-64-employee-submits-a-leave-request-and-authorised-approver-app\.spec\.ts$/
+
 export default defineConfig({
   testDir: './tests',
   fullyParallel: true,
@@ -73,11 +87,32 @@ export default defineConfig({
     {
       name: 'generated',
       testMatch: [/tests\/generated\/.*\.spec\.(js|ts)$/, /tests\/seed\.spec\.ts$/],
+      testIgnore: SELF_AUTH_SPECS,
       dependencies: ['setup'],
       use: {
         ...devices['Desktop Chrome'],
         storageState: STORAGE_STATE,
       },
+    },
+    // Identity-switching specs (see SELF_AUTH_SPECS above): start with a
+    // genuinely blank, unauthenticated context — no storageState — and log
+    // themselves in as their own first step instead (loginAs.ts skips its
+    // logout click when there's no session to log out of). Never shares a
+    // session with any other project, so its mid-test logout can't affect
+    // anyone else, however many workers run in parallel. `dependencies:
+    // ['setup']` is kept for ORDERING ONLY, not storageState (deliberately
+    // not set below) — confirmed live this still matters even without a
+    // shared session: with no dependency at all, this project's own login
+    // ran fully in parallel with 'setup' logging in as qatooladmin, and the
+    // two concurrent logins against the single self-hosted instance
+    // collided (setup's login got rejected/redirected back to itself).
+    // Running strictly after 'setup' completes avoids that without
+    // reintroducing the shared-session problem this project exists to fix.
+    {
+      name: 'generated-self-auth',
+      testMatch: SELF_AUTH_SPECS,
+      dependencies: ['setup'],
+      use: { ...devices['Desktop Chrome'] },
     },
   ],
 })
