@@ -411,22 +411,34 @@ router.get('/:id/engineering-health', requireTenantAccess, requireRole('qa_engin
     const projectId = req.params.id
 
     const [failingRows, environmentalRows, prRunRows, reviewStatusRows] = await Promise.all([
-      // Most recent failed result per test, from real (non-diagnostic) suite
-      // runs only — same tr.scope='suite' reasoning used throughout
+      // Tests that are CURRENTLY failing — i.e. whose most recent real suite
+      // run result is a failure, not just whose most recent FAILURE happens
+      // to be recent. The old version filtered to status='failed' before
+      // picking "most recent," so a test that failed last week and has
+      // since passed in every run since kept showing up here forever —
+      // confirmed live, this is exactly what made the "Failing now" KPI
+      // read wrong. Fixed by taking the true latest result per
+      // (test_title, suite_id) regardless of status, THEN filtering to
+      // failed — same tr.scope='suite' reasoning used throughout
       // automation.js so a one-off diagnostic re-run never masquerades as
       // "the" current failure state.
       req.db.query(`
-        SELECT DISTINCT ON (trr.test_title, tr.suite_id)
-          trr.test_title, trr.error_message, tr.completed_at, s.name AS suite_name, s.id AS suite_id,
-          trr.id AS result_id, tr.id AS run_id,
-          atc.test_case_id, tc.title AS tc_title, tc.type, tc.steps, tc.expected
-        FROM test_run_results trr
-        JOIN test_runs tr ON tr.id = trr.test_run_id
-        JOIN automation_suites s ON s.id = tr.suite_id
-        LEFT JOIN automated_test_cases atc ON atc.suite_id = s.id AND atc.title = trr.test_title
-        LEFT JOIN test_cases tc ON tc.id = atc.test_case_id
-        WHERE tr.project_id = $1 AND tr.scope = 'suite' AND trr.status = 'failed'
-        ORDER BY trr.test_title, tr.suite_id, tr.completed_at DESC
+        SELECT test_title, error_message, completed_at, suite_name, suite_id, result_id, run_id, test_case_id, tc_title, type, steps, expected
+        FROM (
+          SELECT DISTINCT ON (trr.test_title, tr.suite_id)
+            trr.test_title, trr.error_message, trr.status, tr.completed_at, s.name AS suite_name, s.id AS suite_id,
+            trr.id AS result_id, tr.id AS run_id,
+            atc.test_case_id, tc.title AS tc_title, tc.type, tc.steps, tc.expected
+          FROM test_run_results trr
+          JOIN test_runs tr ON tr.id = trr.test_run_id
+          JOIN automation_suites s ON s.id = tr.suite_id
+          LEFT JOIN automated_test_cases atc ON atc.suite_id = s.id AND atc.title = trr.test_title
+          LEFT JOIN test_cases tc ON tc.id = atc.test_case_id
+          WHERE tr.project_id = $1 AND tr.scope = 'suite'
+          ORDER BY trr.test_title, tr.suite_id, tr.completed_at DESC
+        ) latest
+        WHERE latest.status = 'failed'
+        ORDER BY completed_at DESC
         LIMIT 15
       `, [projectId]),
       req.db.query(`
