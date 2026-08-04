@@ -14,6 +14,7 @@ const {
   WEBHOOK_SECRET,
   TARGET_URL,
   AUTH_SETUP_FILE,
+  GITHUB_RUN_URL,
   GENERATION_COST_CAP_USD = '5',
   AGENT_TIMEOUT_MS = String(15 * 60 * 1000),
 } = process.env
@@ -57,7 +58,7 @@ function postJson(url, body) {
 }
 
 function reportEvent(status, extra = {}) {
-  return postJson(`${WEBHOOK_BASE_URL}/generation-events`, { correlation_id: CORRELATION_ID, status, ...extra })
+  return postJson(`${WEBHOOK_BASE_URL}/generation-events`, { correlation_id: CORRELATION_ID, status, github_run_url: GITHUB_RUN_URL || null, ...extra })
 }
 
 const reportedPhases = new Set()

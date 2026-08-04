@@ -1,7 +1,7 @@
 import https from 'https'
 import http from 'http'
 
-const { CORRELATION_ID, WEBHOOK_BASE_URL, WEBHOOK_SECRET, PR_URL, BRANCH_NAME } = process.env
+const { CORRELATION_ID, WEBHOOK_BASE_URL, WEBHOOK_SECRET, PR_URL, BRANCH_NAME, GITHUB_RUN_URL } = process.env
 
 function postJson(url, secret, body) {
   return new Promise((resolve, reject) => {
@@ -37,4 +37,5 @@ await postJson(`${WEBHOOK_BASE_URL}/generation-events`, WEBHOOK_SECRET, {
   status: 'completed',
   pr_url: PR_URL || null,
   branch_name: BRANCH_NAME || null,
+  github_run_url: GITHUB_RUN_URL || null,
 })

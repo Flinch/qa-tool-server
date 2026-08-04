@@ -503,4 +503,12 @@ CREATE TABLE IF NOT EXISTS generation_run_logs (
   created_at         TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_generation_run_logs_run ON generation_run_logs(generation_run_id);
+
+-- The GitHub Actions run itself, not the resulting PR — generation_runs had
+-- pr_url/branch_name but nothing pointing at the workflow run that produced
+-- them, unlike test_runs (which already has github_run_url). Needed so the
+-- Engineering page's generation-history chips can link straight to the live
+-- CI run instead of only the eventual PR (which doesn't exist yet while a
+-- run is still in progress or if it fails before opening one).
+ALTER TABLE generation_runs ADD COLUMN IF NOT EXISTS github_run_url TEXT;
 `

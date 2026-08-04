@@ -23,6 +23,7 @@ const {
   CONTEXT,
   WEBHOOK_BASE_URL,
   WEBHOOK_SECRET,
+  GITHUB_RUN_URL,
   GENERATION_COST_CAP_USD = '5',
   // Bumped from 15 after two real heal attempts (TC-63, TC-65 — 2026-08-03)
   // were killed mid-edit with real progress made (files already changed,
@@ -93,7 +94,7 @@ function getJson(url) {
 }
 
 function reportEvent(status, extra = {}) {
-  return postJson(`${WEBHOOK_BASE_URL}/generation-events`, { correlation_id: CORRELATION_ID, status, ...extra })
+  return postJson(`${WEBHOOK_BASE_URL}/generation-events`, { correlation_id: CORRELATION_ID, status, github_run_url: GITHUB_RUN_URL || null, ...extra })
 }
 
 const reportedPhases = new Set()

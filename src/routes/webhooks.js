@@ -420,7 +420,7 @@ router.get('/heal-history/:correlationId', verifySecret, async (req, res) => {
 // GET /generation-payload above — correlation_id is the only identifier in
 // this payload at all.
 router.post('/generation-events', verifySecret, async (req, res) => {
-  const { correlation_id, status, pr_url, branch_name, error_message } = req.body
+  const { correlation_id, status, pr_url, branch_name, error_message, github_run_url } = req.body
 
   if (!GENERATION_STATUSES.includes(status)) {
     return res.status(400).json({ error: `status must be one of: ${GENERATION_STATUSES.join(', ')}` })
@@ -448,10 +448,11 @@ router.post('/generation-events', verifySecret, async (req, res) => {
            pr_url=COALESCE($2, pr_url),
            branch_name=COALESCE($3, branch_name),
            error_message=$4,
-           completed_at = CASE WHEN $5 THEN NOW() ELSE completed_at END
-       WHERE correlation_id=$6
+           github_run_url=COALESCE($5, github_run_url),
+           completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END
+       WHERE correlation_id=$7
        RETURNING id, pr_url`,
-      [status, pr_url || null, branch_name || null, error_message || null, isTerminal, correlation_id]
+      [status, pr_url || null, branch_name || null, error_message || null, github_run_url || null, isTerminal, correlation_id]
     )
     const run = rows[0]
 

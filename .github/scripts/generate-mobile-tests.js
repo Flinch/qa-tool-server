@@ -9,6 +9,7 @@ const {
   CORRELATION_ID,
   WEBHOOK_BASE_URL,
   WEBHOOK_SECRET,
+  GITHUB_RUN_URL,
   GENERATION_COST_CAP_USD = '5',
   AGENT_TIMEOUT_MS = String(25 * 60 * 1000), // 25 min default per call — bumped from 15 after a real iOS checkout verification (shipping+payment+review, 4 screens) ran out of clock time on legitimate work, not a stall
 } = process.env
@@ -48,7 +49,7 @@ function postJson(url, body) {
 }
 
 function reportEvent(status, extra = {}) {
-  return postJson(`${WEBHOOK_BASE_URL}/generation-events`, { correlation_id: CORRELATION_ID, status, ...extra })
+  return postJson(`${WEBHOOK_BASE_URL}/generation-events`, { correlation_id: CORRELATION_ID, status, github_run_url: GITHUB_RUN_URL || null, ...extra })
 }
 
 // Same reasoning as generate-tests.js: only report each phase transition once.
