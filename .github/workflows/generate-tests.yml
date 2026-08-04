@@ -69,7 +69,7 @@ jobs:
       - name: Authenticate (create storageState)
         run: npx playwright test --project=setup
 
-      - name: Generate and heal tests
+      - name: Generate tests
         env:
           CORRELATION_ID: ${{ inputs.correlation_id }}
           WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}

@@ -123,8 +123,14 @@ These rules come from a real run that nearly hit the cap:
 - **One live walkthrough per run.** The WEB planner is browserless (repo
   review only); the generator's single walkthrough is the ONLY live
   browsing in the run, and it doubles as verification while capturing
-  locators; the heal loop (running the actual spec file) is the
-  re-verification after that. Nobody re-walks a flow live to double-check
+  locators. There is no inline heal loop after it — generation ends with a
+  single non-agent Playwright run to check and report pass/fail, nothing
+  more; healing (if the generated test needs it) is a separate, explicit
+  run against heal-test(-orangehrm).yml, not an automatic part of
+  generation. (Removed after a real run got killed mid-heal-loop by the
+  agent timeout, burning its whole remaining budget on a step that wasn't
+  even a guarantee — see generate-tests.js's comment above the Playwright
+  check for the full story.) Nobody re-walks a flow live to double-check
   work they just completed successfully.
 - **Update plan files with Edit, in place** — `planner_save_plan`
   regenerates an existing plan in the wrong format (drops traceability

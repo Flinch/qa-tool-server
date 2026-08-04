@@ -329,8 +329,8 @@ async function main() {
   // section for the full conventions these agents follow.
   const isApi = engine === 'api'
   const agents = isApi
-    ? { planner: 'api-test-planner', generator: 'api-test-generator', healer: 'api-test-healer' }
-    : { planner: 'playwright-test-planner', generator: 'playwright-test-generator', healer: 'playwright-test-healer' }
+    ? { planner: 'api-test-planner', generator: 'api-test-generator' }
+    : { planner: 'playwright-test-planner', generator: 'playwright-test-generator' }
   const conventions = isApi ? "AGENTS.md's \"API tests\" section" : 'AGENTS.md conventions'
 
   // Per-project reusable helpers (see AGENTS.md's "Per-project reusable
@@ -341,10 +341,6 @@ async function main() {
   const generatorHelperInstruction = (!isApi && helpersDir)
     ? ` Check ${helpersDir}/ via Glob + Read first for existing reusable helpers before implementing a step from scratch. If you have to live-verify and implement a step that's a genuinely reusable setup/entry action for this app (not a one-off), also extract it into a new file under ${helpersDir}/ — one exported async function taking page, a one-line top comment describing what it does, same shape as helpers/createTicket.ts — following AGENTS.md's "Per-project reusable helpers" section.`
     : ''
-  const healerHelperInstruction = (!isApi && helpersDir)
-    ? ` This project has reusable helpers under ${helpersDir}/ — feel free to use an existing one while fixing a test, but don't create new ones during a heal.`
-    : ''
-
   const entries = plans.map(plan => ({
     ...plan,
     specPath: path.join(suiteDir, plan.filename.replace(/\.md$/, '.spec.ts')),
@@ -391,10 +387,9 @@ async function main() {
 
   await reportPhaseOnce('generating')
 
-  // Set when the generator phase hit its cost cap or timed out — both cases
-  // skip the heal loop below (no point spending/waiting further after
-  // either), but still retain whatever files actually got written.
-  let skipHealing = false
+  // Set when the generator phase itself hit its cost cap or timed out —
+  // still retain whatever files actually got written either way.
+  let cutShort = false
   try {
     const generatorList = entries.map(e => `- specs/${e.filename} -> ${e.specPath}`).join('\n')
     await runAgent(
@@ -409,7 +404,7 @@ async function main() {
     // file-existence check below is still the right signal either way: if
     // generator_write_test finished for a TC before the kill, that file is
     // real and complete; if it didn't, the file simply won't exist.
-    if (err instanceof CostCapExceededError || err instanceof AgentTimeoutError) skipHealing = true
+    if (err instanceof CostCapExceededError || err instanceof AgentTimeoutError) cutShort = true
     console.error('Generator batch reported an error, checking what actually got written:', err.message)
   }
 
@@ -427,7 +422,7 @@ async function main() {
   const succeeded = results.filter(r => r.success)
   if (succeeded.length === 0) {
     const combined = results.map(r => `TC ${r.tc_id}: ${r.error}`).join('; ')
-    const prefix = skipHealing ? 'Generation was cut short (cost cap or timeout) and nothing was generated successfully. ' : 'No test cases generated successfully. '
+    const prefix = cutShort ? 'Generation was cut short (cost cap or timeout) and nothing was generated successfully. ' : 'No test cases generated successfully. '
     const reason = `${prefix}${combined}`
     // No spec file exists (that's exactly this branch), but the planner may
     // still have refined plan files worth keeping, and a partially-written
@@ -438,21 +433,25 @@ async function main() {
     process.exit(1)
   }
 
-  if (skipHealing) {
-    console.warn(`Generation was cut short (cost cap or timeout) — skipping the heal loop. Proceeding to PR with ${succeeded.length}/${entries.length} test case(s) as generated (unhealed).`)
+  // Healing used to run inline here — up to 3 more agent invocations against
+  // the same cost cap and 15-min-per-call timeout as generation itself.
+  // Removed after a real run (generation_runs id 27) was killed mid-heal-loop
+  // by the agent timeout and burned its whole remaining budget, even though
+  // the generator had already produced a fully correct, passing spec by that
+  // point. It was pure downside risk for a step that was never a guarantee
+  // anyway — 3 exhausted heal attempts already just shipped the still-broken
+  // test to the PR same as skipping healing outright. A plain, non-agent
+  // Playwright run (no cost, seconds not minutes) still checks and reports
+  // whether the generated test(s) pass; if not, healing is a separate,
+  // explicit step triggered from the app against the existing
+  // heal-test(-orangehrm).yml workflow, not an automatic side effect here.
+  if (cutShort) {
+    console.warn(`Generation was cut short (cost cap or timeout) — proceeding to PR with ${succeeded.length}/${entries.length} test case(s) as generated.`)
   } else {
-    await reportPhaseOnce('healing')
-    let clean = await runPlaywrightTest(suiteDir)
-    for (let attempt = 1; attempt <= 3 && !clean; attempt++) {
-      console.log(`Heal attempt ${attempt}/3`)
-      await runAgent(
-        `Use the ${agents.healer} agent to fix any failing tests in ${suiteDir}, following ${conventions}. Do not weaken assertions — if a failure means ${isApi ? 'API' : 'app'} behavior changed rather than the test being wrong, mark it with test.fixme() and a POSSIBLE REGRESSION comment instead of forcing it to pass.${healerHelperInstruction}`
-      )
-      clean = await runPlaywrightTest(suiteDir)
-    }
-    if (!clean) {
-      console.warn('Heal loop exhausted (3 attempts) with tests still failing — proceeding to PR anyway (a flagged failure is still reviewable, per AGENTS.md healing rules).')
-    }
+    const clean = await runPlaywrightTest(suiteDir)
+    console.log(clean
+      ? 'Generated test(s) pass as-is.'
+      : 'One or more generated tests are failing — trigger a heal run from the app to fix them.')
   }
 
   // Script's job ends here. The workflow's next steps (peter-evans/create-pull-request,
@@ -467,7 +466,7 @@ main().then(async () => {
   await flushLogs()
   // Explicit exit is necessary, not cosmetic: observed firsthand that the
   // process hung indefinitely after this point on a real run (the "Done"
-  // line printed, but the "Generate and heal tests" step never completed).
+  // line printed, but the "Generate tests" step never completed).
   // The webhook POSTs in postJson/reportEvent use Node's default
   // keep-alive HTTP agent, which can leave a socket handle open and the
   // event loop alive even with nothing left to do.
