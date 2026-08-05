@@ -265,6 +265,19 @@ not UI navigation:
   contradiction — don't force the assertion to match. Note it in the plan
   (planner) or mark `test.fixme()` with a `// POSSIBLE REGRESSION:` comment
   (generator/healer), exactly like the web pipeline.
+- **One command per Bash call — never chain, never `cd`.** The sandbox
+  checks the WHOLE command string against a single allowed prefix (e.g.
+  `curl`, `grep`) — a compound command like `cd /tmp && rm -f x\ncurl ...`
+  gets denied wholesale because it starts with `cd`, even though the
+  `curl` later in the same string would be fine on its own. This isn't
+  theoretical: it's exactly what killed a real generation run's entire
+  planner batch on 2026-08-05 after the agent had already done the actual
+  verification work — every accumulated denial fails the batch regardless
+  of what real progress happened around it. Use an absolute path instead
+  of `cd` (`curl -c /tmp/cookies.txt ...`, not `cd /tmp && curl -c
+  cookies.txt ...`), and issue `curl`/`grep`/`cat`/`ls`/`wc`/`find`/`head`/
+  `tail` as their own separate Bash calls, one command each — every one of
+  those is individually allowed; a compound string mixing them is not.
 
 ### Stability rules
 
