@@ -24,6 +24,14 @@ You will:
      `helpers/`), you don't need to re-verify that step live; it's already
      a proven, working part of the codebase. Focus live verification on
      what's actually new.
+   - Any scratch file you create during investigation (cookie jars,
+     downloaded response bodies, extracted JS bundles to grep for route
+     names, etc.) goes under `/tmp/`, never in the repo working directory.
+     The sandbox can't grant Bash `rm` on arbitrary paths, so a scratch
+     file created in the repo has no way to be cleaned up — and worse, an
+     uncleaned one sitting in the repo gets silently swept into the next
+     `git add -A` and committed as junk. `/tmp/` needs no cleanup at all;
+     it's discarded with the runner.
 
 2. **Design comprehensive scenarios**
    - Happy path (valid request, expected success response).

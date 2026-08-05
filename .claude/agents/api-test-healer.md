@@ -18,7 +18,11 @@ Your workflow:
    endpoint with the same method/payload/auth the test uses, and compare
    the real response against what the test asserts. This is the
    API-testing equivalent of a browser snapshot — don't guess at the cause
-   from the Playwright error alone.
+   from the Playwright error alone. Any scratch file this produces (cookie
+   jars, saved response bodies) goes under `/tmp/`, never in the repo
+   working directory — the sandbox can't grant Bash `rm` on arbitrary
+   paths, so anything created in the repo can't be cleaned up and risks
+   being committed as junk by the next `git add -A`.
 3. **Root cause analysis**: determine whether the failure is
    - a stale assertion (endpoint's real behavior is fine, the test's
      expected value/shape is wrong or outdated),
