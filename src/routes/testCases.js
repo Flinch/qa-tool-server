@@ -66,7 +66,7 @@ router.get('/', async (req, res) => {
 router.post('/', staffOnly, async (req, res) => {
   const { title, type, steps, expected, platform, feature_id, is_critical_flow, requirementIds } = req.body
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
-  if (!['functional', 'integration', 'e2e'].includes(type)) return res.status(400).json({ error: 'Invalid type' })
+  if (!['functional', 'integration', 'e2e', 'api'].includes(type)) return res.status(400).json({ error: 'Invalid type' })
   if (platform !== undefined && !['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
 
   // A manually-authored critical flow is always type='e2e' — normalized
@@ -154,7 +154,7 @@ router.post('/combine/apply', staffOnly, async (req, res) => {
   }
   const { title, type, steps, expected, platform, automation_candidate, automation_reasoning, feature_id } = combined || {}
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
-  if (!['functional', 'integration', 'e2e'].includes(type)) return res.status(400).json({ error: 'Invalid type' })
+  if (!['functional', 'integration', 'e2e', 'api'].includes(type)) return res.status(400).json({ error: 'Invalid type' })
   if (!['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
 
   // Transactional, unlike the rest of this file's sequential query() calls:
@@ -263,7 +263,7 @@ router.patch('/:tcId', staffOnly, async (req, res) => {
     fields.push(`title=$${i++}`); values.push(title.trim())
   }
   if (type !== undefined) {
-    if (!['functional', 'integration', 'e2e'].includes(type)) return res.status(400).json({ error: 'Invalid type' })
+    if (!['functional', 'integration', 'e2e', 'api'].includes(type)) return res.status(400).json({ error: 'Invalid type' })
     fields.push(`type=$${i++}`); values.push(type)
   }
   if (steps !== undefined) {

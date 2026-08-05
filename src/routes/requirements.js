@@ -234,6 +234,29 @@ Rules:
   }
 })
 
+// GET /source — the most recently uploaded/pasted requirements document,
+// verbatim (the exact raw text that was actually parsed into requirements),
+// not the current requirements list itself (which may have since been
+// edited). A downloadable "source of truth" for what was originally
+// supplied. Only the extracted text is ever stored (see POST /upload above
+// — the original PDF/DOCX binary is never persisted, only its extracted
+// text), so this is always plain text even when the original upload was a
+// file. Open to both roles, same as GET / — a client should be able to
+// verify what staff actually gave the AI, not just staff.
+router.get('/source', async (req, res) => {
+  try {
+    const { rows } = await req.db.query(
+      `SELECT filename, raw_text, created_at FROM requirement_documents
+       WHERE project_id=$1 ORDER BY created_at DESC LIMIT 1`,
+      [req.params.id]
+    )
+    if (!rows[0]) return res.status(404).json({ error: 'No requirements document has been uploaded yet' })
+    res.json(rows[0])
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // POST /apply-diff — commits a user-reviewed diff from POST /upload. Only
 // items the user approved should be included; nothing here is inferred.
 router.post('/apply-diff', staffOnly, async (req, res) => {

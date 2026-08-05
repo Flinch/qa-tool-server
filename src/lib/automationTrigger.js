@@ -421,6 +421,10 @@ export async function triggerHealRun({ db, tenantId, projectId, suiteId, testCas
           // workflow_dispatch inputs must all be strings — omit entirely
           // rather than send '' so the workflow's own default (none) applies.
           ...(context ? { context } : {}),
+          // heal-mobile-test.yml has no `engine` input (mobile suites are
+          // always maestro/appium, never 'api') — only send it to the web
+          // heal workflow, or GitHub's dispatch API rejects the extra key.
+          ...(suite.platform === 'web' && suite.engine === 'api' ? { engine: 'api' } : {}),
         },
       }),
     }

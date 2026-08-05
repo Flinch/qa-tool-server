@@ -21,6 +21,7 @@ const {
   CORRELATION_ID,
   FILE_PATH,
   CONTEXT,
+  ENGINE,
   WEBHOOK_BASE_URL,
   WEBHOOK_SECRET,
   GITHUB_RUN_URL,
@@ -290,8 +291,15 @@ async function main() {
   const contextNote = CONTEXT?.trim()
     ? ` Additional context from the user, follow it as an instruction alongside the rules below: "${CONTEXT.trim()}"`
     : ''
+  // API suites (engine='api') get the api-test-healer agent instead — no
+  // browser involved, same split as generate-tests.js's isApi branch.
+  // Without this, an API test's heal request silently ran the browser
+  // healer against a file it has no business touching.
+  const isApi = ENGINE === 'api'
+  const healerAgent = isApi ? 'api-test-healer' : 'playwright-test-healer'
+  const conventions = isApi ? "AGENTS.md's \"API tests\" section" : 'AGENTS.md conventions'
   await runAgent(
-    `Use the playwright-test-healer agent to fix any failing tests in ${FILE_PATH}, following AGENTS.md conventions. Do not weaken assertions — if a failure means app behavior changed rather than the test being wrong, mark it with test.fixme() and a POSSIBLE REGRESSION comment instead of forcing it to pass.${contextNote}${priorAttemptsNote}`
+    `Use the ${healerAgent} agent to fix any failing tests in ${FILE_PATH}, following ${conventions}. Do not weaken assertions — if a failure means app behavior changed rather than the test being wrong, mark it with test.fixme() and a POSSIBLE REGRESSION comment instead of forcing it to pass.${contextNote}${priorAttemptsNote}`
   )
 
   await reportPhaseOnce('opening_pr')

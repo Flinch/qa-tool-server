@@ -45,7 +45,7 @@ Rules:
 - "new": genuinely new test cases needed to cover this requirement that aren't already represented by an existing (kept or modified) one. Do not propose a new one that duplicates an existing, still-valid test case.
 - Any existing test case not mentioned in "modified" or "removed" is assumed still accurate — do not list it, and do not regenerate requirements that need no change at all (omit them from the array).
 - "steps": array of strings, one action per step, in order. Do NOT prefix each string with a number or "Step N:" — the UI renders these in a numbered list already.
-- "type": one of "functional" | "integration" | "e2e".
+- "type": one of "functional" | "integration" | "e2e" | "api". Use "api" when the requirement is actually describing backend/API behavior to verify directly — a specific endpoint, HTTP method, status code, request/response payload shape, or a data contract — rather than something a user observes through the UI. A requirement like "the /api/tickets endpoint returns 201 with the created ticket" is "api"; a requirement like "a user sees a confirmation message after creating a ticket" is not, even though a ticket-creation API call happens underneath it. When genuinely unsure, prefer the UI-observable classification (functional/integration/e2e) — only classify as "api" when the requirement itself is written in terms of the API contract, not the user-facing outcome.
 - Aim for 1-2 focused test cases total per requirement (existing + new combined) — the core happy path, plus one edge case only if clearly warranted. No redundant or overlapping tests.
 ${AUTOMATION_GUIDANCE}`
 

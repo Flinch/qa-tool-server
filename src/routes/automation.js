@@ -514,7 +514,7 @@ router.get('/suites/:suiteId/test-cases', ...anyProjectMember, async (req, res) 
 
     const { rows } = await req.db.query(`
       SELECT atc.id, atc.title, atc.origin, atc.review_status, atc.test_case_id,
-        tc.title AS linked_test_case_title
+        tc.title AS linked_test_case_title, tc.type
       FROM automated_test_cases atc
       LEFT JOIN test_cases tc ON tc.id = atc.test_case_id
       WHERE atc.suite_id = $1

@@ -19,7 +19,7 @@ export async function combineTestCases(testCases) {
 
 Return ONLY a valid JSON object with no preamble, no markdown, no explanation, with these fields:
 - "title": string — clear name for the combined test case
-- "type": one of "functional" | "integration" | "e2e"
+- "type": one of "functional" | "integration" | "e2e" | "api" — if the originals share type "api", the combined test case must stay "api" too
 - "steps": array of strings — one action per step, in order, covering every original test case's steps with shared setup deduplicated. Do NOT prefix each string with a number or "Step N:" — the UI renders these in a numbered list already
 - "expected": string — the combined expected result, covering every original test case's expectation
 ${AUTOMATION_GUIDANCE}

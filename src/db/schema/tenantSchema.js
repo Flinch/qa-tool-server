@@ -50,6 +50,17 @@ CREATE TABLE IF NOT EXISTS test_cases (
   updated_at   TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 'api' test cases (Phase 1 API testing) — a distinct category from
+-- functional/integration/e2e so a test verifying backend/API behavior
+-- (endpoints, status codes, request/response shapes) is classified as such
+-- from the moment AI parses it out of a requirement, not just once staff
+-- later happens to attach it to an api-engine automation suite. Widening
+-- the original inline CHECK the same way automation_suites.engine was
+-- widened above.
+ALTER TABLE test_cases DROP CONSTRAINT IF EXISTS test_cases_type_check;
+ALTER TABLE test_cases ADD CONSTRAINT test_cases_type_check
+  CHECK (type IN ('functional','integration','e2e','api'));
+
 CREATE TABLE IF NOT EXISTS bugs (
   id                  SERIAL PRIMARY KEY,
   project_id          INTEGER REFERENCES projects(id) ON DELETE CASCADE,
