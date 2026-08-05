@@ -208,12 +208,16 @@ trio based on the generation payload's `engine` field.
   by `planExport.js`'s `buildPlanMarkdown`), except the "Starting state"
   line says explicitly there is no browser/page/storageState and gives the
   configured baseURL instead.
-- Every generated test uses Playwright's `request` fixture directly —
+- Every generated test uses Playwright's `request` fixture —
   `test('TC-42: ...', async ({ request }) => { ... })` — never `page`,
   never `browser_*` tools. `request` inherits `use.baseURL` from
   `playwright.config.js` the same way `page` does (this app's API and
   frontend share an origin — see the QA tool's Phase 1 plan for why a
-  separate `API_BASE_URL` isn't needed yet).
+  separate `API_BASE_URL` isn't needed yet). `test`/`expect` come from
+  `helpers/apiTrace` (a drop-in replacement for `@playwright/test`'s own
+  exports), never `@playwright/test` directly — it transparently wraps
+  `request` to capture every call made during a failing test and attach it
+  for the UI, same idea as `screenshot: 'only-on-failure'` for web tests.
 
 ### Traceability (required)
 

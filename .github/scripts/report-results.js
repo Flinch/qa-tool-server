@@ -21,6 +21,26 @@ function readScreenshotBase64(result) {
   }
 }
 
+// Mirrors readScreenshotBase64 above, for the 'api-trace' attachment
+// helpers/apiTrace.ts writes on a failing API test — but unlike the
+// screenshot (written to disk first via screenshot:'only-on-failure', then
+// attached BY PATH), apiTrace.ts calls testInfo.attach() with an in-memory
+// `body` string directly, so Playwright's JSON reporter inlines it as
+// base64 in `attachment.body` instead of writing a file and giving it a
+// `path`. Confirmed live: an attachment built from `{body: '...'}` has no
+// `path` at all in results.json. Stays a raw JSON string all the way
+// through to the webhook payload — never JSON.parse'd here, since the
+// webhook insert passes it straight into a JSONB column.
+function readApiTrace(result) {
+  const attachment = result.attachments?.find(a => a.name === 'api-trace' && a.body)
+  if (!attachment) return null
+  try {
+    return Buffer.from(attachment.body, 'base64').toString('utf-8')
+  } catch {
+    return null
+  }
+}
+
 function walkSuites(suites, out) {
   for (const suite of suites || []) {
     for (const spec of suite.specs || []) {
@@ -33,6 +53,7 @@ function walkSuites(suites, out) {
           duration_ms: Math.round(result.duration || 0),
           error_message: result.error?.message || null,
           screenshot_base64: status === 'failed' ? readScreenshotBase64(result) : null,
+          api_trace: status === 'failed' ? readApiTrace(result) : null,
         })
       }
     }

@@ -24,6 +24,19 @@ CREATE TABLE IF NOT EXISTS projects (
   updated_at   TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Quick-reference external links for the project banner (client website,
+-- UAT environment, socials, etc) — an array of {label, url} objects,
+-- staff-edited, shown to both staff and client roles. Separate from
+-- test-config's target_url (the real CI dispatch target, staff-only) —
+-- these are for humans to click through, not for automation.
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS links JSONB DEFAULT '[]';
+
+-- Project logo/profile picture, staff-uploaded, shown to both staff and
+-- client roles. Same base64-data-URL-in-column pattern already used for
+-- bug attachments/comments (see bugs.js IMAGE_DATA_URL) — no object storage
+-- configured for this app, see lib/imageUpload.js on the client.
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS logo TEXT;
+
 CREATE TABLE IF NOT EXISTS test_cases (
   id           SERIAL PRIMARY KEY,
   project_id   INTEGER REFERENCES projects(id) ON DELETE CASCADE,
@@ -145,6 +158,12 @@ CREATE TABLE IF NOT EXISTS test_run_results (
   duration_ms   INTEGER,
   error_message TEXT
 );
+
+-- Captured request/response pairs for a failed API-engine test (see
+-- helpers/apiTrace.ts) — an array of {method,url,requestBody,status,
+-- responseBody,...} objects, one per HTTP call made during the test. Null
+-- for web/mobile results, which never produce this attachment.
+ALTER TABLE test_run_results ADD COLUMN IF NOT EXISTS api_trace JSONB;
 
 DO $$
 BEGIN

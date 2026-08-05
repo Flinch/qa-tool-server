@@ -12,6 +12,12 @@ import { generateAdvisorInsights } from '../lib/qualityAdvisor.js'
 const router = Router()
 router.use(requireAuth)
 
+// Same validation bugs.js uses for attachment/comment images — kept as its
+// own copy rather than a shared import since these are two independently
+// evolving upload surfaces that just happen to use the same base64
+// data-URL-in-column pattern (no object storage configured for this app).
+const IMAGE_DATA_URL = /^data:image\/(png|jpe?g|gif|webp);base64,/
+
 // GET /projects — staff see every active tenant, clients only the ones
 // they're a tenant_members of. Each tenant's own data (test_case_count,
 // open_bug_count) now lives in a separate database per tenant, so this can
@@ -77,7 +83,7 @@ router.get('/:id', requireTenantAccess, async (req, res) => {
 // route). name can't be edited blank; client_name/description can (they're
 // optional — an empty string clears them, same as null).
 router.patch('/:id', requireTenantAccess, requireRole('qa_engineer', 'admin'), async (req, res) => {
-  const { name, client_name, description } = req.body
+  const { name, client_name, description, links, logo } = req.body
 
   const fields = []
   const values = []
@@ -92,6 +98,17 @@ router.patch('/:id', requireTenantAccess, requireRole('qa_engineer', 'admin'), a
   }
   if (description !== undefined) {
     fields.push(`description=$${i++}`); values.push(description?.trim() || null)
+  }
+  if (links !== undefined) {
+    if (!Array.isArray(links) || links.some(l => !l?.label?.trim() || !l?.url?.trim())) {
+      return res.status(400).json({ error: 'links must be an array of {label, url}' })
+    }
+    const cleaned = links.map(l => ({ label: l.label.trim(), url: l.url.trim() }))
+    fields.push(`links=$${i++}`); values.push(JSON.stringify(cleaned))
+  }
+  if (logo !== undefined) {
+    if (logo !== null && !IMAGE_DATA_URL.test(logo)) return res.status(400).json({ error: 'Invalid image format' })
+    fields.push(`logo=$${i++}`); values.push(logo)
   }
   if (fields.length === 0) return res.status(400).json({ error: 'No fields to update' })
 

@@ -113,10 +113,15 @@ router.post('/test-runs', verifySecret, async (req, res) => {
     }
 
     for (const r of results) {
+      // r.api_trace is already a JSON string (report-results.js reads it
+      // straight off the attachment file, never parses it) — pass it
+      // through as-is. JSON.stringify()-ing it again here would double-
+      // encode it into a quoted string scalar inside the JSONB column
+      // instead of the actual array.
       await db.query(
-        `INSERT INTO test_run_results (test_run_id, test_title, status, duration_ms, error_message)
-         VALUES ($1,$2,$3,$4,$5)`,
-        [runId, r.test_title, r.status, r.duration_ms != null ? Math.round(r.duration_ms) : null, r.error_message || null]
+        `INSERT INTO test_run_results (test_run_id, test_title, status, duration_ms, error_message, api_trace)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [runId, r.test_title, r.status, r.duration_ms != null ? Math.round(r.duration_ms) : null, r.error_message || null, r.api_trace || null]
       )
     }
 

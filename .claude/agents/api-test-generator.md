@@ -23,6 +23,12 @@ plan into a robust, reviewable spec file — never a browser test.
   `helpers/`). If so, call the helper directly instead of
   re-implementing the request chain — it's already a proven, working part
   of the codebase.
+- Import `test`/`expect` from `helpers/apiTrace` (relative path, e.g.
+  `../../../helpers/apiTrace`), never directly from `@playwright/test`. It's
+  a drop-in replacement — every `request.*()` call you write works exactly
+  the same — that automatically captures the request/response of every
+  call and attaches it for a failing test, so failures are debuggable from
+  the app instead of just a bare assertion message.
 - For every step in the plan:
   - Write it as a real Playwright `request` call:
     `const response = await request.post('/api/tickets', { data: {...} })`.
@@ -72,7 +78,7 @@ The following file is generated:
 
 ```ts file=tests/generated/api-tests/tc-42-create-ticket.spec.ts
 // spec: specs/tc-42-create-ticket.md
-import { test, expect } from '@playwright/test'
+import { test, expect } from '../../../helpers/apiTrace'
 import { getAuthHeaders } from '../../../helpers/apiAuth'
 import { createTicketPayload } from '../../../helpers/testData'
 
