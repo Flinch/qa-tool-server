@@ -1,0 +1,17 @@
+{
+  "project_id": 7,
+  "suite_id": 2,
+  "suite_slug": "integration-api-tests",
+  "platform": "web",
+  "engine": "api",
+  "target_url": "http://localhost:8080/",
+  "api_base_url": "http://localhost:8080/",
+  "test_credentials": {
+    "password": "QaTool2026!Seed",
+    "username": "qatooladmin",
+    "displayName": "QA Admin"
+  },
+  "auth_setup_file": "tests/auth-setups/project-7.setup.ts",
+  "helpers_dir": "helpers/project-7",
+  "plans": []
+}
