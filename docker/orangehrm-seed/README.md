@@ -53,6 +53,22 @@ tests with a private, ephemeral, self-hosted instance — same app, same version
     `QA Annual Leave` → shows up as "(1) Leave Request to Approve" in
     `qatooladmin`'s My Actions → Approve is available and updates the leave
     balance correctly.
+  - `hs_hr_config`'s `timesheet_period_set` flipped to `Yes` — a fresh
+    install has this at `No`, which blocks the ENTIRE Time module's API
+    with a blanket `403 Forbidden` on every route (`/api/v2/time/*`) for
+    every role, including Admin — not a permissions issue, the module
+    simply refuses to serve anything until a timesheet period (first day
+    of week) is defined once via Time > Timesheets > "Define Timesheet
+    Period". Confirmed live: this cost a real API-test generation run (TC-72,
+    2026-08-05) its entire planner batch — the live-verifying planner agent
+    got 403 on every `/api/v2/time/*` endpoint with both `qatooladmin` and
+    `baselinemanager` and (reasonably, given the evidence available to it)
+    concluded it was a missing employee-role credential, when the real
+    cause was this one unset flag. Same class of gap as the Leave Period
+    fix above, just for Time instead of Leave. Verified end-to-end on a
+    fresh container built from this exact seed: `GET
+    /api/v2/time/timesheets` returns `200 {"data":[],...}` immediately,
+    zero manual setup, for both `qatooladmin` and `baselinemanager`.
 - **`Conf.php`** — the app-level DB connection config
   (`lib/confs/Conf.php` inside the `orangehrm/orangehrm` image), captured
   from a real install. It's a plain PHP class hardcoding `dbHost=db`,
