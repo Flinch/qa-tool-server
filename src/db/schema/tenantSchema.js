@@ -541,4 +541,25 @@ CREATE INDEX IF NOT EXISTS idx_generation_run_logs_run ON generation_run_logs(ge
 -- CI run instead of only the eventual PR (which doesn't exist yet while a
 -- run is still in progress or if it fails before opening one).
 ALTER TABLE generation_runs ADD COLUMN IF NOT EXISTS github_run_url TEXT;
+
+-- Caches a planner's live-verified plan for a test case so a retry (or a
+-- second suite reusing the same TC) doesn't re-derive and re-verify it from
+-- scratch every time. Confirmed live (2026-08-05, TC-72): the planner
+-- burned a live-verification pass discovering the same real API quirk
+-- (wrong endpoint assumed by the original test case) on 3 separate runs,
+-- because specs/*.md is always rebuilt fresh from test_cases.steps/expected
+-- and nothing ever carried the refined result forward.
+--
+-- One row per test case (PRIMARY KEY, not a history table) — only the most
+-- recent verified plan is worth keeping. source_hash is a hash of the exact
+-- inputs buildPlanMarkdown uses (title+steps+expected): if the test case
+-- changes, the hash no longer matches on lookup and the cache is silently
+-- treated as a miss, so there's no separate invalidation step to remember —
+-- an upsert on the next successful verification just overwrites it in place.
+CREATE TABLE IF NOT EXISTS test_case_verified_plans (
+  test_case_id  INTEGER PRIMARY KEY REFERENCES test_cases(id) ON DELETE CASCADE,
+  source_hash   TEXT NOT NULL,
+  markdown      TEXT NOT NULL,
+  verified_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 `

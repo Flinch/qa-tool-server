@@ -294,6 +294,29 @@ function runPlaywrightTest(targetDir) {
 // create-pull-request in the workflow) so this never collides with it.
 const CHECKPOINT_BRANCH = `generated-tests/${CORRELATION_ID}-checkpoint`
 
+// Writes back any plan the planner actually refined this run (content no
+// longer matches what fetch-generation-payload.js originally wrote to disk)
+// so a future run — a retry, or a different suite touching the same TC —
+// can reuse it via exportPlansForTestCases' cache lookup instead of paying
+// for live re-verification again. A plan the planner never touched (no diff)
+// is either already cached (a "verified" cache hit that was never in this
+// batch's prompt list) or was skipped/blocked, and isn't worth writing.
+// Best-effort: a caching failure here shouldn't fail an otherwise-successful
+// run, just means the next run re-verifies from scratch same as today.
+async function cacheVerifiedPlans(planEntries) {
+  for (const e of planEntries) {
+    const specFile = path.join('specs', e.filename)
+    if (!fs.existsSync(specFile)) continue
+    const current = fs.readFileSync(specFile, 'utf-8')
+    if (current === e.markdown) continue
+    try {
+      await postJson(`${WEBHOOK_BASE_URL}/verified-plans`, { correlation_id: CORRELATION_ID, tc_id: e.tc_id, markdown: current })
+    } catch (err) {
+      console.error(`Failed to cache verified plan for TC ${e.tc_id} (continuing):`, err.message)
+    }
+  }
+}
+
 async function checkpointProgress(reasonForFailure) {
   try {
     const { stdout: statusOutput } = await execFileAsync('git', ['status', '--porcelain'])
@@ -378,35 +401,53 @@ async function main() {
   // walkthrough is the ground truth. See AGENTS.md's Behavior mismatch
   // policy: live contradictions are discovered and flagged at
   // generation/healing, not planning.
-  try {
-    const plannerList = entries.map(e => `- specs/${e.filename}`).join('\n')
-    const plannerPrompt = isApi
-      ? `Use the ${agents.planner} agent to verify and refine EACH of the following plans against the real API at ${apiBaseUrl}, following ${conventions}. Update each file in place only if changes are needed. Process every plan in this list before finishing:\n${plannerList}\n\nIf a plan step is fully covered by an existing helper (see AGENTS.md's helpers list), you don't need to re-verify that step live — it's already a proven, working part of the codebase. Focus live verification on steps that aren't already covered by a helper.\n\nIf a plan's stated Expect: outcome turns out to be genuinely contradicted by the API's real behavior (not a wording issue — it actually does something different from what's described), do NOT keep retrying or waiting for the expected state to appear. Follow AGENTS.md's Behavior mismatch policy: note it directly in the plan file with a BEHAVIOR MISMATCH comment describing expected vs actual, and move on to the next plan.`
-      : `Use the ${agents.planner} agent to review and refine EACH of the following plans using the repo ONLY, following ${conventions}. Do NOT attempt to browse or verify against the live app — the generator does the single live walkthrough afterward and is the ground truth for selectors and behavior. Work from: existing helpers (${helpersDir ? `${helpersDir}/ for this project, plus the flat helpers/` : 'the flat helpers/ directory'}), prior generated specs in tests/generated/${suiteSlug}/, and AGENTS.md. Annotate any plan step already fully covered by an existing helper so the generator reuses it instead of live-exploring it. Tighten vague steps and Expect lines, flag blocked plans, and update each file in place only if changes are genuinely needed, preserving the plan format exactly. Process every plan in this list before finishing:\n${plannerList}`
-    await runAgent(plannerPrompt)
-  } catch (err) {
-    if (err instanceof CostCapExceededError) throw err
+  // entries whose specs/*.md already came from a hash-matched cache hit
+  // (exportPlansForTestCases' `verified` flag — see planExport.js) already
+  // contain a fully live-verified plan on disk; the planner has nothing to
+  // add and re-running it would just re-pay for the same verification this
+  // cache exists to avoid. Only entries that missed the cache go into the
+  // planner's task list at all.
+  const freshEntries = entries.filter(e => !e.verified)
+  const cachedEntries = entries.filter(e => e.verified)
+  if (cachedEntries.length > 0) {
+    console.log(`Reusing ${cachedEntries.length} already-verified cached plan(s), skipping live re-verification: ${cachedEntries.map(e => e.filename).join(', ')}`)
+  }
 
-    // A permission denial doesn't mean the planner's actual work was wrong —
-    // it means a tool call after that work (e.g. cleanup) got denied. Check
-    // whether any plan file was actually refined from the skeleton
-    // fetch-generation-payload.js wrote before the call: if so, that
-    // refinement is real, verified progress and is worth keeping instead of
-    // discarding the whole batch over an unrelated tooling gap. A plan that
-    // was never touched just proceeds with its unverified skeleton, same as
-    // before this check existed — no worse off.
-    const plannerHadRealProgress = err instanceof PermissionDenialError && entries.some(e => {
-      const specFile = path.join('specs', e.filename)
-      return fs.existsSync(specFile) && fs.readFileSync(specFile, 'utf-8') !== e.markdown
-    })
-    if (plannerHadRealProgress) {
-      console.warn(`Planner hit a permission denial but had already refined at least one plan — proceeding to the generator phase instead of discarding this run: ${err.message}`)
-    } else {
-      const msg = `Planner batch failed, no TCs could be verified: ${err.message}`
-      const checkpointBranch = await checkpointProgress(msg)
-      await reportEvent('failed', { error_message: msg.slice(0, 2000), branch_name: checkpointBranch || undefined })
-      console.error(msg)
-      process.exit(1)
+  if (freshEntries.length === 0) {
+    console.log('Every plan in this batch is already verified and cached — skipping the planner phase entirely.')
+  } else {
+    try {
+      const plannerList = freshEntries.map(e => `- specs/${e.filename}`).join('\n')
+      const plannerPrompt = isApi
+        ? `Use the ${agents.planner} agent to verify and refine EACH of the following plans against the real API at ${apiBaseUrl}, following ${conventions}. Update each file in place only if changes are needed. Process every plan in this list before finishing:\n${plannerList}\n\nIf a plan step is fully covered by an existing helper (see AGENTS.md's helpers list), you don't need to re-verify that step live — it's already a proven, working part of the codebase. Focus live verification on steps that aren't already covered by a helper.\n\nIf a plan's stated Expect: outcome turns out to be genuinely contradicted by the API's real behavior (not a wording issue — it actually does something different from what's described), do NOT keep retrying or waiting for the expected state to appear. Follow AGENTS.md's Behavior mismatch policy: note it directly in the plan file with a BEHAVIOR MISMATCH comment describing expected vs actual, and move on to the next plan.`
+        : `Use the ${agents.planner} agent to review and refine EACH of the following plans using the repo ONLY, following ${conventions}. Do NOT attempt to browse or verify against the live app — the generator does the single live walkthrough afterward and is the ground truth for selectors and behavior. Work from: existing helpers (${helpersDir ? `${helpersDir}/ for this project, plus the flat helpers/` : 'the flat helpers/ directory'}), prior generated specs in tests/generated/${suiteSlug}/, and AGENTS.md. Annotate any plan step already fully covered by an existing helper so the generator reuses it instead of live-exploring it. Tighten vague steps and Expect lines, flag blocked plans, and update each file in place only if changes are genuinely needed, preserving the plan format exactly. Process every plan in this list before finishing:\n${plannerList}`
+      await runAgent(plannerPrompt)
+      await cacheVerifiedPlans(freshEntries)
+    } catch (err) {
+      if (err instanceof CostCapExceededError) throw err
+
+      // A permission denial doesn't mean the planner's actual work was wrong —
+      // it means a tool call after that work (e.g. cleanup) got denied. Check
+      // whether any plan file was actually refined from the skeleton
+      // fetch-generation-payload.js wrote before the call: if so, that
+      // refinement is real, verified progress and is worth keeping instead of
+      // discarding the whole batch over an unrelated tooling gap. A plan that
+      // was never touched just proceeds with its unverified skeleton, same as
+      // before this check existed — no worse off.
+      const plannerHadRealProgress = err instanceof PermissionDenialError && freshEntries.some(e => {
+        const specFile = path.join('specs', e.filename)
+        return fs.existsSync(specFile) && fs.readFileSync(specFile, 'utf-8') !== e.markdown
+      })
+      if (plannerHadRealProgress) {
+        console.warn(`Planner hit a permission denial but had already refined at least one plan — proceeding to the generator phase instead of discarding this run: ${err.message}`)
+        await cacheVerifiedPlans(freshEntries)
+      } else {
+        const msg = `Planner batch failed, no TCs could be verified: ${err.message}`
+        const checkpointBranch = await checkpointProgress(msg)
+        await reportEvent('failed', { error_message: msg.slice(0, 2000), branch_name: checkpointBranch || undefined })
+        console.error(msg)
+        process.exit(1)
+      }
     }
   }
 

@@ -3,7 +3,7 @@ import crypto from 'crypto'
 import { query as controlQuery } from '../db/pool.js'
 import { resolveTenantPool } from '../db/tenantPool.js'
 import { broadcast } from '../lib/sse.js'
-import { exportPlansForTestCases } from '../lib/planExport.js'
+import { exportPlansForTestCases, planSourceHash } from '../lib/planExport.js'
 import { describeFailure } from '../lib/describeFailure.js'
 import { classifyFailure } from '../lib/classifyFailure.js'
 import { resolveTestEnvironment } from '../lib/testEnvironment.js'
@@ -311,6 +311,58 @@ router.get('/generation-payload/:correlationId', verifySecret, async (req, res) 
       helpers_dir: env.helpersDir,
       plans: await exportPlansForTestCases(db, run.project_id, run.test_case_ids, run.suite_platform, run.suite_engine),
     })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// POST /verified-plans — CI calls this once per plan file the planner
+// actually refined from its skeleton (see generate-tests.js), caching the
+// live-verified result so a retry — or a different run that happens to
+// touch the same TC — reuses it instead of re-deriving and re-verifying it
+// from scratch. Confirmed live (2026-08-05): TC-72's planner rediscovered
+// the exact same real API quirk (a wrong endpoint assumed by the original
+// test case) from a blank skeleton on 3 separate runs before this existed.
+//
+// source_hash is computed HERE from the test case's current DB row, never
+// trusted from the CI payload — a stale or forged hash could poison the
+// cache with content that no longer matches what's on record. tc_id is also
+// checked against this run's own test_case_ids so a run can't write a cache
+// entry for a TC outside its own scope.
+router.post('/verified-plans', verifySecret, async (req, res) => {
+  const { correlation_id, tc_id, markdown } = req.body
+  if (!correlation_id || !tc_id || !markdown) {
+    return res.status(400).json({ error: 'correlation_id, tc_id, and markdown are required' })
+  }
+
+  try {
+    const tenantId = await resolveTenantId(correlation_id, null)
+    const db = tenantId ? await resolveTenantPool(tenantId) : null
+    if (!db) return res.status(404).json({ error: 'Unknown correlation id' })
+
+    const { rows: runRows } = await db.query(
+      `SELECT project_id, test_case_ids FROM generation_runs WHERE correlation_id=$1`,
+      [correlation_id]
+    )
+    const run = runRows[0]
+    if (!run || !run.test_case_ids?.includes(Number(tc_id))) {
+      return res.status(404).json({ error: 'This test case is not part of the run identified by correlation_id' })
+    }
+
+    const { rows: tcRows } = await db.query(
+      `SELECT id, title, steps, expected FROM test_cases WHERE id=$1 AND project_id=$2`,
+      [tc_id, run.project_id]
+    )
+    if (!tcRows[0]) return res.status(404).json({ error: 'Test case not found' })
+
+    await db.query(
+      `INSERT INTO test_case_verified_plans (test_case_id, source_hash, markdown, verified_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (test_case_id) DO UPDATE SET source_hash=$2, markdown=$3, verified_at=NOW()`,
+      [tc_id, planSourceHash(tcRows[0]), markdown]
+    )
+
+    res.status(200).json({ received: true })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }

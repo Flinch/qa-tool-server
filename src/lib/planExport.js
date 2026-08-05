@@ -21,6 +21,22 @@
 //    vague `expected` produces a weak test. Garbage in, garbage out; that's a
 //    data-quality problem to fix on the TC, not in this exporter.
 
+import crypto from 'crypto'
+
+// Identifies exactly the inputs buildPlanMarkdown turns into a skeleton plan.
+// Used both to look up a cached verified plan (a hash match means nothing
+// about this TC has changed since it was last live-verified, so the cached
+// markdown is still trustworthy) and to write one back (see
+// POST /webhooks/verified-plans) — recomputed server-side there rather than
+// trusted from the CI payload, so a stale or forged hash can't poison the
+// cache.
+export function planSourceHash(tc) {
+  const steps = Array.isArray(tc.steps) ? tc.steps.filter(s => String(s).trim()) : []
+  return crypto.createHash('sha256')
+    .update(JSON.stringify({ title: tc.title, steps, expected: tc.expected || '' }))
+    .digest('hex')
+}
+
 // URL/filename-safe slug from a TC title: lowercase, alphanumerics and
 // hyphens only, collapsed and trimmed, capped so filenames stay sane.
 export function slugify(title) {
@@ -115,10 +131,30 @@ export async function exportPlansForTestCases(db, projectId, testCaseIds, platfo
      ORDER BY id`,
     [projectId, testCaseIds, isApiSuite]
   )
+  if (rows.length === 0) return []
 
-  return rows.map(tc => ({
-    tc_id: tc.id,
-    filename: planFilename(tc),
-    markdown: buildPlanMarkdown(tc, platform, engine),
-  }))
+  // A cached plan is only reused when its stored hash still matches this
+  // TC's CURRENT title/steps/expected — if the TC changed since it was last
+  // verified, that's a silent cache miss (not an error), and this just falls
+  // back to a fresh skeleton like before this cache existed.
+  const { rows: cached } = await db.query(
+    `SELECT test_case_id, source_hash, markdown FROM test_case_verified_plans WHERE test_case_id = ANY($1::int[])`,
+    [rows.map(tc => tc.id)]
+  )
+  const cacheByTcId = new Map(cached.map(c => [c.test_case_id, c]))
+
+  return rows.map(tc => {
+    const hit = cacheByTcId.get(tc.id)
+    const verified = hit?.source_hash === planSourceHash(tc)
+    return {
+      tc_id: tc.id,
+      filename: planFilename(tc),
+      markdown: verified ? hit.markdown : buildPlanMarkdown(tc, platform, engine),
+      // Tells generate-tests.js this plan is already live-verified and
+      // doesn't need the planner's full re-derivation — see its
+      // "verified"-aware prompt branch and the cache-skip path when every
+      // plan in the batch is already a hit.
+      verified,
+    }
+  })
 }
