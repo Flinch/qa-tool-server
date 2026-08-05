@@ -138,6 +138,14 @@ const logFlushInterval = setInterval(flushLogs, 2000)
 let totalCostUsd = 0
 class CostCapExceededError extends Error {}
 class AgentTimeoutError extends Error {}
+// Distinct from a plain agent error: a permission denial means the sandbox's
+// settings.json allowlist is missing something, not that the agent's actual
+// work was wrong. Confirmed live (runs 31, 34): the planner had already
+// live-verified a plan and written a correct, refined specs/*.md before
+// dying on an unrelated cleanup step (rm, mkdir) that was never allowlisted
+// — distinguishing this lets main() check whether real progress survived the
+// denial instead of always discarding the whole batch.
+class PermissionDenialError extends Error {}
 
 function truncateForLog(value, max) {
   const s = typeof value === 'string' ? value : JSON.stringify(value)
