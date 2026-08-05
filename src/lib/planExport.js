@@ -89,20 +89,31 @@ export function buildPlanMarkdown(tc, platform = 'web', engine = null) {
 // uses. Returns rows in the caller-requested order-independent form:
 // [{ tc_id, filename, markdown }]
 //
-// Re-validates automation_candidate at export time, same as the trigger did
-// at dispatch time. Belt and suspenders on purpose: a TC could have been
-// edited or un-flagged in the minutes between clicking Generate and CI
-// fetching the payload, and exporting a stale/ineligible TC would waste an
-// expensive agent run on it.
+// Re-validates eligibility at export time, same condition automationTrigger.js
+// checks at dispatch time (api-engine suite -> type='api' TCs; everything
+// else -> automation_candidate=true TCs) — keep these two in sync. Belt and
+// suspenders on purpose: a TC could have been edited or un-flagged in the
+// minutes between clicking Generate and CI fetching the payload, and
+// exporting a stale/ineligible TC would waste an expensive agent run on it.
+// This is exactly where TC 72 (type='api', automation_candidate=false, a
+// perfectly valid API test) silently vanished on 2026-08-05 — this query
+// still only checked automation_candidate=true after the dispatch-time
+// check had already been widened to also accept type='api', so dispatch
+// succeeded but the payload came back with zero plans.
 export async function exportPlansForTestCases(db, projectId, testCaseIds, platform = 'web', engine = null) {
   if (!Array.isArray(testCaseIds) || testCaseIds.length === 0) return []
 
+  const isApiSuite = engine === 'api'
   const { rows } = await db.query(
     `SELECT id, title, type, steps, expected, automation_reasoning
      FROM test_cases
-     WHERE project_id = $1 AND id = ANY($2::int[]) AND automation_candidate = true
+     WHERE project_id = $1 AND id = ANY($2::int[])
+       AND (
+         ($3::boolean AND type = 'api')
+         OR (NOT $3::boolean AND automation_candidate = true AND type != 'api')
+       )
      ORDER BY id`,
-    [projectId, testCaseIds]
+    [projectId, testCaseIds, isApiSuite]
   )
 
   return rows.map(tc => ({
