@@ -267,17 +267,27 @@ not UI navigation:
   (generator/healer), exactly like the web pipeline.
 - **One command per Bash call — never chain, never `cd`.** The sandbox
   checks the WHOLE command string against a single allowed prefix (e.g.
-  `curl`, `grep`) — a compound command like `cd /tmp && rm -f x\ncurl ...`
-  gets denied wholesale because it starts with `cd`, even though the
+  `curl`, `grep`) — a compound command like `cd .scratch && rm -f x\ncurl
+  ...` gets denied wholesale because it starts with `cd`, even though the
   `curl` later in the same string would be fine on its own. This isn't
   theoretical: it's exactly what killed a real generation run's entire
   planner batch on 2026-08-05 after the agent had already done the actual
   verification work — every accumulated denial fails the batch regardless
   of what real progress happened around it. Use an absolute path instead
-  of `cd` (`curl -c /tmp/cookies.txt ...`, not `cd /tmp && curl -c
+  of `cd` (`curl -c .scratch/cookies.txt ...`, not `cd .scratch && curl -c
   cookies.txt ...`), and issue `curl`/`grep`/`cat`/`ls`/`wc`/`find`/`head`/
   `tail` as their own separate Bash calls, one command each — every one of
   those is individually allowed; a compound string mixing them is not.
+- **Scratch files go under `.scratch/` at the repo root, never `/tmp/`.**
+  This one is counterintuitive and cost a full failed run to discover
+  (2026-08-05): `/tmp/` is OUTSIDE the sandbox's workspace boundary, so
+  `grep`/`ls`/`cat`/`wc`/`find` are denied against a `/tmp/` path even
+  though those same commands are allowed in general — only `curl` is
+  exempt from that boundary, because it's a network call, not a
+  filesystem read (`curl -o /tmp/x ...` succeeds; a later `grep` on that
+  same `/tmp/x` does not). `.scratch/` is gitignored, stays inside the
+  workspace boundary, and needs no cleanup since it can never be
+  committed — create it if it doesn't exist yet.
 
 ### Stability rules
 

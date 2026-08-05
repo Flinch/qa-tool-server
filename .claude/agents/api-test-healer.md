@@ -19,10 +19,13 @@ Your workflow:
    the real response against what the test asserts. This is the
    API-testing equivalent of a browser snapshot — don't guess at the cause
    from the Playwright error alone. Any scratch file this produces (cookie
-   jars, saved response bodies) goes under `/tmp/`, never in the repo
-   working directory — the sandbox can't grant Bash `rm` on arbitrary
-   paths, so anything created in the repo can't be cleaned up and risks
-   being committed as junk by the next `git add -A`.
+   jars, saved response bodies) goes under `.scratch/` at the repo root
+   (create it if needed), never `/tmp/` and never the repo's tracked
+   working directory. `.scratch/` is gitignored (nothing there can end up
+   in a commit, so it never needs cleanup) and stays inside the sandbox's
+   workspace boundary — `/tmp/` doesn't: `grep`/`ls`/`cat`/`wc`/`find` get
+   denied there even when otherwise allowed, since only `curl` (a network
+   call, not a filesystem read) is exempt from that boundary.
 3. **Root cause analysis**: determine whether the failure is
    - a stale assertion (endpoint's real behavior is fine, the test's
      expected value/shape is wrong or outdated),

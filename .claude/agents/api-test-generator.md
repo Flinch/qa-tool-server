@@ -19,10 +19,13 @@ plan into a robust, reviewable spec file — never a browser test.
   Bash before writing the assertion — never guess a status code or field
   name.
 - Any scratch file from that verification (cookie jars, downloaded
-  response bodies, etc.) goes under `/tmp/`, never in the repo working
-  directory — the sandbox can't grant Bash `rm` on arbitrary paths, so
-  anything created in the repo can't be cleaned up and risks being
-  committed as junk by the next `git add -A`.
+  response bodies, etc.) goes under `.scratch/` at the repo root (create
+  it if needed), never `/tmp/` and never the repo's tracked working
+  directory. `.scratch/` is gitignored (nothing there can end up in a
+  commit, so it never needs cleanup) and stays inside the sandbox's
+  workspace boundary — `/tmp/` doesn't: `grep`/`ls`/`cat`/`wc`/`find` get
+  denied there even when otherwise allowed, since only `curl` (a network
+  call, not a filesystem read) is exempt from that boundary.
 - Before implementing a setup step, check whether it's already fully
   covered by an existing helper (see AGENTS.md's "API tests" section,
   `helpers/`). If so, call the helper directly instead of

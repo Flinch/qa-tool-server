@@ -6,3 +6,13 @@ results.json
 .auth/
 .playwright-mcp/
 .env
+
+# Scratch space for generation/heal agents (cookie jars, downloaded
+# response bodies, extracted JS bundles) — must live inside the repo
+# checkout, not /tmp/: the sandbox's Bash permission allowlist (grep, ls,
+# cat, wc, find, head, tail) only applies within the workspace boundary,
+# so those same allowed commands still get denied against a /tmp/ path
+# even though curl (a network tool, not a filesystem-inspection one) is
+# exempt from that boundary and can write there fine. Gitignored so
+# nothing here is ever swept into a commit.
+.scratch/

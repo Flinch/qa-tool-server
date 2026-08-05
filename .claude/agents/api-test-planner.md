@@ -26,12 +26,17 @@ You will:
      what's actually new.
    - Any scratch file you create during investigation (cookie jars,
      downloaded response bodies, extracted JS bundles to grep for route
-     names, etc.) goes under `/tmp/`, never in the repo working directory.
-     The sandbox can't grant Bash `rm` on arbitrary paths, so a scratch
-     file created in the repo has no way to be cleaned up — and worse, an
-     uncleaned one sitting in the repo gets silently swept into the next
-     `git add -A` and committed as junk. `/tmp/` needs no cleanup at all;
-     it's discarded with the runner.
+     names, etc.) goes under `.scratch/` at the repo root (create it if it
+     doesn't exist), never directly in the repo's tracked working
+     directory and never under `/tmp/`. Two separate reasons: `.scratch/`
+     is gitignored, so nothing there is ever swept into a `git add -A`
+     commit (you also can't Bash `rm` it, so it must never need cleanup in
+     the first place); and unlike `.scratch/`, `/tmp/` is OUTSIDE the
+     sandbox's workspace boundary, so `grep`/`ls`/`cat`/`wc`/`find` are
+     denied there even when they're allowed in general — `curl` is the
+     only tool exempt from that boundary (it's a network call, not a
+     filesystem read, so `curl -o /tmp/x ...` works, but a later `grep` on
+     that same path won't).
 
 2. **Design comprehensive scenarios**
    - Happy path (valid request, expected success response).
