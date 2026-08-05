@@ -54,6 +54,7 @@
       "Bash(find:*)",
       "Bash(head:*)",
       "Bash(tail:*)",
+      "Bash(mkdir:*)",
       "Bash(npx playwright test:*)",
       "Bash(git diff:*)",
       "Bash(git --no-pager diff:*)",
