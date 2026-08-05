@@ -1,0 +1,23 @@
+{
+  "project_id": 7,
+  "suite_id": 2,
+  "suite_slug": "integration-api-tests",
+  "platform": "web",
+  "engine": "api",
+  "target_url": "http://localhost:8080/",
+  "api_base_url": "http://localhost:8080/",
+  "test_credentials": {
+    "password": "QaTool2026!Seed",
+    "username": "qatooladmin",
+    "displayName": "QA Admin"
+  },
+  "auth_setup_file": "tests/auth-setups/project-7.setup.ts",
+  "helpers_dir": "helpers/project-7",
+  "plans": [
+    {
+      "tc_id": 72,
+      "filename": "tc-72-post-api-v2-time-timesheets-rejects-line-items-with-negative.md",
+      "markdown": "# TC-72: POST /api/v2/time/timesheets rejects line items with negative or non-numeric hours\n\n<!-- source: qa-tool test case 72 | type: api -->\n\n## Scenario: TC-72 — POST /api/v2/time/timesheets rejects line items with negative or non-numeric hours\n\nStarting state: no browser, no page, no storageState. Use the `request` fixture directly against the configured baseURL.\n\nSteps:\n1. Authenticate via the app's session-cookie login flow: GET /web/index.php/auth/login for the CSRF token, then POST /web/index.php/auth/validate\n2. Create prerequisite time-tracking data: POST /api/v2/time/customers, then POST /api/v2/time/projects, then POST /api/v2/time/project/{projectId}/activities (note: singular \"project\")\n3. Create a timesheet container: POST /api/v2/time/timesheets with { date: <any date in target week> }\n4. Attempt to record a negative-hours line item: PUT /api/v2/time/timesheets/{timesheetId}/entries with an entry whose duration is \"-3:00\"\n5. Record the HTTP status code and response body from the previous request\n6. Attempt to record a non-numeric-hours line item: PUT /api/v2/time/timesheets/{timesheetId}/entries with an entry whose duration is \"abc\"\n7. Record the HTTP status code and response body from the previous request\n8. GET /api/v2/time/timesheets/{timesheetId}/entries and confirm neither rejected attempt was persisted\n\nExpect: Both PUT /api/v2/time/timesheets/{timesheetId}/entries calls (duration \"-3:00\" and duration \"abc\") return HTTP 422 Unprocessable Content with body {\"error\":{\"status\":\"422\",\"message\":\"Invalid Parameter\",\"data\":{\"invalidParamKeys\":[\"entries\"]}}}. Neither call persists an entry (confirmed via the follow-up GET .../entries). For contrast, the same endpoint with a valid duration (e.g. \"03:00\") returns 200, confirming the 422s are specifically caused by the invalid duration values.\n"
+    }
+  ]
+}
