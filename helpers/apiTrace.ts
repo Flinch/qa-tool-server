@@ -104,7 +104,13 @@ export const test = base.extend<{ request: APIRequestContext }>({
 
     await use(wrapped)
 
-    if (testInfo.status !== 'passed' && testInfo.status !== 'skipped' && trace.length > 0) {
+    // Attached regardless of pass/fail — unlike the web pipeline's
+    // screenshot ('only-on-failure'), a passing API test's trace is exactly
+    // what a reviewer needs to confirm the test actually exercised the real
+    // endpoints/payloads it claims to, not just that assertions happened to
+    // pass. report-results.js reports it unconditionally too (see its own
+    // comment) — this used to be failure-only on both ends.
+    if (trace.length > 0) {
       await testInfo.attach('api-trace', {
         body: JSON.stringify(trace, null, 2),
         contentType: 'application/json',

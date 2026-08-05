@@ -22,7 +22,10 @@ function readScreenshotBase64(result) {
 }
 
 // Mirrors readScreenshotBase64 above, for the 'api-trace' attachment
-// helpers/apiTrace.ts writes on a failing API test — but unlike the
+// helpers/apiTrace.ts writes on EVERY API test, pass or fail (unlike the
+// screenshot, which stays failure-only — a passing API test's trace is the
+// only way to confirm it actually hit the real endpoints/payloads it
+// claims to, not just that assertions happened to pass) — but unlike the
 // screenshot (written to disk first via screenshot:'only-on-failure', then
 // attached BY PATH), apiTrace.ts calls testInfo.attach() with an in-memory
 // `body` string directly, so Playwright's JSON reporter inlines it as
@@ -53,7 +56,7 @@ function walkSuites(suites, out) {
           duration_ms: Math.round(result.duration || 0),
           error_message: result.error?.message || null,
           screenshot_base64: status === 'failed' ? readScreenshotBase64(result) : null,
-          api_trace: status === 'failed' ? readApiTrace(result) : null,
+          api_trace: readApiTrace(result),
         })
       }
     }
