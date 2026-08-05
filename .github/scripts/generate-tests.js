@@ -263,7 +263,7 @@ async function runAgent(prompt) {
     // A denied tool call means .claude/settings.json's allowlist is missing
     // something this phase needed — surface it distinctly from a normal
     // agent failure so it's obvious the fix is in settings.json, not AGENTS.md.
-    throw new Error(`Agent hit ${result.permission_denials.length} permission denial(s): ${JSON.stringify(result.permission_denials).slice(0, 500)}`)
+    throw new PermissionDenialError(`Agent hit ${result.permission_denials.length} permission denial(s): ${JSON.stringify(result.permission_denials).slice(0, 500)}`)
   }
   if (result.is_error) {
     throw new Error(`Agent invocation reported an error: ${result.result || '(no message)'}`)
@@ -386,11 +386,28 @@ async function main() {
     await runAgent(plannerPrompt)
   } catch (err) {
     if (err instanceof CostCapExceededError) throw err
-    const msg = `Planner batch failed, no TCs could be verified: ${err.message}`
-    const checkpointBranch = await checkpointProgress(msg)
-    await reportEvent('failed', { error_message: msg.slice(0, 2000), branch_name: checkpointBranch || undefined })
-    console.error(msg)
-    process.exit(1)
+
+    // A permission denial doesn't mean the planner's actual work was wrong —
+    // it means a tool call after that work (e.g. cleanup) got denied. Check
+    // whether any plan file was actually refined from the skeleton
+    // fetch-generation-payload.js wrote before the call: if so, that
+    // refinement is real, verified progress and is worth keeping instead of
+    // discarding the whole batch over an unrelated tooling gap. A plan that
+    // was never touched just proceeds with its unverified skeleton, same as
+    // before this check existed — no worse off.
+    const plannerHadRealProgress = err instanceof PermissionDenialError && entries.some(e => {
+      const specFile = path.join('specs', e.filename)
+      return fs.existsSync(specFile) && fs.readFileSync(specFile, 'utf-8') !== e.markdown
+    })
+    if (plannerHadRealProgress) {
+      console.warn(`Planner hit a permission denial but had already refined at least one plan — proceeding to the generator phase instead of discarding this run: ${err.message}`)
+    } else {
+      const msg = `Planner batch failed, no TCs could be verified: ${err.message}`
+      const checkpointBranch = await checkpointProgress(msg)
+      await reportEvent('failed', { error_message: msg.slice(0, 2000), branch_name: checkpointBranch || undefined })
+      console.error(msg)
+      process.exit(1)
+    }
   }
 
   await reportPhaseOnce('generating')
