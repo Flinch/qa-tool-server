@@ -365,12 +365,21 @@ async function main() {
   const conventions = isApi ? "AGENTS.md's \"API tests\" section" : 'AGENTS.md conventions'
 
   // Per-project reusable helpers (see AGENTS.md's "Per-project reusable
-  // helpers" section) — web pipeline only, and only for a project with its
-  // own custom target (helpersDir is null for the original demo project,
-  // which keeps its existing flat helpers/ convention and prompt wording
-  // completely unchanged below).
-  const generatorHelperInstruction = (!isApi && helpersDir)
-    ? ` Check ${helpersDir}/ via Glob + Read first for existing reusable helpers before implementing a step from scratch. If you have to live-verify and implement a step that's a genuinely reusable setup/entry action for this app (not a one-off), also extract it into a new file under ${helpersDir}/ — one exported async function taking page, a one-line top comment describing what it does, same shape as helpers/createTicket.ts — following AGENTS.md's "Per-project reusable helpers" section.`
+  // helpers" section) — only for a project with its own custom target
+  // (helpersDir is null for the original demo project, which keeps its
+  // existing flat helpers/ convention and prompt wording completely
+  // unchanged below). Applies to both pipelines: confirmed live (2026-08-05,
+  // TC-72) the API generator already extracts one on its own initiative for
+  // auth (helpers/project-7/apiLogin.ts) when told to check for one first —
+  // but without this explicit extraction instruction, only auth gets that
+  // treatment. A multi-step resource-creation chain (e.g. this project's
+  // customer -> project -> activity -> timesheet setup) is exactly as
+  // reusable across future test cases as a login flow is, and every test
+  // case that needs it currently re-derives and re-verifies it from
+  // scratch. `request` replaces `page` as the helper's argument for an API
+  // suite, since there's no browser/page fixture in that pipeline at all.
+  const generatorHelperInstruction = helpersDir
+    ? ` Check ${helpersDir}/ via Glob + Read first for existing reusable helpers before implementing a step from scratch. If you have to live-verify and implement a step that's a genuinely reusable setup/entry action for this app (not a one-off), also extract it into a new file under ${helpersDir}/ — one exported async function taking ${isApi ? 'request' : 'page'} (plus optional data overrides), a one-line top comment describing what it does, same shape as ${isApi ? 'helpers/project-7/apiLogin.ts' : 'helpers/createTicket.ts'} — following AGENTS.md's "Per-project reusable helpers" section.`
     : ''
   const entries = plans.map(plan => ({
     ...plan,

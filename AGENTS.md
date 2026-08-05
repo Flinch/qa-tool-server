@@ -258,7 +258,13 @@ not UI navigation:
   reusing an existing suite-level helper for setup data (creating a
   resource the test then acts on) over re-implementing it per spec, same
   "don't re-verify what's already proven" principle the web generator uses
-  for its own helpers.
+  for its own helpers — and when a step needed live verification because no
+  existing helper covered it yet, extract it into one (see "Per-project
+  reusable helpers" above) if it's genuinely reusable, not a one-off. A
+  multi-step resource-creation chain (e.g. customer -> project -> activity
+  -> timesheet) is exactly as worth extracting as a login flow is — every
+  future test case needing that same setup should call one proven helper
+  instead of re-deriving and re-verifying the whole chain from scratch.
 - **Behavior mismatch policy** (same idea as web's, see above): if live
   `curl` verification shows the API's actual status/response genuinely
   contradicts the plan's `Expect:` — not a wording issue, a real
@@ -366,7 +372,11 @@ flows instead of just login.
   inlining it into the one spec.
 - **Shape**: one exported `async function` taking `page` (plus optional
   data overrides), same pattern as `helpers/createTicket.ts` — a single
-  clear responsibility, not a grab-bag. A one-line comment at the top
+  clear responsibility, not a grab-bag. For an API-engine suite, take
+  `request: APIRequestContext` instead of `page` (there's no browser fixture
+  in that pipeline at all) — same pattern as `helpers/project-7/apiLogin.ts`,
+  which extracted the CSRF-scrape + form-post login dance the same way this
+  section describes for a browser flow. A one-line comment at the top
   describing what it does and when to reuse it, so a future run can decide
   relevance from the file list alone without executing anything.
 - **Import convention**: `import { x } from '../../../helpers/project-<id>/y'`
