@@ -402,8 +402,8 @@ router.post('/runs/:runId/heal', ...staffOnlyChain, async (req, res) => {
     )
     if (!resultRows[0]) return res.status(404).json({ error: 'Result not found on this run' })
     const result = resultRows[0]
-    if (result.status !== 'failed') {
-      return res.status(400).json({ error: 'Only a failed result can be healed' })
+    if (!['failed', 'skipped'].includes(result.status)) {
+      return res.status(400).json({ error: 'Only a failed or skipped result can be healed' })
     }
 
     const files = await listSuiteFiles({ id: run.suite_id, slug: run.suite_slug, platform: run.suite_platform })
@@ -460,8 +460,8 @@ router.post('/runs/:runId/diagnose', ...staffOnlyChain, async (req, res) => {
     )
     if (!resultRows[0]) return res.status(404).json({ error: 'Result not found on this run' })
     const result = resultRows[0]
-    if (result.status !== 'failed') {
-      return res.status(400).json({ error: 'Only a failed result can be diagnosed' })
+    if (!['failed', 'skipped'].includes(result.status)) {
+      return res.status(400).json({ error: 'Only a failed or skipped result can be diagnosed' })
     }
 
     // Best-effort linked test case, for real steps/expected context — same
@@ -560,12 +560,14 @@ router.get('/generated-test-cases', ...staffOnlyChain, async (req, res) => {
         s.id AS suite_id, s.name AS suite_name, s.slug AS suite_slug, s.platform AS suite_platform,
         latest.id AS last_result_id, latest.test_run_id AS last_run_id,
         latest.status AS last_status, latest.error_message AS last_error_message,
-        latest.completed_at AS last_run_at, latest.api_trace AS last_api_trace
+        latest.completed_at AS last_run_at, latest.api_trace AS last_api_trace,
+        latest.report_url AS last_report_url, latest.github_run_url AS last_run_url
       FROM automated_test_cases atc
       JOIN automation_suites s ON s.id = atc.suite_id
       LEFT JOIN test_cases tc ON tc.id = atc.test_case_id
       LEFT JOIN LATERAL (
-        SELECT trr.id, trr.test_run_id, trr.status, trr.error_message, trr.api_trace, tr.completed_at
+        SELECT trr.id, trr.test_run_id, trr.status, trr.error_message, trr.api_trace,
+          tr.completed_at, tr.report_url, tr.github_run_url
         FROM test_run_results trr
         JOIN test_runs tr ON tr.id = trr.test_run_id
         WHERE trr.test_title = atc.title AND tr.suite_id = atc.suite_id AND tr.scope = 'suite'
