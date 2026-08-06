@@ -11,6 +11,7 @@ import authRouter from './routes/auth.js'
 import automationRouter from './routes/automation.js'
 import executionRunsRouter from './routes/executionRuns.js'
 import criticalFlowsRouter from './routes/criticalFlows.js'
+import savedViewsRouter from './routes/savedViews.js'
 import webhooksRouter from './routes/webhooks.js'
 import { startNightlyScheduler } from './lib/nightlyScheduler.js'
 
@@ -43,6 +44,7 @@ app.use('/api/projects/:id/features', featuresRouter)
 app.use('/api/projects/:id/automation', automationRouter)
 app.use('/api/projects/:id/execution-runs', executionRunsRouter)
 app.use('/api/projects/:id/critical-flows', criticalFlowsRouter)
+app.use('/api/projects/:id/saved-views', savedViewsRouter)
 app.use('/api/stats', statsRouter)
 app.use('/api/webhooks', webhooksRouter)
 

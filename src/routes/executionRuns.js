@@ -92,6 +92,25 @@ router.post('/', staffOnly, async (req, res) => {
   }
 })
 
+// GET /latest — the most recently created execution run for this project.
+// Backs saved views of type 'execution_test_cases', which never pin a run
+// id in their stored filters — they always reopen against whatever's most
+// current, so a saved/shared view link never goes stale as new runs happen.
+// Registered ahead of GET /:runId so Express doesn't swallow "latest" as a
+// :runId value.
+router.get('/latest', async (req, res) => {
+  try {
+    const { rows } = await req.db.query(
+      `SELECT id FROM execution_runs WHERE project_id=$1 ORDER BY created_at DESC LIMIT 1`,
+      [req.params.id]
+    )
+    if (!rows[0]) return res.status(404).json({ error: 'No execution runs yet' })
+    res.json({ id: rows[0].id })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // GET /:runId — run + its test cases (with per-run status) + its suites (with latest run status).
 // Staff + read-only clients who are project members.
 router.get('/:runId', async (req, res) => {

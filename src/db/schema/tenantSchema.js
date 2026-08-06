@@ -562,4 +562,28 @@ CREATE TABLE IF NOT EXISTS test_case_verified_plans (
   markdown      TEXT NOT NULL,
   verified_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Saved Views — a named, reusable filter combination for the Bugs page or
+-- the execution-run test-case list, replacing the old static "Reports"
+-- launcher grid. Shared team-wide (no ownership/visibility column):
+-- created_by is audit-only, same role bugs.created_by plays, never used to
+-- scope who can see a view. An execution_test_cases view deliberately
+-- carries no run id in its filters — it always reopens against whichever
+-- execution run is most recent (see GET /execution-runs/latest), so a
+-- saved/shared link never goes stale as new runs happen.
+--
+-- filters JSON shapes:
+--   bugs: { severity, status, source, dateLogged: { preset, from, to },
+--           environmentalOnly, executionRunId, suiteId }
+--   execution_test_cases: { status, type }
+CREATE TABLE IF NOT EXISTS saved_views (
+  id           SERIAL PRIMARY KEY,
+  project_id   INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  name         TEXT NOT NULL,
+  type         TEXT NOT NULL CHECK (type IN ('bugs','execution_test_cases')),
+  filters      JSONB NOT NULL DEFAULT '{}',
+  created_by   TEXT,
+  created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_saved_views_project ON saved_views(project_id);
 `
