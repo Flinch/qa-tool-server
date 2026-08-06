@@ -5,7 +5,8 @@
 // automatically authorized afterwards. Reuse this at the top of any api-engine spec for this
 // project instead of re-implementing the CSRF-scrape + form-post dance per file.
 //
-// Flow (verified live against http://localhost:8080/):
+// Flow (verified live against http://localhost:8080/) — delegated to apiLoginAs.ts's shared
+// implementation, this file just supplies the seeded-admin env-var defaults:
 //   1. GET /web/index.php/auth/login. If the request context already carries a valid
 //      `_orangehrm` session (the `generated` Playwright project applies the shared
 //      storageState from tests/auth-setups/project-7.setup.ts to every generated spec,
@@ -20,36 +21,11 @@
 //      `/web/index.php/auth/login` instead — both cases return the same 302 status, so success
 //      must be detected from the final redirected-to URL, not the status code.
 import type { APIRequestContext } from '@playwright/test'
-
-const TOKEN_PROP_REGEX = /:token="&quot;([^&]*)&quot;"/
+import { apiLoginAs } from './apiLoginAs'
 
 export async function apiLogin(request: APIRequestContext): Promise<void> {
   const username = process.env.TEST_USER_NAME || 'qatooladmin'
   const password = process.env.TEST_USER_PASSWORD || 'QaTool2026!Seed'
 
-  const loginPageResponse = await request.get('/web/index.php/auth/login')
-  if (!loginPageResponse.url().includes('/auth/login')) {
-    // Already authenticated (inherited storageState) — redirected straight past the login form.
-    return
-  }
-
-  const loginPageHtml = await loginPageResponse.text()
-  const tokenMatch = loginPageHtml.match(TOKEN_PROP_REGEX)
-  if (!tokenMatch) {
-    throw new Error('apiLogin: could not find the CSRF `token` prop on the OrangeHRM login page')
-  }
-
-  const validateResponse = await request.post('/web/index.php/auth/validate', {
-    form: {
-      _token: tokenMatch[1],
-      username,
-      password,
-    },
-  })
-
-  if (validateResponse.url().includes('/auth/login')) {
-    throw new Error(
-      `apiLogin: login failed for user "${username}" — redirected back to the login page`
-    )
-  }
+  await apiLoginAs(request, username, password)
 }
