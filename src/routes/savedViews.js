@@ -9,9 +9,7 @@ router.use(requireTenantAccess)
 const staffOnly = requireRole('qa_engineer', 'admin')
 const VALID_TYPES = ['bugs', 'execution_test_cases']
 
-// GET / — every saved view for the project, shared team-wide. Open to
-// clients too (unlike creating/deleting one) since Views is a browsing
-// destination for both roles, same access shape Reports had before it.
+// GET / — every saved view for the project, shared team-wide.
 router.get('/', async (req, res) => {
   try {
     const { rows } = await req.db.query(
@@ -39,7 +37,10 @@ router.get('/:viewId', async (req, res) => {
   }
 })
 
-router.post('/', staffOnly, async (req, res) => {
+// POST / — open to clients too (unlike delete): clients need to be able to
+// save their own bug/execution filter combinations, not just browse ones
+// staff already saved.
+router.post('/', async (req, res) => {
   const { name, type, filters } = req.body
   if (!name?.trim()) return res.status(400).json({ error: 'Name is required' })
   if (!VALID_TYPES.includes(type)) return res.status(400).json({ error: 'Invalid view type' })
@@ -56,6 +57,9 @@ router.post('/', staffOnly, async (req, res) => {
   }
 })
 
+// Staff-only, unlike POST above: views are shared team-wide with no
+// per-user ownership, so deleting one removes it for everyone — not
+// something a client should be able to do to a view a teammate saved.
 router.delete('/:viewId', staffOnly, async (req, res) => {
   try {
     const { rowCount } = await req.db.query(
