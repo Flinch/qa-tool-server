@@ -8,6 +8,7 @@ import { getPrStatus } from '../lib/githubPrStatus.js'
 import { getAuthSetupStatus } from '../lib/authSetupStatus.js'
 import { computeFlakyTests } from '../lib/flakyTests.js'
 import { generateAdvisorInsights } from '../lib/qualityAdvisor.js'
+import { generateExecutiveSummary } from '../lib/executiveSummary.js'
 
 const router = Router()
 router.use(requireAuth)
@@ -598,6 +599,27 @@ router.post('/:id/advisor', requireTenantAccess, requireRole('qa_engineer', 'adm
   } catch (e) {
     console.error('Advisor error:', e)
     res.status(500).json({ error: e.message })
+  }
+})
+
+// POST /projects/:id/weekly-summary-narrative — open to clients too (unlike
+// /advisor above): feeds the client-facing weekly summary PDF, and only
+// ever reasons over signals already shown to the client elsewhere on the
+// Dashboard (confirmed 2026-08-06 this is fine under the governing
+// AI-visibility rule, which is about engineering-process-internal signals
+// like PR/review status staying staff-only, not a blanket ban on AI text
+// reaching clients). No DB queries here at all — the caller already
+// computed every one of these numbers for the PDF itself, so this is purely
+// "turn structured signals into a paragraph," guaranteeing the narrative
+// can never disagree with the PDF's own tables. Fail-open: a missing key or
+// a flaky call returns narrative: null rather than blocking the export.
+router.post('/:id/weekly-summary-narrative', requireTenantAccess, async (req, res) => {
+  try {
+    const narrative = await generateExecutiveSummary(req.body)
+    res.json({ narrative })
+  } catch (e) {
+    console.error('Weekly summary narrative error (continuing without one):', e.message)
+    res.json({ narrative: null })
   }
 })
 
