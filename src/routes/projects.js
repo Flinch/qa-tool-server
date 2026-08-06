@@ -241,7 +241,7 @@ router.get('/:id/health', requireTenantAccess, async (req, res) => {
   try {
     const projectId = req.params.id
 
-    const [testCaseRows, bugRows, coverageRows, trendRows, weekRows, requirementCoverageRows, uncoveredRequirementRows, bugHotspotRows] = await Promise.all([
+    const [testCaseRows, bugRows, coverageRows, trendRows, weekRows, priorWeekRows, automatedCatchRows, requirementCoverageRows, uncoveredRequirementRows, bugHotspotRows] = await Promise.all([
       req.db.query(`
         WITH latest_execution AS (
           SELECT DISTINCT ON (erc.test_case_id) erc.test_case_id, erc.status
@@ -298,6 +298,24 @@ router.get('/:id/health', requireTenantAccess, async (req, res) => {
         FROM execution_run_test_cases erc
         JOIN execution_runs er ON er.id = erc.execution_run_id
         WHERE er.project_id = $1 AND erc.executed_at >= NOW() - INTERVAL '7 days'
+      `, [projectId]),
+      // Same shape, one week earlier — purely so the "Value delivered" panel
+      // can show a week-over-week direction (improving/declining/flat)
+      // instead of just a bare current number with nothing to compare it to.
+      req.db.query(`
+        SELECT
+          COUNT(erc.id) FILTER (WHERE erc.status = 'pass')::int AS passed,
+          COUNT(erc.id) FILTER (WHERE erc.status IN ('pass','fail'))::int AS total
+        FROM execution_run_test_cases erc
+        JOIN execution_runs er ON er.id = erc.execution_run_id
+        WHERE er.project_id = $1 AND erc.executed_at >= NOW() - INTERVAL '14 days' AND erc.executed_at < NOW() - INTERVAL '7 days'
+      `, [projectId]),
+      // Bugs the automation itself caught this month (origin='automated') —
+      // the concrete "value" number: issues found by continuous testing
+      // before a person had to stumble onto them manually.
+      req.db.query(`
+        SELECT COUNT(*)::int AS count FROM bugs
+        WHERE project_id = $1 AND origin = 'automated' AND created_at >= NOW() - INTERVAL '30 days'
       `, [projectId]),
       // Same "has at least one link" definition of coverage already used on
       // the Requirements page itself (linked_test_case_count > 0) — kept
@@ -364,6 +382,9 @@ router.get('/:id/health', requireTenantAccess, async (req, res) => {
 
     const week = weekRows.rows[0]
     const passRateThisWeek = week.total > 0 ? Math.round((week.passed / week.total) * 100) : null
+    const priorWeek = priorWeekRows.rows[0]
+    const passRatePriorWeek = priorWeek.total > 0 ? Math.round((priorWeek.passed / priorWeek.total) * 100) : null
+    const bugsCaughtByAutomationThisMonth = automatedCatchRows.rows[0].count
 
     // Single blended health number — weighted average of pass rate and
     // requirement coverage (a project missing one shouldn't have that null
@@ -428,6 +449,8 @@ router.get('/:id/health', requireTenantAccess, async (req, res) => {
       })),
       passRateTrend,
       passRateThisWeek,
+      passRatePriorWeek,
+      bugsCaughtByAutomationThisMonth,
     })
   } catch (e) {
     res.status(500).json({ error: e.message })

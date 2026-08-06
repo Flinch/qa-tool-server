@@ -422,6 +422,14 @@ ALTER TABLE bugs ADD COLUMN IF NOT EXISTS is_regression BOOLEAN NOT NULL DEFAULT
 -- result carries one.
 ALTER TABLE bugs ADD COLUMN IF NOT EXISTS api_trace JSONB;
 
+-- One-sentence, non-technical restatement of an automated failure's real-world
+-- consequence — see describeFailure.js's businessImpact field. Populated
+-- only for automated bugs (a human logging a manual bug already writes in
+-- whatever language they choose); NULL when there was no real error_message
+-- to reason from, same "honest absence over a fabricated guess" policy as
+-- the actual field's own fallback text.
+ALTER TABLE bugs ADD COLUMN IF NOT EXISTS business_impact TEXT;
+
 -- ============================================================================
 -- Feature grouping — requirements/test cases/bugs by feature
 -- ============================================================================

@@ -224,9 +224,14 @@ router.post('/test-runs', verifySecret, async (req, res) => {
           })
         : null
 
-      const actual = description
+      const actual = description?.technical
         || r.error_message
         || 'The test process did not complete normally (no error was reported), so no specific failure detail or screenshot could be captured — likely a timeout or lost connection to the environment under test rather than a failed assertion.'
+      // Shown to non-technical/client readers in place of the full technical
+      // detail — null (not a made-up guess) whenever there's nothing real to
+      // base it on, same "honest absence beats a fabricated guess" reasoning
+      // as the actual/fallback message above.
+      const businessImpact = description?.businessImpact || null
       const notes = `Auto-filed from test run #${runId} (${trigger_type || 'manual'})${github_run_url ? ` — CI: ${github_run_url}` : ''}` +
         (description && r.error_message ? `\n\nRaw failure detail: ${r.error_message}` : '')
       const screenshotData = r.screenshot_base64 ? `data:image/png;base64,${r.screenshot_base64}` : null
@@ -245,8 +250,8 @@ router.post('/test-runs', verifySecret, async (req, res) => {
 
       if (existing[0] && !isRegression) {
         await db.query(
-          `UPDATE bugs SET test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, api_trace=$5, is_environmental=$6, feature_id=COALESCE(feature_id, $7), updated_at=NOW() WHERE id=$8`,
-          [runId, actual, notes, screenshotData, apiTrace, isEnvironmental, featureId, existing[0].id]
+          `UPDATE bugs SET test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, api_trace=$5, is_environmental=$6, feature_id=COALESCE(feature_id, $7), business_impact=$8, updated_at=NOW() WHERE id=$9`,
+          [runId, actual, notes, screenshotData, apiTrace, isEnvironmental, featureId, businessImpact, existing[0].id]
         )
         continue
       }
@@ -257,8 +262,8 @@ router.post('/test-runs', verifySecret, async (req, res) => {
         // since "this has come back before" is worth remembering even after
         // it's fixed again, not just while currently reopened.
         await db.query(
-          `UPDATE bugs SET status='open', test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, api_trace=$5, is_environmental=$6, feature_id=COALESCE(feature_id, $7), is_regression=true, updated_at=NOW() WHERE id=$8`,
-          [runId, actual, notes, screenshotData, apiTrace, isEnvironmental, featureId, existing[0].id]
+          `UPDATE bugs SET status='open', test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, api_trace=$5, is_environmental=$6, feature_id=COALESCE(feature_id, $7), business_impact=$8, is_regression=true, updated_at=NOW() WHERE id=$9`,
+          [runId, actual, notes, screenshotData, apiTrace, isEnvironmental, featureId, businessImpact, existing[0].id]
         )
         await db.query(
           `INSERT INTO bug_comments (bug_id, user_id, body) VALUES ($1, NULL, $2)`,
@@ -270,8 +275,8 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       await db.query(
         `INSERT INTO bugs
            (project_id, test_case_id, suite_id, test_run_id, title, severity,
-            steps_to_reproduce, expected, actual, notes, origin, created_by, screenshot_data, api_trace, is_environmental, feature_id)
-         VALUES ($1,$2,$3,$4,$5,'medium',$6,$7,$8,$9,'automated',NULL,$10,$11,$12,$13)`,
+            steps_to_reproduce, expected, actual, notes, origin, created_by, screenshot_data, api_trace, is_environmental, feature_id, business_impact)
+         VALUES ($1,$2,$3,$4,$5,'medium',$6,$7,$8,$9,'automated',NULL,$10,$11,$12,$13,$14)`,
         [
           tenantId,
           testCase?.id || null,
@@ -286,6 +291,7 @@ router.post('/test-runs', verifySecret, async (req, res) => {
           apiTrace,
           isEnvironmental,
           featureId,
+          businessImpact,
         ]
       )
     }
