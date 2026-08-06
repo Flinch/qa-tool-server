@@ -241,7 +241,7 @@ router.get('/:id/health', requireTenantAccess, async (req, res) => {
   try {
     const projectId = req.params.id
 
-    const [testCaseRows, bugRows, coverageRows, trendRows, requirementCoverageRows, uncoveredRequirementRows, bugHotspotRows] = await Promise.all([
+    const [testCaseRows, bugRows, coverageRows, trendRows, weekRows, requirementCoverageRows, uncoveredRequirementRows, bugHotspotRows] = await Promise.all([
       req.db.query(`
         WITH latest_execution AS (
           SELECT DISTINCT ON (erc.test_case_id) erc.test_case_id, erc.status
@@ -284,6 +284,20 @@ router.get('/:id/health', requireTenantAccess, async (req, res) => {
         GROUP BY er.id, er.completed_at, er.created_at
         ORDER BY er.created_at DESC
         LIMIT 8
+      `, [projectId]),
+      // Blended pass rate across everything actually executed in the last 7
+      // days, regardless of which execution run it belongs to or whether
+      // that run itself is marked completed yet — a brand-new project only
+      // has a handful of runs, all from today, so the per-run trend line
+      // above can't show real history for weeks; this gives a stable weekly
+      // number immediately, and stays meaningful once per-run history grows.
+      req.db.query(`
+        SELECT
+          COUNT(erc.id) FILTER (WHERE erc.status = 'pass')::int AS passed,
+          COUNT(erc.id) FILTER (WHERE erc.status IN ('pass','fail'))::int AS total
+        FROM execution_run_test_cases erc
+        JOIN execution_runs er ON er.id = erc.execution_run_id
+        WHERE er.project_id = $1 AND erc.executed_at >= NOW() - INTERVAL '7 days'
       `, [projectId]),
       // Same "has at least one link" definition of coverage already used on
       // the Requirements page itself (linked_test_case_count > 0) — kept
@@ -348,6 +362,9 @@ router.get('/:id/health', requireTenantAccess, async (req, res) => {
       .map(r => ({ date: r.completed_at, passRate: Math.round((r.passed / r.total) * 100) }))
       .reverse()
 
+    const week = weekRows.rows[0]
+    const passRateThisWeek = week.total > 0 ? Math.round((week.passed / week.total) * 100) : null
+
     // Single blended health number — weighted average of pass rate and
     // requirement coverage (a project missing one shouldn't have that null
     // drag its score down), then a bug penalty on top since open critical/
@@ -410,6 +427,7 @@ router.get('/:id/health', requireTenantAccess, async (req, res) => {
         criticalCount: r.critical_count, highCount: r.high_count, mediumCount: r.medium_count, lowCount: r.low_count,
       })),
       passRateTrend,
+      passRateThisWeek,
     })
   } catch (e) {
     res.status(500).json({ error: e.message })

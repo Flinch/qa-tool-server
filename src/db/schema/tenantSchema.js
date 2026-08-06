@@ -408,6 +408,20 @@ CREATE INDEX IF NOT EXISTS idx_bugs_test_run ON bugs(test_run_id);
 
 ALTER TABLE bugs ADD COLUMN IF NOT EXISTS is_environmental BOOLEAN NOT NULL DEFAULT false;
 
+-- Set true when an automated failure reopens a bug that was previously
+-- marked resolved (see webhooks.js's isRegression branch) — stays true
+-- permanently once set, even after the bug is resolved again, since "this
+-- has come back before" is a real signal worth keeping visible, not just
+-- while the bug happens to be currently open.
+ALTER TABLE bugs ADD COLUMN IF NOT EXISTS is_regression BOOLEAN NOT NULL DEFAULT false;
+
+-- API-engine suites have no browser/page at all, so screenshot_data is
+-- never populated for a bug filed from one — this is the equivalent
+-- evidence (the request/response trace, same shape ApiTraceModal already
+-- renders for a Lab result), attached by webhooks.js when the failing
+-- result carries one.
+ALTER TABLE bugs ADD COLUMN IF NOT EXISTS api_trace JSONB;
+
 -- ============================================================================
 -- Feature grouping — requirements/test cases/bugs by feature
 -- ============================================================================

@@ -183,15 +183,22 @@ router.post('/test-runs', verifySecret, async (req, res) => {
 
       // Dedup against repeat failures of the same test in the same suite —
       // a nightly cron failing every night shouldn't file a fresh bug each
-      // time it hits the exact same problem. Only matches while an existing
-      // one is still open/in_progress; once resolved, a new failure files a
-      // new bug. A match gets refreshed (latest screenshot/description/run),
-      // not silently ignored — otherwise the evidence on an old open bug
-      // goes stale forever while the same failure keeps recurring.
+      // time it hits the exact same problem. Matches regardless of status
+      // (including resolved — see the regression branch below): confirmed
+      // live (2026-08-06) that excluding resolved bugs here meant a test
+      // that got fixed and later broke again silently filed a BRAND NEW bug
+      // instead of reopening the old one, so the same real issue ended up
+      // spread across several separately-numbered tickets with no link
+      // between them. A still-open/in-progress match gets refreshed (latest
+      // screenshot/description/run), not silently ignored — otherwise the
+      // evidence on an old open bug goes stale forever while the same
+      // failure keeps recurring.
       const { rows: existing } = await db.query(
-        `SELECT id FROM bugs WHERE suite_id=$1 AND title=$2 AND origin='automated' AND status != 'resolved'`,
+        `SELECT id, status FROM bugs WHERE suite_id=$1 AND title=$2 AND origin='automated'
+         ORDER BY created_at DESC LIMIT 1`,
         [suiteId, bugTitle]
       )
+      const isRegression = existing[0]?.status === 'resolved'
 
       const stepsText = testCase
         ? (Array.isArray(testCase.steps) ? testCase.steps.join('\n') : testCase.steps)
@@ -200,19 +207,35 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       // Rewrite the raw assertion failure into a plain-language description a
       // QA analyst would write for a developer — falls back to the raw
       // message if no API key is configured or the call fails (fail-open,
-      // same idiom as jiraClient.js).
-      const description = await describeFailure({
-        scenarioTitle: bugTitle.replace(/^Automated failure: /, ''),
-        steps: stepsText,
-        expected: testCase?.expected || null,
-        errorMessage: r.error_message,
-        screenshotBase64: r.screenshot_base64 || null,
-      })
+      // same idiom as jiraClient.js). Skipped entirely when there's no real
+      // error_message to work from (the test process died — timeout,
+      // crashed runner, lost connectivity — before Playwright ever produced
+      // a normal result): confirmed live (2026-08-06) that asking the AI to
+      // describe a failure from nothing but a test title produced vague,
+      // fabricated-sounding guesses ("likely lost connection") instead of
+      // an honest "we don't actually know" — worse than no description.
+      const description = r.error_message
+        ? await describeFailure({
+            scenarioTitle: bugTitle.replace(/^Automated failure: /, ''),
+            steps: stepsText,
+            expected: testCase?.expected || null,
+            errorMessage: r.error_message,
+            screenshotBase64: r.screenshot_base64 || null,
+          })
+        : null
 
-      const actual = description || r.error_message || null
+      const actual = description
+        || r.error_message
+        || 'The test process did not complete normally (no error was reported), so no specific failure detail or screenshot could be captured — likely a timeout or lost connection to the environment under test rather than a failed assertion.'
       const notes = `Auto-filed from test run #${runId} (${trigger_type || 'manual'})${github_run_url ? ` — CI: ${github_run_url}` : ''}` +
         (description && r.error_message ? `\n\nRaw failure detail: ${r.error_message}` : '')
       const screenshotData = r.screenshot_base64 ? `data:image/png;base64,${r.screenshot_base64}` : null
+      // API-engine suites have no browser/page at all, so no screenshot is
+      // ever possible there — the request/response trace is the equivalent
+      // visual evidence (same data already shown on a passing/failing Lab
+      // result, see ApiTraceModal), attached here so a bug filed from an API
+      // suite still comes with real evidence instead of text-only.
+      const apiTrace = r.api_trace || null
       const isEnvironmental = classifyFailure(r.error_message)
 
       // Best-effort only — inherited from the linked test case when it has
@@ -220,10 +243,26 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       // creation, where a feature is required).
       const featureId = testCase?.feature_id || null
 
-      if (existing[0]) {
+      if (existing[0] && !isRegression) {
         await db.query(
-          `UPDATE bugs SET test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, is_environmental=$5, feature_id=COALESCE(feature_id, $6), updated_at=NOW() WHERE id=$7`,
-          [runId, actual, notes, screenshotData, isEnvironmental, featureId, existing[0].id]
+          `UPDATE bugs SET test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, api_trace=$5, is_environmental=$6, feature_id=COALESCE(feature_id, $7), updated_at=NOW() WHERE id=$8`,
+          [runId, actual, notes, screenshotData, apiTrace, isEnvironmental, featureId, existing[0].id]
+        )
+        continue
+      }
+
+      if (existing[0] && isRegression) {
+        // Reopen instead of filing a new, disconnected bug — is_regression
+        // stays true permanently once set (not cleared on the next resolve)
+        // since "this has come back before" is worth remembering even after
+        // it's fixed again, not just while currently reopened.
+        await db.query(
+          `UPDATE bugs SET status='open', test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, api_trace=$5, is_environmental=$6, feature_id=COALESCE(feature_id, $7), is_regression=true, updated_at=NOW() WHERE id=$8`,
+          [runId, actual, notes, screenshotData, apiTrace, isEnvironmental, featureId, existing[0].id]
+        )
+        await db.query(
+          `INSERT INTO bug_comments (bug_id, user_id, body) VALUES ($1, NULL, $2)`,
+          [existing[0].id, `Reopened automatically — this issue regressed (the linked test failed again after this bug was previously marked resolved).`]
         )
         continue
       }
@@ -231,8 +270,8 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       await db.query(
         `INSERT INTO bugs
            (project_id, test_case_id, suite_id, test_run_id, title, severity,
-            steps_to_reproduce, expected, actual, notes, origin, created_by, screenshot_data, is_environmental, feature_id)
-         VALUES ($1,$2,$3,$4,$5,'medium',$6,$7,$8,$9,'automated',NULL,$10,$11,$12)`,
+            steps_to_reproduce, expected, actual, notes, origin, created_by, screenshot_data, api_trace, is_environmental, feature_id)
+         VALUES ($1,$2,$3,$4,$5,'medium',$6,$7,$8,$9,'automated',NULL,$10,$11,$12,$13)`,
         [
           tenantId,
           testCase?.id || null,
@@ -244,6 +283,7 @@ router.post('/test-runs', verifySecret, async (req, res) => {
           actual,
           notes,
           screenshotData,
+          apiTrace,
           isEnvironmental,
           featureId,
         ]
