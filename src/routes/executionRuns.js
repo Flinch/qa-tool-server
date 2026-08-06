@@ -201,6 +201,43 @@ router.patch('/:runId', staffOnly, async (req, res) => {
   }
 })
 
+// PATCH /:runId/test-cases/bulk — mark selected (or all) test cases at once.
+// Registered ahead of PATCH /:runId/test-cases/:etcId below: Express
+// matches routes in registration order, and :etcId is a wildcard segment
+// that would otherwise swallow the literal path "bulk" too — every bulk
+// request would hit the single-test-case handler with etcId='bulk' (which
+// then 500s trying to cast 'bulk' to an integer), and this handler would
+// never be reached at all. Same class of bug as GET /latest vs GET /:runId.
+router.patch('/:runId/test-cases/bulk', staffOnly, async (req, res) => {
+  const { ids, status } = req.body
+  if (!['not_run', 'pass', 'fail', 'blocked'].includes(status)) return res.status(400).json({ error: 'Invalid status' })
+
+  try {
+    if (!(await assertRunOwnership(req.db, req.params.id, req.params.runId))) {
+      return res.status(404).json({ error: 'Not found' })
+    }
+    let rows
+    if (ids === 'all') {
+      ;({ rows } = await req.db.query(
+        `UPDATE execution_run_test_cases SET status=$1, executed_by=$2, executed_at=NOW()
+         WHERE execution_run_id=$3 RETURNING *`,
+        [status, req.userId, req.params.runId]
+      ))
+    } else {
+      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids must be a non-empty array or "all"' })
+      ;({ rows } = await req.db.query(
+        `UPDATE execution_run_test_cases SET status=$1, executed_by=$2, executed_at=NOW()
+         WHERE execution_run_id=$3 AND id = ANY($4::int[]) RETURNING *`,
+        [status, req.userId, req.params.runId, ids]
+      ))
+    }
+    await markInProgress(req.db, req.params.id, req.params.runId)
+    res.json(rows)
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // PATCH /:runId/test-cases/:etcId — mark one test case pass/fail/blocked/not_run
 router.patch('/:runId/test-cases/:etcId', staffOnly, async (req, res) => {
   const { status, notes } = req.body
@@ -244,37 +281,6 @@ router.patch('/:runId/test-cases/:etcId', staffOnly, async (req, res) => {
   }
 })
 
-// PATCH /:runId/test-cases/bulk — mark selected (or all) test cases at once
-router.patch('/:runId/test-cases/bulk', staffOnly, async (req, res) => {
-  const { ids, status } = req.body
-  if (!['not_run', 'pass', 'fail', 'blocked'].includes(status)) return res.status(400).json({ error: 'Invalid status' })
-
-  try {
-    if (!(await assertRunOwnership(req.db, req.params.id, req.params.runId))) {
-      return res.status(404).json({ error: 'Not found' })
-    }
-    let rows
-    if (ids === 'all') {
-      ;({ rows } = await req.db.query(
-        `UPDATE execution_run_test_cases SET status=$1, executed_by=$2, executed_at=NOW()
-         WHERE execution_run_id=$3 RETURNING *`,
-        [status, req.userId, req.params.runId]
-      ))
-    } else {
-      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids must be a non-empty array or "all"' })
-      ;({ rows } = await req.db.query(
-        `UPDATE execution_run_test_cases SET status=$1, executed_by=$2, executed_at=NOW()
-         WHERE execution_run_id=$3 AND id = ANY($4::int[]) RETURNING *`,
-        [status, req.userId, req.params.runId, ids]
-      ))
-    }
-    await markInProgress(req.db, req.params.id, req.params.runId)
-    res.json(rows)
-  } catch (e) {
-    res.status(500).json({ error: e.message })
-  }
-})
-
 // POST /:runId/suites/:suiteId/run — trigger a suite attached to this run via GitHub Actions
 router.post('/:runId/suites/:suiteId/run', staffOnly, async (req, res) => {
   try {
@@ -287,7 +293,7 @@ router.post('/:runId/suites/:suiteId/run', staffOnly, async (req, res) => {
     )
     if (!esRows[0]) return res.status(404).json({ error: 'Suite is not part of this execution run' })
 
-    const testRun = await triggerSuiteRun({ db: req.db, tenantId: req.tenantId, projectId: req.params.id, suiteId: req.params.suiteId, userId: req.userId })
+    const testRun = await triggerSuiteRun({ db: req.db, tenantId: req.tenantId, projectId: req.params.id, suiteId: req.params.suiteId, userId: req.userId, triggeredFrom: 'executions_page' })
 
     await req.db.query(`UPDATE execution_run_suites SET latest_test_run_id=$1 WHERE id=$2`, [testRun.id, esRows[0].id])
     await markInProgress(req.db, req.params.id, req.params.runId)

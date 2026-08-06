@@ -129,7 +129,7 @@ async function recordDispatch(correlationId, tenantId, kind) {
 // control-plane id (equal to `projectId` by design — see "tenant id ==
 // project id" in the Phase A plan — kept as a separate param so call sites
 // stay explicit about which system each value is for).
-export async function triggerSuiteRun({ db, tenantId, projectId, suiteId, userId, triggerType = 'manual' }) {
+export async function triggerSuiteRun({ db, tenantId, projectId, suiteId, userId, triggerType = 'manual', triggeredFrom = null }) {
   if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
     throw new TriggerError(500, 'GitHub Actions is not configured on the server')
   }
@@ -151,9 +151,9 @@ export async function triggerSuiteRun({ db, tenantId, projectId, suiteId, userId
   const correlationId = crypto.randomUUID()
 
   const { rows } = await db.query(
-    `INSERT INTO test_runs (project_id, suite_id, correlation_id, trigger_type, status, created_by)
-     VALUES ($1,$2,$3,$4,'pending',$5) RETURNING *`,
-    [projectId, suiteId, correlationId, triggerType, userId]
+    `INSERT INTO test_runs (project_id, suite_id, correlation_id, trigger_type, status, created_by, triggered_from)
+     VALUES ($1,$2,$3,$4,'pending',$5,$6) RETURNING *`,
+    [projectId, suiteId, correlationId, triggerType, userId, triggeredFrom]
   )
   await recordDispatch(correlationId, tenantId, 'test_run')
 
@@ -203,7 +203,7 @@ export async function triggerSuiteRun({ db, tenantId, projectId, suiteId, userId
 // input both workflows now understand. Getting its own fresh correlation_id
 // and its own INSERTed row means the webhook that reports results back can
 // only ever UPDATE this new row — the run being diagnosed is never touched.
-export async function triggerTestCaseRerun({ db, tenantId, projectId, suiteId, filePaths, targetTitles, userId, runGroupId }) {
+export async function triggerTestCaseRerun({ db, tenantId, projectId, suiteId, filePaths, targetTitles, userId, runGroupId, triggeredFrom = null }) {
   if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
     throw new TriggerError(500, 'GitHub Actions is not configured on the server')
   }
@@ -223,9 +223,9 @@ export async function triggerTestCaseRerun({ db, tenantId, projectId, suiteId, f
   const correlationId = crypto.randomUUID()
 
   const { rows } = await db.query(
-    `INSERT INTO test_runs (project_id, suite_id, correlation_id, trigger_type, status, scope, target_titles, created_by, run_group_id)
-     VALUES ($1,$2,$3,'manual','pending','test_cases',$4,$5,$6) RETURNING *`,
-    [projectId, suiteId, correlationId, targetTitles || [], userId, runGroupId || null]
+    `INSERT INTO test_runs (project_id, suite_id, correlation_id, trigger_type, status, scope, target_titles, created_by, run_group_id, triggered_from)
+     VALUES ($1,$2,$3,'manual','pending','test_cases',$4,$5,$6,$7) RETURNING *`,
+    [projectId, suiteId, correlationId, targetTitles || [], userId, runGroupId || null, triggeredFrom]
   )
   await recordDispatch(correlationId, tenantId, 'test_run')
 

@@ -281,8 +281,8 @@ router.get('/:id/health', requireTenantAccess, async (req, res) => {
         FROM execution_runs er
         JOIN execution_run_test_cases erc ON erc.execution_run_id = er.id
         WHERE er.project_id = $1 AND er.status = 'completed'
-        GROUP BY er.id, er.completed_at
-        ORDER BY er.completed_at DESC
+        GROUP BY er.id, er.completed_at, er.created_at
+        ORDER BY er.created_at DESC
         LIMIT 8
       `, [projectId]),
       // Same "has at least one link" definition of coverage already used on

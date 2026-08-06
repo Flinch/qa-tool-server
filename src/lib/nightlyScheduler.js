@@ -42,7 +42,7 @@ async function runNightlySuites() {
     for (const suite of suites) {
       try {
         const run = await triggerSuiteRun({
-          db, tenantId: tenant.id, projectId: tenant.id, suiteId: suite.id, userId: null, triggerType: 'nightly',
+          db, tenantId: tenant.id, projectId: tenant.id, suiteId: suite.id, userId: null, triggerType: 'nightly', triggeredFrom: 'nightly',
         })
         console.log(`[nightlyScheduler] tenant ${tenant.id} (${tenant.slug}): triggered "${suite.name}" -> run ${run.id}`)
       } catch (e) {

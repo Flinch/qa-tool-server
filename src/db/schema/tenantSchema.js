@@ -586,4 +586,12 @@ CREATE TABLE IF NOT EXISTS saved_views (
   created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_saved_views_project ON saved_views(project_id);
+
+-- Which UI surface actually dispatched a run — trigger_type only says
+-- manual vs nightly, not WHICH manual surface (Automation page's "Run now",
+-- the Executions page's per-suite run, or Engineering's re-run/group-rerun
+-- actions), and all of those funnel through the same triggerSuiteRun/
+-- triggerTestCaseRerun functions server-side. NULL for any row that
+-- predates this column.
+ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS triggered_from TEXT;
 `

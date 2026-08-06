@@ -160,8 +160,13 @@ router.get('/runs/:runId', ...anyProjectMember, async (req, res) => {
 // test_runs rows with a run_group_id set, so without this the dispatch
 // really happens but is invisible there. A group of 1 renders as a plain
 // individual run on the frontend (see GET /run-groups' own comment).
+// Shared by both AutomationPage's and EngineeringDashboardPage's own
+// RerunFailedTestsModal instance — `source` in the body is how the caller
+// tells us which one, since this one route has no other way to know.
+// Defaults to 'automation_page' for any older client build that doesn't
+// send it yet.
 router.post('/runs/:runId/rerun', ...staffOnlyChain, async (req, res) => {
-  const { result_ids } = req.body
+  const { result_ids, source } = req.body
   if (!Array.isArray(result_ids) || result_ids.length === 0) {
     return res.status(400).json({ error: 'At least 1 result_id is required' })
   }
@@ -218,6 +223,7 @@ router.post('/runs/:runId/rerun', ...staffOnlyChain, async (req, res) => {
       targetTitles: results.map(r => r.test_title),
       userId: req.userId,
       runGroupId: groupRows[0].id,
+      triggeredFrom: source || 'automation_page',
     })
     res.status(202).json(newRun)
   } catch (e) {
@@ -304,6 +310,7 @@ router.post('/runs/group-rerun', ...staffOnlyChain, async (req, res) => {
         targetTitles,
         userId: req.userId,
         runGroupId: group.id,
+        triggeredFrom: 'engineering_page',
       }))
     }
 
@@ -604,7 +611,7 @@ router.post('/runs/trigger', ...staffOnlyChain, async (req, res) => {
         authSetupStatus,
       })
     }
-    const run = await triggerSuiteRun({ db: req.db, tenantId: req.tenantId, projectId: req.params.id, suiteId: suite_id, userId: req.userId })
+    const run = await triggerSuiteRun({ db: req.db, tenantId: req.tenantId, projectId: req.params.id, suiteId: suite_id, userId: req.userId, triggeredFrom: 'automation_page' })
     res.status(202).json(run)
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message })
