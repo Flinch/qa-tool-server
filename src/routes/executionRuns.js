@@ -58,16 +58,18 @@ router.get('/', async (req, res) => {
 
 // POST / — create a run from a selection of test cases + automation suites
 router.post('/', staffOnly, async (req, res) => {
-  const { name, test_case_ids = [], suite_ids = [] } = req.body
+  const { name, test_case_ids = [], suite_ids = [], platform } = req.body
   if (!name?.trim()) return res.status(400).json({ error: 'Name is required' })
   if (test_case_ids.length === 0 && suite_ids.length === 0) {
     return res.status(400).json({ error: 'Select at least one test case or automation suite' })
   }
+  if (!platform) return res.status(400).json({ error: 'Platform is required' })
+  if (!['web', 'ios', 'android'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
 
   try {
     const { rows } = await req.db.query(
-      `INSERT INTO execution_runs (project_id, name, created_by) VALUES ($1,$2,$3) RETURNING *`,
-      [req.params.id, name.trim(), req.userId]
+      `INSERT INTO execution_runs (project_id, name, created_by, platform) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [req.params.id, name.trim(), req.userId, platform]
     )
     const run = rows[0]
 
@@ -122,8 +124,8 @@ router.post('/:runId/re-execute', staffOnly, async (req, res) => {
     }
 
     const { rows: newRunRows } = await req.db.query(
-      `INSERT INTO execution_runs (project_id, name, created_by) VALUES ($1,$2,$3) RETURNING *`,
-      [req.params.id, `${source.name} (re-execute)`, req.userId]
+      `INSERT INTO execution_runs (project_id, name, created_by, platform) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [req.params.id, `${source.name} (re-execute)`, req.userId, source.platform]
     )
     const newRun = newRunRows[0]
 

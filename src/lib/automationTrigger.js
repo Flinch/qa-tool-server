@@ -307,14 +307,15 @@ export async function triggerGenerationRun({ db, tenantId, projectId, suiteId, t
   }
 
   // Validate the selection server-side: every id must be a real TC in THIS
-  // project, tagged for the same platform category as the target suite, and
-  // eligible for automation. Never trust the client's filter — a stale UI or
-  // a hand-crafted request could send anything. test_cases.platform is
-  // coarse (web/mobile), unlike automation_suites.platform (web/ios/
-  // android) — both ios and android suites accept 'mobile' TCs; see
-  // migrate.js's platform-segmentation comment for why that's intentional,
-  // not a precision loss (a requirement can legitimately cover both mobile
-  // OSes via separate TC rows).
+  // project, tagged for a platform this suite can run (web suites take only
+  // web TCs; ios/android suites both take mobile TCs — test_cases.platform
+  // is now web/ios/android, same granularity as automation_suites.platform,
+  // but a mobile suite still isn't limited to its own exact OS: an ios suite
+  // can automate an android-tagged TC and vice versa, same "both mobile
+  // suites accept either mobile TC" policy as before the platform-scoring
+  // widen, just expressed as a two-value list instead of a single 'mobile'
+  // string), and eligible for automation. Never trust the client's filter —
+  // a stale UI or a hand-crafted request could send anything.
   //
   // "Eligible" splits in two, mirroring AutomationPage.jsx's GenerateTestsModal:
   // an api-engine suite only accepts type='api' TCs (the generator writes
@@ -323,23 +324,23 @@ export async function triggerGenerationRun({ db, tenantId, projectId, suiteId, t
   // is reserved for curated critical UI journeys, a concept that doesn't
   // apply to a single API contract check. A non-api suite is the reverse:
   // automation_candidate=true AND never an 'api'-typed TC, same as before.
-  const suiteCategory = suiteRows[0].platform === 'web' ? 'web' : 'mobile'
+  const suitePlatforms = suiteRows[0].platform === 'web' ? ['web'] : ['ios', 'android']
   const isApiSuite = suiteRows[0].engine === 'api'
   const { rows: tcRows } = await db.query(
     `SELECT id FROM test_cases
-     WHERE project_id=$1 AND id = ANY($2::int[]) AND platform = $3
+     WHERE project_id=$1 AND id = ANY($2::int[]) AND platform = ANY($3::text[])
        AND (
          ($4::boolean AND type = 'api')
          OR (NOT $4::boolean AND automation_candidate = true AND type != 'api')
        )`,
-    [projectId, testCaseIds, suiteCategory, isApiSuite]
+    [projectId, testCaseIds, suitePlatforms, isApiSuite]
   )
   if (tcRows.length !== testCaseIds.length) {
     const validIds = new Set(tcRows.map(r => r.id))
     const rejected = testCaseIds.filter(id => !validIds.has(id))
     const reason = isApiSuite
-      ? `not tagged as "api" type, or not "${suiteCategory}" platform`
-      : `not automation candidates, or not "${suiteCategory}" platform`
+      ? `not tagged as "api" type, or not "${suitePlatforms.join('/')}" platform`
+      : `not automation candidates, or not "${suitePlatforms.join('/')}" platform`
     throw new TriggerError(400, `Test cases not found, ${reason}: ${rejected.join(', ')}`)
   }
 

@@ -56,7 +56,7 @@ router.get('/', async (req, res) => {
 router.post('/', staffOnly, async (req, res) => {
   const { title, description, platform, feature_id } = req.body
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
-  if (platform !== undefined && !['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
+  if (platform !== undefined && !['web', 'ios', 'android'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
 
   try {
     if (feature_id) {
@@ -84,7 +84,7 @@ router.post('/', staffOnly, async (req, res) => {
 router.post('/upload', staffOnly, async (req, res) => {
   const { filename, mimetype, data, text, platform } = req.body
   if (!data && !text?.trim()) return res.status(400).json({ error: 'A file or pasted text is required' })
-  if (platform !== undefined && !['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
+  if (platform !== undefined && !['web', 'ios', 'android'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
   const uploadPlatform = platform || 'web'
 
   try {
@@ -261,7 +261,7 @@ router.get('/source', async (req, res) => {
 // items the user approved should be included; nothing here is inferred.
 router.post('/apply-diff', staffOnly, async (req, res) => {
   const { documentId, modified = [], removed = [], added = [], platform } = req.body
-  if (platform !== undefined && !['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
+  if (platform !== undefined && !['web', 'ios', 'android'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
 
   const sanitizeEffort = (e) => ['S', 'M', 'L'].includes(e) ? e : null
 
@@ -539,7 +539,7 @@ router.patch('/:reqId', staffOnly, async (req, res) => {
     fields.push(`status=$${i++}`); values.push(status)
   }
   if (platform !== undefined) {
-    if (!['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
+    if (!['web', 'ios', 'android'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
     fields.push(`platform=$${i++}`); values.push(platform)
   }
   if (feature_id !== undefined) {

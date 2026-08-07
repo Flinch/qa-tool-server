@@ -7,6 +7,7 @@ import { resolveTenantPool } from '../db/tenantPool.js'
 import { getPrStatus } from '../lib/githubPrStatus.js'
 import { getAuthSetupStatus } from '../lib/authSetupStatus.js'
 import { computeFlakyTests } from '../lib/flakyTests.js'
+import { computeQualityScore } from '../lib/qualityScore.js'
 import { generateAdvisorInsights } from '../lib/qualityAdvisor.js'
 import { generateExecutiveSummary } from '../lib/executiveSummary.js'
 
@@ -235,6 +236,85 @@ router.get('/:id/stats', requireTenantAccess, async (req, res) => {
   }
 })
 
+// Per-platform Quality Score breakdown — same computeQualityScore blend as
+// the project-wide number above, just re-run once per platform with every
+// underlying query scoped to it. "Active" platform = any of a suite, a test
+// case, a requirement, an execution run, or a bug tagged that platform; a
+// project that's only ever been web-only naturally gets exactly one entry
+// here, so the client Dashboard's single-bar rendering for that case is just
+// "render the one entry," not a special no-op path.
+async function computePlatformScores(db, projectId) {
+  const { rows: activeRows } = await db.query(`
+    SELECT DISTINCT platform FROM (
+      SELECT platform FROM automation_suites WHERE project_id=$1
+      UNION SELECT platform FROM test_cases WHERE project_id=$1 AND archived_at IS NULL
+      UNION SELECT platform FROM requirements WHERE project_id=$1 AND status='active'
+      UNION SELECT platform FROM execution_runs WHERE project_id=$1 AND platform IS NOT NULL
+      UNION SELECT platform FROM bugs WHERE project_id=$1 AND platform IS NOT NULL
+    ) x
+  `, [projectId])
+  const platformOrder = { web: 0, ios: 1, android: 2 }
+  const activePlatforms = activeRows.map(r => r.platform).sort((a, b) => platformOrder[a] - platformOrder[b])
+
+  return Promise.all(activePlatforms.map(async platform => {
+    const [tcRows, reqRows, bugRows, flakyTests] = await Promise.all([
+      db.query(`
+        WITH latest_execution AS (
+          SELECT DISTINCT ON (erc.test_case_id) erc.test_case_id, erc.status
+          FROM execution_run_test_cases erc
+          JOIN execution_runs er ON er.id = erc.execution_run_id
+          WHERE er.project_id = $1 AND er.platform = $2 AND erc.status != 'not_run'
+          ORDER BY erc.test_case_id, erc.executed_at DESC NULLS LAST
+        )
+        SELECT
+          COUNT(DISTINCT tc.id)::int AS total,
+          COUNT(DISTINCT le.test_case_id) FILTER (WHERE le.status = 'pass')::int AS passed,
+          COUNT(DISTINCT le.test_case_id) FILTER (WHERE le.status = 'fail')::int AS failed,
+          COUNT(DISTINCT le.test_case_id) FILTER (WHERE le.status = 'blocked')::int AS blocked,
+          COUNT(DISTINCT tc.id) FILTER (WHERE le.test_case_id IS NULL)::int AS "notRun"
+        FROM test_cases tc
+        LEFT JOIN latest_execution le ON le.test_case_id = tc.id
+        WHERE tc.project_id = $1 AND tc.archived_at IS NULL AND tc.platform = $2
+      `, [projectId, platform]),
+      db.query(`
+        SELECT
+          COUNT(DISTINCT r.id)::int AS total,
+          COUNT(DISTINCT r.id) FILTER (WHERE rtc.id IS NOT NULL)::int AS covered
+        FROM requirements r
+        LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
+        WHERE r.project_id = $1 AND r.status = 'active' AND r.platform = $2
+      `, [projectId, platform]),
+      db.query(`
+        SELECT severity, COUNT(*)::int AS count
+        FROM bugs WHERE project_id = $1 AND status = 'open' AND platform = $2
+        GROUP BY severity
+      `, [projectId, platform]),
+      computeFlakyTests(db, projectId, { limit: 50, platform }),
+    ])
+
+    const tc = tcRows.rows[0]
+    const passRate = tc.total > 0 ? Math.round((tc.passed / tc.total) * 100) : null
+
+    const reqCov = reqRows.rows[0]
+    const requirementCoverage = reqCov.total > 0 ? Math.round((reqCov.covered / reqCov.total) * 100) : null
+
+    const bugsBySeverity = { critical: 0, high: 0, medium: 0, low: 0 }
+    for (const row of bugRows.rows) bugsBySeverity[row.severity] = row.count
+
+    const { qualityScore, healthStatus } = computeQualityScore({ passRate, requirementCoverage, bugsBySeverity, flakyCount: flakyTests.length })
+
+    return {
+      platform,
+      qualityScore,
+      healthStatus,
+      passRate,
+      requirementCoverage,
+      testCases: { total: tc.total, passed: tc.passed, failed: tc.failed, blocked: tc.blocked, notRun: tc.notRun },
+      bugsBySeverity,
+    }
+  }))
+}
+
 // GET /projects/:id/health — quality-health dashboard data (see DECISIONS.md
 // "Phase 4 — quality health dashboard" for the healthStatus thresholds and
 // why the trend is sourced from execution_runs rather than test_cases.status).
@@ -387,49 +467,14 @@ router.get('/:id/health', requireTenantAccess, async (req, res) => {
     const passRatePriorWeek = priorWeek.total > 0 ? Math.round((priorWeek.passed / priorWeek.total) * 100) : null
     const bugsCaughtByAutomationThisMonth = automatedCatchRows.rows[0].count
 
-    // Single blended health number — weighted average of pass rate and
-    // requirement coverage (a project missing one shouldn't have that null
-    // drag its score down), then a bug penalty on top since open critical/
-    // high bugs are a real signal pass rate alone can miss (e.g. a critical
-    // bug with no test case yet). null only when there's truly nothing to
-    // measure yet, same condition as the old passRate-only
-    // "insufficient_data" case.
-    //
-    // Deliberately NOT automation coverage: that's a testing-process metric
-    // (how efficiently you verify things), not a product-health metric (is
-    // the app actually working). Weighting it in implied "less automated =
-    // less healthy," which isn't true — automation coverage still matters,
-    // it's just shown as its own KPI, not folded into this score.
-    //
     // Flaky tests are a real signal the client never sees directly (that's
     // automation-internals detail, staff-only on the Engineering Dashboard)
     // but they should still move the one number the client does see — only
     // the count is used here, the list itself is discarded.
     const flakyCount = (await computeFlakyTests(req.db, projectId, { limit: 50 })).length
 
-    let qualityScore = null
-    const weighted = [
-      passRate !== null && { value: passRate, weight: 0.65 },
-      requirementCoverage !== null && { value: requirementCoverage, weight: 0.35 },
-    ].filter(Boolean)
-    if (weighted.length > 0) {
-      const totalWeight = weighted.reduce((sum, w) => sum + w.weight, 0)
-      const base = weighted.reduce((sum, w) => sum + w.value * w.weight, 0) / totalWeight
-      const bugPenalty = Math.min(40, bugsBySeverity.critical * 15) + Math.min(25, bugsBySeverity.high * 6)
-      const flakePenalty = Math.min(15, flakyCount * 3)
-      qualityScore = Math.max(0, Math.min(100, Math.round(base - bugPenalty - flakePenalty)))
-    }
-
-    let healthStatus
-    if (qualityScore === null) {
-      healthStatus = 'insufficient_data'
-    } else if (bugsBySeverity.critical > 0 || qualityScore < 70) {
-      healthStatus = 'needs_attention'
-    } else if (bugsBySeverity.high > 0 || qualityScore < 90) {
-      healthStatus = 'good'
-    } else {
-      healthStatus = 'excellent'
-    }
+    const { qualityScore, healthStatus } = computeQualityScore({ passRate, requirementCoverage, bugsBySeverity, flakyCount })
+    const platformScores = await computePlatformScores(req.db, projectId)
 
     res.json({
       healthStatus,
@@ -452,6 +497,7 @@ router.get('/:id/health', requireTenantAccess, async (req, res) => {
       passRateThisWeek,
       passRatePriorWeek,
       bugsCaughtByAutomationThisMonth,
+      platformScores,
     })
   } catch (e) {
     res.status(500).json({ error: e.message })

@@ -633,4 +633,101 @@ ALTER TABLE generation_runs ADD CONSTRAINT generation_runs_kind_check
 
 ALTER TABLE generation_runs ADD COLUMN IF NOT EXISTS
   target_suite_id INTEGER REFERENCES automation_suites(id) ON DELETE SET NULL;
+
+-- Per-platform Quality Score. Widens test_cases/requirements from a coarse
+-- web/mobile split to the same web/ios/android granularity automation_suites
+-- already has — an "iOS score" and an "Android score" both reading from the
+-- same generic "mobile" bucket would defeat the point. Reclassifies existing
+-- platform='mobile' rows using the most reliable signal available, in order:
+-- linked automation suite's real platform, then a title-text heuristic,
+-- falling back to 'android' only for rows with neither signal. Three-step
+-- widen-then-narrow: a CHECK constraint validates the value an UPDATE is
+-- about to WRITE, not just pre-existing rows, so writing 'ios'/'android'
+-- while the original ('web','mobile') constraint is still active fails
+-- immediately — confirmed live (this exact error) before adding the
+-- transitional widen step below.
+ALTER TABLE test_cases DROP CONSTRAINT IF EXISTS test_cases_platform_check;
+ALTER TABLE test_cases ADD CONSTRAINT test_cases_platform_check
+  CHECK (platform IN ('web','mobile','ios','android'));
+
+UPDATE test_cases tc SET platform = s.platform
+FROM automated_test_cases atc JOIN automation_suites s ON s.id = atc.suite_id
+WHERE atc.test_case_id = tc.id AND tc.platform = 'mobile' AND s.platform IN ('ios','android');
+UPDATE test_cases SET platform = 'ios' WHERE platform = 'mobile' AND title ILIKE '%ios%';
+UPDATE test_cases SET platform = 'android' WHERE platform = 'mobile' AND title ILIKE '%android%';
+UPDATE test_cases SET platform = 'android' WHERE platform = 'mobile';
+
+ALTER TABLE test_cases DROP CONSTRAINT IF EXISTS test_cases_platform_check;
+ALTER TABLE test_cases ADD CONSTRAINT test_cases_platform_check
+  CHECK (platform IN ('web','ios','android'));
+
+-- Same reclassification for requirements, sourced from their linked test
+-- case's platform (already reclassified by the block above, since this runs
+-- after it in the same migration file) rather than re-deriving from suites
+-- directly — a requirement has no direct suite link of its own.
+ALTER TABLE requirements DROP CONSTRAINT IF EXISTS requirements_platform_check;
+ALTER TABLE requirements ADD CONSTRAINT requirements_platform_check
+  CHECK (platform IN ('web','mobile','ios','android'));
+
+UPDATE requirements r SET platform = tc.platform
+FROM requirement_test_cases rtc JOIN test_cases tc ON tc.id = rtc.test_case_id
+WHERE rtc.requirement_id = r.id AND r.platform = 'mobile' AND tc.platform IN ('ios','android');
+UPDATE requirements SET platform = 'ios' WHERE platform = 'mobile' AND title ILIKE '%ios%';
+UPDATE requirements SET platform = 'android' WHERE platform = 'mobile' AND title ILIKE '%android%';
+UPDATE requirements SET platform = 'android' WHERE platform = 'mobile';
+
+ALTER TABLE requirements DROP CONSTRAINT IF EXISTS requirements_platform_check;
+ALTER TABLE requirements ADD CONSTRAINT requirements_platform_check
+  CHECK (platform IN ('web','ios','android'));
+
+-- bugs/execution_runs never had a platform concept at all. Nullable: unlike
+-- test_cases/requirements above, there's no reliable per-row signal to
+-- reclassify existing rows from (an execution run bundles arbitrary test
+-- cases; a manually-logged bug has no suite link) — they simply predate this
+-- feature and don't count toward any platform's score. Automated bugs are
+-- the one exception: they already store suite_id, so their real platform is
+-- known, not guessed.
+ALTER TABLE bugs ADD COLUMN IF NOT EXISTS platform TEXT CHECK (platform IN ('web','ios','android'));
+UPDATE bugs b SET platform = s.platform
+FROM automation_suites s WHERE b.suite_id = s.id AND b.platform IS NULL;
+
+ALTER TABLE execution_runs ADD COLUMN IF NOT EXISTS platform TEXT CHECK (platform IN ('web','ios','android'));
+
+-- Second-pass backfill for whatever's still NULL on both tables (manual bugs
+-- with no suite link; every pre-existing execution run, since none of them
+-- carried a platform at creation time) — but only within a project whose
+-- automation_suites/test_cases/requirements are unambiguously ONE platform.
+-- That's not a guess: if a project has never had anything but web suites,
+-- web test cases, and web requirements, every bug and execution run in it
+-- can only ever have been about web. Confirmed this matters live: without
+-- it, an existing 100%-web project's one platform bar would read a much
+-- lower/null pass rate than its real history, since none of its execution
+-- runs' test-case results would count toward any platform bucket yet.
+-- Left NULL (correctly ambiguous, not backfilled) for any project spanning
+-- more than one platform.
+UPDATE bugs b SET platform = single.platform
+FROM (
+  SELECT project_id, MIN(platform) AS platform
+  FROM (
+    SELECT project_id, platform FROM automation_suites
+    UNION SELECT project_id, platform FROM test_cases WHERE archived_at IS NULL
+    UNION SELECT project_id, platform FROM requirements WHERE status='active'
+  ) x
+  GROUP BY project_id
+  HAVING COUNT(DISTINCT platform) = 1
+) single
+WHERE b.project_id = single.project_id AND b.platform IS NULL;
+
+UPDATE execution_runs er SET platform = single.platform
+FROM (
+  SELECT project_id, MIN(platform) AS platform
+  FROM (
+    SELECT project_id, platform FROM automation_suites
+    UNION SELECT project_id, platform FROM test_cases WHERE archived_at IS NULL
+    UNION SELECT project_id, platform FROM requirements WHERE status='active'
+  ) x
+  GROUP BY project_id
+  HAVING COUNT(DISTINCT platform) = 1
+) single
+WHERE er.project_id = single.project_id AND er.platform IS NULL;
 `

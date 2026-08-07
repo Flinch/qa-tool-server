@@ -67,7 +67,7 @@ router.post('/', staffOnly, async (req, res) => {
   const { title, type, steps, expected, platform, feature_id, is_critical_flow, requirementIds } = req.body
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
   if (!['functional', 'integration', 'e2e', 'api'].includes(type)) return res.status(400).json({ error: 'Invalid type' })
-  if (platform !== undefined && !['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
+  if (platform !== undefined && !['web', 'ios', 'android'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
 
   // A manually-authored critical flow is always type='e2e' — normalized
   // here too, not just enforced client-side, since automation_candidate=
@@ -155,7 +155,7 @@ router.post('/combine/apply', staffOnly, async (req, res) => {
   const { title, type, steps, expected, platform, automation_candidate, automation_reasoning, feature_id } = combined || {}
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' })
   if (!['functional', 'integration', 'e2e', 'api'].includes(type)) return res.status(400).json({ error: 'Invalid type' })
-  if (!['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
+  if (!['web', 'ios', 'android'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
 
   // Transactional, unlike the rest of this file's sequential query() calls:
   // insert + two relation-transfers + delete is one logical unit here, and a
@@ -279,7 +279,7 @@ router.patch('/:tcId', staffOnly, async (req, res) => {
     fields.push(`automation_reasoning=$${i++}`); values.push(automationReasoning)
   }
   if (platform !== undefined) {
-    if (!['web', 'mobile'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
+    if (!['web', 'ios', 'android'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
     fields.push(`platform=$${i++}`); values.push(platform)
   }
   if (feature_id !== undefined) {

@@ -65,11 +65,12 @@ router.post('/test-runs', verifySecret, async (req, res) => {
     if (!db) return res.status(404).json({ error: 'Unknown tenant' })
 
     const { rows: suiteRows } = await db.query(
-      `SELECT id FROM automation_suites WHERE project_id=$1 AND slug=$2`,
+      `SELECT id, platform FROM automation_suites WHERE project_id=$1 AND slug=$2`,
       [tenantId, suite_slug]
     )
     if (!suiteRows[0]) return res.status(404).json({ error: 'Unknown suite for this project' })
     const suiteId = suiteRows[0].id
+    const suitePlatform = suiteRows[0].platform
 
     let runId
 
@@ -250,8 +251,8 @@ router.post('/test-runs', verifySecret, async (req, res) => {
 
       if (existing[0] && !isRegression) {
         await db.query(
-          `UPDATE bugs SET test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, api_trace=$5, is_environmental=$6, feature_id=COALESCE(feature_id, $7), business_impact=$8, updated_at=NOW() WHERE id=$9`,
-          [runId, actual, notes, screenshotData, apiTrace, isEnvironmental, featureId, businessImpact, existing[0].id]
+          `UPDATE bugs SET test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, api_trace=$5, is_environmental=$6, feature_id=COALESCE(feature_id, $7), business_impact=$8, platform=COALESCE(platform, $9), updated_at=NOW() WHERE id=$10`,
+          [runId, actual, notes, screenshotData, apiTrace, isEnvironmental, featureId, businessImpact, suitePlatform, existing[0].id]
         )
         continue
       }
@@ -262,8 +263,8 @@ router.post('/test-runs', verifySecret, async (req, res) => {
         // since "this has come back before" is worth remembering even after
         // it's fixed again, not just while currently reopened.
         await db.query(
-          `UPDATE bugs SET status='open', test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, api_trace=$5, is_environmental=$6, feature_id=COALESCE(feature_id, $7), business_impact=$8, is_regression=true, updated_at=NOW() WHERE id=$9`,
-          [runId, actual, notes, screenshotData, apiTrace, isEnvironmental, featureId, businessImpact, existing[0].id]
+          `UPDATE bugs SET status='open', test_run_id=$1, actual=$2, notes=$3, screenshot_data=$4, api_trace=$5, is_environmental=$6, feature_id=COALESCE(feature_id, $7), business_impact=$8, platform=COALESCE(platform, $9), is_regression=true, updated_at=NOW() WHERE id=$10`,
+          [runId, actual, notes, screenshotData, apiTrace, isEnvironmental, featureId, businessImpact, suitePlatform, existing[0].id]
         )
         await db.query(
           `INSERT INTO bug_comments (bug_id, user_id, body) VALUES ($1, NULL, $2)`,
@@ -275,8 +276,8 @@ router.post('/test-runs', verifySecret, async (req, res) => {
       await db.query(
         `INSERT INTO bugs
            (project_id, test_case_id, suite_id, test_run_id, title, severity,
-            steps_to_reproduce, expected, actual, notes, origin, created_by, screenshot_data, api_trace, is_environmental, feature_id, business_impact)
-         VALUES ($1,$2,$3,$4,$5,'medium',$6,$7,$8,$9,'automated',NULL,$10,$11,$12,$13,$14)`,
+            steps_to_reproduce, expected, actual, notes, origin, created_by, screenshot_data, api_trace, is_environmental, feature_id, business_impact, platform)
+         VALUES ($1,$2,$3,$4,$5,'medium',$6,$7,$8,$9,'automated',NULL,$10,$11,$12,$13,$14,$15)`,
         [
           tenantId,
           testCase?.id || null,
@@ -292,6 +293,7 @@ router.post('/test-runs', verifySecret, async (req, res) => {
           isEnvironmental,
           featureId,
           businessImpact,
+          suitePlatform,
         ]
       )
     }
