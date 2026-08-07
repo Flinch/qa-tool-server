@@ -714,6 +714,11 @@ router.post('/generate', ...staffOnlyChain, async (req, res) => {
 // PR URLs, branch names, and generation phase are AI-pipeline internals, not
 // a client-facing health metric.
 router.get('/generation-runs', ...staffOnlyChain, async (req, res) => {
+  // ?merged=true backs the "all merged PRs" list linked from the Engineering
+  // dashboard's automation review backlog panel — a different audience than
+  // the default recent-activity view (LIMIT 20, every status), so it gets a
+  // much higher cap instead of reusing that small default.
+  const mergedOnly = req.query.merged === 'true'
   try {
     await reconcileStaleGenerationRuns(req.db, req.params.id)
     const { rows } = await req.db.query(`
@@ -724,7 +729,7 @@ router.get('/generation-runs', ...staffOnlyChain, async (req, res) => {
       LEFT JOIN automation_suites ts ON ts.id = gr.target_suite_id
       WHERE gr.project_id = $1
       ORDER BY gr.started_at DESC
-      LIMIT 20
+      LIMIT ${mergedOnly ? 200 : 20}
     `, [req.params.id])
 
     // failed_test_case_ids: which of this run's requested TCs have no real
@@ -782,7 +787,7 @@ router.get('/generation-runs', ...staffOnlyChain, async (req, res) => {
       }
       return r
     }))
-    res.json(withPrStatus)
+    res.json(mergedOnly ? withPrStatus.filter(r => r.pr_status?.merged) : withPrStatus)
   } catch (e) {
     res.status(500).json({ error: e.message })
   }

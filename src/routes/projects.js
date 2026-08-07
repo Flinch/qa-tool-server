@@ -469,7 +469,7 @@ router.get('/:id/engineering-health', requireTenantAccess, requireRole('qa_engin
   try {
     const projectId = req.params.id
 
-    const [failingRows, environmentalRows, prRunRows, reviewStatusRows] = await Promise.all([
+    const [failingRows, environmentalRows, prRunRows] = await Promise.all([
       // Tests that are CURRENTLY failing — i.e. whose most recent real suite
       // run result is a failure, not just whose most recent FAILURE happens
       // to be recent. The old version filtered to status='failed' before
@@ -516,13 +516,6 @@ router.get('/:id/engineering-health', requireTenantAccess, requireRole('qa_engin
         ORDER BY gr.started_at DESC
         LIMIT 10
       `, [projectId]),
-      req.db.query(`
-        SELECT review_status, COUNT(*)::int AS count
-        FROM automated_test_cases atc
-        JOIN automation_suites s ON s.id = atc.suite_id
-        WHERE s.project_id = $1
-        GROUP BY review_status
-      `, [projectId]),
     ])
 
     // Live GitHub check per PR, same fail-open-per-row pattern as
@@ -532,16 +525,12 @@ router.get('/:id/engineering-health', requireTenantAccess, requireRole('qa_engin
       return { ...r, pr_status: prStatus }
     }))
 
-    const reviewStatusCounts = { active: 0, pending_review: 0, healed_pending_review: 0, flagged_regression: 0 }
-    for (const row of reviewStatusRows.rows) reviewStatusCounts[row.review_status] = row.count
-
     const flakyTests = await computeFlakyTests(req.db, projectId)
 
     res.json({
       failingTests: failingRows.rows,
       brokenEnvironments: environmentalRows.rows,
       prValidation,
-      reviewStatusCounts,
       flakyTests,
     })
   } catch (e) {
