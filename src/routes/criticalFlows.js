@@ -26,7 +26,7 @@ router.post('/review', staffOnly, async (req, res) => {
          COALESCE(array_agg(fr.requirement_id) FILTER (WHERE fr.requirement_id IS NOT NULL), '{}') AS requirement_ids
        FROM test_cases tc
        LEFT JOIN flow_requirements fr ON fr.test_case_id = tc.id
-       WHERE tc.project_id=$1 AND tc.type='e2e' AND tc.automation_candidate=true
+       WHERE tc.project_id=$1 AND tc.type='e2e' AND tc.automation_candidate=true AND tc.archived_at IS NULL
        GROUP BY tc.id
        ORDER BY tc.id`,
       [req.params.id]

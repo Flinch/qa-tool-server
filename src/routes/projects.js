@@ -42,7 +42,7 @@ router.get('/', async (req, res) => {
           COUNT(DISTINCT tc.id)::int AS test_case_count,
           COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'open')::int AS open_bug_count
         FROM projects p
-        LEFT JOIN test_cases tc ON tc.project_id = p.id
+        LEFT JOIN test_cases tc ON tc.project_id = p.id AND tc.archived_at IS NULL
         LEFT JOIN bugs b ON b.project_id = p.id
         WHERE p.id = $1
         GROUP BY p.id
@@ -224,7 +224,7 @@ router.get('/:id/stats', requireTenantAccess, async (req, res) => {
         COUNT(DISTINCT tc.id) FILTER (WHERE le.test_case_id IS NULL)::int AS "notRun",
         COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'open')::int AS "openBugs"
       FROM projects p
-      LEFT JOIN test_cases tc ON tc.project_id = p.id
+      LEFT JOIN test_cases tc ON tc.project_id = p.id AND tc.archived_at IS NULL
       LEFT JOIN latest_execution le ON le.test_case_id = tc.id
       LEFT JOIN bugs b ON b.project_id = p.id
       WHERE p.id = $1
@@ -259,7 +259,7 @@ router.get('/:id/health', requireTenantAccess, async (req, res) => {
           COUNT(DISTINCT tc.id) FILTER (WHERE le.test_case_id IS NULL)::int AS "notRun"
         FROM test_cases tc
         LEFT JOIN latest_execution le ON le.test_case_id = tc.id
-        WHERE tc.project_id = $1
+        WHERE tc.project_id = $1 AND tc.archived_at IS NULL
       `, [projectId]),
       req.db.query(`
         SELECT severity, COUNT(*)::int AS count
@@ -273,7 +273,7 @@ router.get('/:id/health', requireTenantAccess, async (req, res) => {
           COUNT(DISTINCT tc.id) FILTER (WHERE atc.id IS NOT NULL)::int AS automated
         FROM test_cases tc
         LEFT JOIN automated_test_cases atc ON atc.test_case_id = tc.id
-        WHERE tc.project_id = $1
+        WHERE tc.project_id = $1 AND tc.archived_at IS NULL
       `, [projectId]),
       req.db.query(`
         SELECT er.id, er.completed_at,
@@ -563,7 +563,7 @@ router.post('/:id/advisor', requireTenantAccess, requireRole('qa_engineer', 'adm
       req.db.query(`
         SELECT COUNT(DISTINCT tc.id)::int AS total, COUNT(DISTINCT tc.id) FILTER (WHERE atc.id IS NOT NULL)::int AS automated
         FROM test_cases tc LEFT JOIN automated_test_cases atc ON atc.test_case_id = tc.id
-        WHERE tc.project_id = $1
+        WHERE tc.project_id = $1 AND tc.archived_at IS NULL
       `, [projectId]),
       req.db.query(`
         SELECT COUNT(DISTINCT r.id)::int AS total, COUNT(DISTINCT r.id) FILTER (WHERE rtc.id IS NOT NULL)::int AS covered

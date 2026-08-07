@@ -50,7 +50,7 @@ async function fetchTenantStats(db, tenantId) {
         COUNT(DISTINCT tc.id) FILTER (WHERE le.status = 'blocked')::int AS blocked
       FROM test_cases tc
       LEFT JOIN latest_execution le ON le.test_case_id = tc.id
-      WHERE tc.project_id = $1
+      WHERE tc.project_id = $1 AND tc.archived_at IS NULL
     `, [tenantId]),
     db.query(`SELECT severity, COUNT(*)::int AS count FROM bugs WHERE status='open' AND project_id=$1 GROUP BY severity`, [tenantId]),
     db.query(`SELECT COUNT(*)::int AS count FROM bugs WHERE status='open' AND project_id=$1`, [tenantId]),
@@ -60,7 +60,7 @@ async function fetchTenantStats(db, tenantId) {
         COUNT(DISTINCT tc.id) FILTER (WHERE atc.id IS NOT NULL)::int AS automated
       FROM test_cases tc
       LEFT JOIN automated_test_cases atc ON atc.test_case_id = tc.id
-      WHERE tc.project_id = $1
+      WHERE tc.project_id = $1 AND tc.archived_at IS NULL
     `, [tenantId]),
     db.query(`
       SELECT b.id, b.project_id, b.title, b.severity, b.status, b.created_at, b.updated_at, p.name AS project_name

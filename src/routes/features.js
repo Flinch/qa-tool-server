@@ -29,7 +29,7 @@ router.get('/', async (req, res) => {
         COUNT(DISTINCT tc.id) FILTER (WHERE le.status = 'fail')::int AS failed,
         COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'open')::int AS open_bug_count
       FROM features f
-      LEFT JOIN test_cases tc ON tc.feature_id = f.id
+      LEFT JOIN test_cases tc ON tc.feature_id = f.id AND tc.archived_at IS NULL
       LEFT JOIN latest_execution le ON le.test_case_id = tc.id
       LEFT JOIN bugs b ON b.feature_id = f.id
       WHERE f.project_id = $1
