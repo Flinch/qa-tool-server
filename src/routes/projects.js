@@ -301,7 +301,7 @@ async function computePlatformScores(db, projectId) {
     const bugsBySeverity = { critical: 0, high: 0, medium: 0, low: 0 }
     for (const row of bugRows.rows) bugsBySeverity[row.severity] = row.count
 
-    const { qualityScore, healthStatus } = computeQualityScore({ passRate, requirementCoverage, bugsBySeverity, flakyCount: flakyTests.length })
+    const { qualityScore, healthStatus, breakdown } = computeQualityScore({ passRate, requirementCoverage, bugsBySeverity, flakyCount: flakyTests.length })
 
     return {
       platform,
@@ -311,6 +311,7 @@ async function computePlatformScores(db, projectId) {
       requirementCoverage,
       testCases: { total: tc.total, passed: tc.passed, failed: tc.failed, blocked: tc.blocked, notRun: tc.notRun },
       bugsBySeverity,
+      scoreBreakdown: breakdown,
     }
   }))
 }
@@ -473,12 +474,13 @@ router.get('/:id/health', requireTenantAccess, async (req, res) => {
     // the count is used here, the list itself is discarded.
     const flakyCount = (await computeFlakyTests(req.db, projectId, { limit: 50 })).length
 
-    const { qualityScore, healthStatus } = computeQualityScore({ passRate, requirementCoverage, bugsBySeverity, flakyCount })
+    const { qualityScore, healthStatus, breakdown } = computeQualityScore({ passRate, requirementCoverage, bugsBySeverity, flakyCount })
     const platformScores = await computePlatformScores(req.db, projectId)
 
     res.json({
       healthStatus,
       qualityScore,
+      scoreBreakdown: breakdown,
       passRate,
       testCases: { total: tc.total, passed: tc.passed, failed: tc.failed, blocked: tc.blocked, notRun: tc.notRun },
       bugsBySeverity,

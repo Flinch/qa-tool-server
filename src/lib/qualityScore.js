@@ -16,11 +16,13 @@ export function computeQualityScore({ passRate, requirementCoverage, bugsBySever
     passRate !== null && { value: passRate, weight: 0.65 },
     requirementCoverage !== null && { value: requirementCoverage, weight: 0.35 },
   ].filter(Boolean)
+  let bugPenalty = 0
+  let flakePenalty = 0
   if (weighted.length > 0) {
     const totalWeight = weighted.reduce((sum, w) => sum + w.weight, 0)
     const base = weighted.reduce((sum, w) => sum + w.value * w.weight, 0) / totalWeight
-    const bugPenalty = Math.min(40, bugsBySeverity.critical * 15) + Math.min(25, bugsBySeverity.high * 6)
-    const flakePenalty = Math.min(15, flakyCount * 3)
+    bugPenalty = Math.min(40, bugsBySeverity.critical * 15) + Math.min(25, bugsBySeverity.high * 6)
+    flakePenalty = Math.min(15, flakyCount * 3)
     qualityScore = Math.max(0, Math.min(100, Math.round(base - bugPenalty - flakePenalty)))
   }
 
@@ -35,5 +37,19 @@ export function computeQualityScore({ passRate, requirementCoverage, bugsBySever
     healthStatus = 'excellent'
   }
 
-  return { qualityScore, healthStatus }
+  // Every number that fed the formula above, for the score's hover
+  // breakdown on the client Dashboard — kept as plain inputs/outputs rather
+  // than a pre-formatted string so the frontend can lay it out however it
+  // wants without re-deriving any of this math.
+  const breakdown = {
+    passRate,
+    passRateWeight: 0.65,
+    requirementCoverage,
+    requirementCoverageWeight: 0.35,
+    bugPenalty,
+    flakePenalty,
+    flakyCount,
+  }
+
+  return { qualityScore, healthStatus, breakdown }
 }
