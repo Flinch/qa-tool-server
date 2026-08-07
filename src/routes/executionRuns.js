@@ -92,6 +92,64 @@ router.post('/', staffOnly, async (req, res) => {
   }
 })
 
+// POST /:runId/re-execute — clone a run's exact test-case + suite selection
+// into a brand-new run, for re-testing a release without rebuilding the
+// selection from scratch. A test case that already passed carries that pass
+// forward (no need to re-prove something that already worked); anything
+// blocked/fail/not_run resets to not_run so it genuinely gets re-verified.
+// Suites carry over as a bare selection with no latest_test_run_id — a suite
+// run is a real CI dispatch, not something that can be "carried forward" as
+// a result, so the new run always starts with its suites unrun.
+router.post('/:runId/re-execute', staffOnly, async (req, res) => {
+  try {
+    const { rows: sourceRows } = await req.db.query(
+      `SELECT * FROM execution_runs WHERE id=$1 AND project_id=$2`,
+      [req.params.runId, req.params.id]
+    )
+    if (!sourceRows[0]) return res.status(404).json({ error: 'Execution run not found' })
+    const source = sourceRows[0]
+
+    const { rows: sourceTcs } = await req.db.query(
+      `SELECT test_case_id, status FROM execution_run_test_cases WHERE execution_run_id=$1`,
+      [req.params.runId]
+    )
+    const { rows: sourceSuites } = await req.db.query(
+      `SELECT suite_id FROM execution_run_suites WHERE execution_run_id=$1`,
+      [req.params.runId]
+    )
+    if (sourceTcs.length === 0 && sourceSuites.length === 0) {
+      return res.status(400).json({ error: 'This run has no test cases or suites to re-execute' })
+    }
+
+    const { rows: newRunRows } = await req.db.query(
+      `INSERT INTO execution_runs (project_id, name, created_by) VALUES ($1,$2,$3) RETURNING *`,
+      [req.params.id, `${source.name} (re-execute)`, req.userId]
+    )
+    const newRun = newRunRows[0]
+
+    for (const tc of sourceTcs) {
+      const carryingPass = tc.status === 'pass'
+      await req.db.query(
+        `INSERT INTO execution_run_test_cases (execution_run_id, test_case_id, status, notes)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (execution_run_id, test_case_id) DO NOTHING`,
+        [newRun.id, tc.test_case_id, carryingPass ? 'pass' : 'not_run', carryingPass ? `Carried over as passing from "${source.name}"` : null]
+      )
+    }
+    for (const s of sourceSuites) {
+      await req.db.query(
+        `INSERT INTO execution_run_suites (execution_run_id, suite_id) VALUES ($1,$2)
+         ON CONFLICT (execution_run_id, suite_id) DO NOTHING`,
+        [newRun.id, s.suite_id]
+      )
+    }
+
+    res.status(201).json(newRun)
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // GET /latest — the most recently created execution run for this project.
 // Backs saved views of type 'execution_test_cases', which never pin a run
 // id in their stored filters — they always reopen against whatever's most
@@ -125,7 +183,7 @@ router.get('/:runId', async (req, res) => {
 
     const { rows: testCases } = await req.db.query(`
       SELECT etc.id AS execution_test_case_id, etc.status, etc.notes, etc.executed_by, etc.executed_at,
-        tc.id AS test_case_id, tc.title, tc.type, tc.steps, tc.expected,
+        tc.id AS test_case_id, tc.title, tc.type, tc.steps, tc.expected, tc.feature_id,
         COUNT(b.id)::int AS bug_count
       FROM execution_run_test_cases etc
       JOIN test_cases tc ON tc.id = etc.test_case_id

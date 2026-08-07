@@ -27,6 +27,10 @@ on:
         description: 'Optional free-text context from the user for the healer agent (e.g. "flaky, run 10+ times")'
         required: false
         type: string
+      engine:
+        description: 'Suite engine — "api" routes to api-test-healer, anything else (or omitted) uses the browser healer'
+        required: false
+        type: string
 
 permissions:
   contents: write # needed to push the healed-tests branch (and checkpoint branch on failure)
@@ -119,6 +123,7 @@ jobs:
           CORRELATION_ID: ${{ inputs.correlation_id }}
           FILE_PATH: ${{ inputs.file_path }}
           CONTEXT: ${{ inputs.context }}
+          ENGINE: ${{ inputs.engine }}
           WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
           GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
