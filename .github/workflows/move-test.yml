@@ -1,0 +1,62 @@
+name: Move Test To Suite
+
+on:
+  workflow_dispatch:
+    inputs:
+      correlation_id:
+        description: 'Correlation ID linking this run back to a pending generation_runs row (kind=move)'
+        required: true
+        type: string
+      file_path:
+        description: 'Repo-relative path to the test file to move'
+        required: true
+        type: string
+      target_path:
+        description: 'Repo-relative destination path for the file'
+        required: true
+        type: string
+      target_suite_name:
+        description: 'Display name of the destination suite, for the PR title/body'
+        required: false
+        type: string
+
+permissions:
+  contents: write # needed to push the move branch
+  pull-requests: write # needed to open the PR
+
+jobs:
+  move:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # Plain git mv, not an agent — no test logic changes, just where the
+      # file lives, so there's nothing here that needs Claude/Playwright/
+      # per-project auth the way generate/heal do.
+      - name: Move the file
+        run: |
+          mkdir -p "$(dirname "${{ inputs.target_path }}")"
+          git mv "${{ inputs.file_path }}" "${{ inputs.target_path }}"
+
+      - name: Open PR with the move
+        id: pr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: move-test/${{ inputs.correlation_id }}
+          title: "Move test to ${{ inputs.target_suite_name || 'another suite' }}: ${{ inputs.file_path }}"
+          commit-message: "Move ${{ inputs.file_path }} to ${{ inputs.target_path }}"
+          body: |
+            Moves `${{ inputs.file_path }}` to `${{ inputs.target_path }}` so it runs as part of **${{ inputs.target_suite_name || 'the destination suite' }}** (correlation id `${{ inputs.correlation_id }}`).
+
+            No test logic changed — just its location. The qa-tool roster picks up the new suite automatically once this merges.
+
+      - name: Report completion
+        env:
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+          WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          PR_URL: ${{ steps.pr.outputs.pull-request-url }}
+          BRANCH_NAME: move-test/${{ inputs.correlation_id }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node .github/scripts/report-generation-complete.js

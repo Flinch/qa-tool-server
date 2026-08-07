@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import { query } from '../db/pool.js' // control-plane pool from here on
 import { broadcast } from './sse.js'
+import { suiteDirectory } from './githubSuiteFiles.js'
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN
 const GITHUB_OWNER = process.env.GITHUB_OWNER
@@ -31,6 +32,11 @@ const GITHUB_MOBILE_HEAL_WORKFLOW_ID = process.env.GITHUB_MOBILE_HEAL_WORKFLOW_I
 // tests/auth-setups/, lib/authSetupStatus.js). Web-only — there's no
 // login-flow concept for mobile's self-contained Maestro flows.
 const GITHUB_AUTH_SETUP_WORKFLOW_ID = process.env.GITHUB_AUTH_SETUP_WORKFLOW_ID // e.g. "generate-auth-setup.yml"
+// Moves an already-generated test file into a different suite's directory —
+// a plain `git mv` + PR, not an agent, so it's one workflow for every
+// platform/engine (no per-platform split like generate/heal/run need, since
+// there's no test execution or per-project auth involved).
+const GITHUB_MOVE_TEST_WORKFLOW_ID = process.env.GITHUB_MOVE_TEST_WORKFLOW_ID // e.g. "move-test.yml"
 // Project 7 (the OrangeHRM/"owasp" tenant) runs suite/rerun dispatches
 // against a private, ephemeral, self-hosted OrangeHRM instance spun up
 // inside the CI job itself, instead of the shared public demo every other
@@ -438,6 +444,77 @@ export async function triggerHealRun({ db, tenantId, projectId, suiteId, testCas
           // always maestro/appium, never 'api') — only send it to the web
           // heal workflow, or GitHub's dispatch API rejects the extra key.
           ...(suite.platform === 'web' && suite.engine === 'api' ? { engine: 'api' } : {}),
+        },
+      }),
+    }
+  )
+
+  if (!ghRes.ok) {
+    const errText = (await ghRes.text()).slice(0, 500)
+    await db.query(
+      `UPDATE generation_runs SET status='failed', error_message=$2, completed_at=NOW() WHERE id=$1`,
+      [rows[0].id, `GitHub Actions dispatch failed: ${errText}`]
+    )
+    throw new TriggerError(502, `GitHub Actions dispatch failed: ${errText}`)
+  }
+
+  return rows[0]
+}
+
+// Moves one already-generated test file from its current suite's directory
+// into a different suite's — e.g. "this test I generated for Smoke should
+// really also run as part of Regression." A plain git mv + PR (no agent, no
+// CI test execution), reusing the exact same generation_runs tracking/SSE
+// infra as heal/generate (kind='move') so the client's existing live-progress
+// UI picks it up for free. Caller (routes/automation.js) has already checked
+// source != target and that both suites share platform+engine — enforced
+// again here since this is also reachable as a standalone export.
+export async function triggerMoveRun({ db, tenantId, projectId, sourceSuiteId, targetSuiteId, testCaseTitle, filePath, testCaseIds, userId }) {
+  if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
+    throw new TriggerError(500, 'Test generation workflow is not configured on the server')
+  }
+  if (!GITHUB_MOVE_TEST_WORKFLOW_ID) {
+    throw new TriggerError(500, 'No move-to-suite workflow configured')
+  }
+
+  const { rows: suiteRows } = await db.query(
+    `SELECT * FROM automation_suites WHERE id = ANY($1::int[]) AND project_id=$2`,
+    [[sourceSuiteId, targetSuiteId], projectId]
+  )
+  const sourceSuite = suiteRows.find(s => s.id === sourceSuiteId)
+  const targetSuite = suiteRows.find(s => s.id === targetSuiteId)
+  if (!sourceSuite || !targetSuite) throw new TriggerError(404, 'Suite not found')
+  if (sourceSuite.id === targetSuite.id) throw new TriggerError(400, 'Test case is already in that suite')
+  if (sourceSuite.platform !== targetSuite.platform || sourceSuite.engine !== targetSuite.engine) {
+    throw new TriggerError(400, 'Target suite must share the same platform and engine as the source suite')
+  }
+
+  const targetPath = `${suiteDirectory(targetSuite)}/${filePath.split('/').pop()}`
+  const correlationId = crypto.randomUUID()
+
+  const { rows } = await db.query(
+    `INSERT INTO generation_runs (project_id, suite_id, target_suite_id, correlation_id, status, kind, target_title, test_case_ids, created_by)
+     VALUES ($1,$2,$3,$4,'pending','move',$5,$6,$7) RETURNING *`,
+    [projectId, sourceSuiteId, targetSuiteId, correlationId, testCaseTitle, testCaseIds || [], userId]
+  )
+  await recordDispatch(correlationId, tenantId, 'generation_run')
+
+  const ghRes = await fetch(
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${GITHUB_MOVE_TEST_WORKFLOW_ID}/dispatches`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ref: 'master',
+        inputs: {
+          correlation_id: correlationId,
+          file_path: filePath,
+          target_path: targetPath,
+          target_suite_name: targetSuite.name,
         },
       }),
     }

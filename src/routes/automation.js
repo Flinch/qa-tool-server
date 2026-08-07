@@ -3,7 +3,7 @@ import { query as controlQuery } from '../db/pool.js'
 import { requireAuth, requireRole, verifyToken } from '../middleware/auth.js'
 import { requireTenantAccess } from '../middleware/tenantAccess.js'
 import { subscribe, unsubscribe, broadcast } from '../lib/sse.js'
-import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileStaleGenerationRuns, triggerTestCaseRerun, triggerHealRun, triggerAuthSetupRun } from '../lib/automationTrigger.js'
+import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileStaleGenerationRuns, triggerTestCaseRerun, triggerHealRun, triggerAuthSetupRun, triggerMoveRun } from '../lib/automationTrigger.js'
 import { getPrStatus } from '../lib/githubPrStatus.js'
 import { listSuiteFiles, matchTestCaseToFile } from '../lib/githubSuiteFiles.js'
 import { isAuthSetupBlocking, getAuthSetupStatus } from '../lib/authSetupStatus.js'
@@ -502,6 +502,51 @@ router.post('/runs/:runId/diagnose', ...staffOnlyChain, async (req, res) => {
   }
 })
 
+// POST /test-cases/:atcId/move — add an already-generated test case to a
+// different suite by actually moving its file there (see
+// triggerMoveRun/tenantSchema.js's target_suite_id comment for why this
+// isn't just a suite_id UPDATE). Any generated test case is eligible
+// regardless of its last-run status — this isn't a failure-recovery action
+// like heal/diagnose, just "also run this test as part of that other suite."
+router.post('/test-cases/:atcId/move', ...staffOnlyChain, async (req, res) => {
+  const { target_suite_id } = req.body
+  if (!target_suite_id) return res.status(400).json({ error: 'target_suite_id is required' })
+
+  try {
+    const { rows: atcRows } = await req.db.query(`
+      SELECT atc.*, s.id AS suite_pk, s.slug, s.platform, s.engine
+      FROM automated_test_cases atc
+      JOIN automation_suites s ON s.id = atc.suite_id
+      WHERE atc.id=$1 AND s.project_id=$2
+    `, [req.params.atcId, req.params.id])
+    if (!atcRows[0]) return res.status(404).json({ error: 'Test case not found' })
+    const atc = atcRows[0]
+    if (atc.origin !== 'generated') {
+      return res.status(400).json({ error: 'Only AI-generated test cases have a real file to move' })
+    }
+
+    const files = await listSuiteFiles({ id: atc.suite_pk, slug: atc.slug, platform: atc.platform })
+    const fileUrl = matchTestCaseToFile(atc.title, files)
+    const file = fileUrl && files.find(f => f.url === fileUrl)
+    if (!file) return res.status(400).json({ error: `Could not find a matching file for: ${atc.title}` })
+
+    const newRun = await triggerMoveRun({
+      db: req.db,
+      tenantId: req.tenantId,
+      projectId: req.params.id,
+      sourceSuiteId: atc.suite_id,
+      targetSuiteId: Number(target_suite_id),
+      testCaseTitle: atc.title,
+      filePath: file.path,
+      testCaseIds: atc.test_case_id ? [atc.test_case_id] : [],
+      userId: req.userId,
+    })
+    res.status(202).json(newRun)
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message })
+  }
+})
+
 // GET /suites/:suiteId/test-cases — the suite's automated test case roster,
 // each row annotated with a GitHub link when a real generated file matches
 // its tc-<id> title prefix. Staff + read-only clients who are project
@@ -557,7 +602,7 @@ router.get('/generated-test-cases', ...staffOnlyChain, async (req, res) => {
     const { rows } = await req.db.query(`
       SELECT atc.id, atc.title, atc.origin, atc.review_status, atc.test_case_id,
         tc.title AS linked_test_case_title, tc.type, tc.steps, tc.expected,
-        s.id AS suite_id, s.name AS suite_name, s.slug AS suite_slug, s.platform AS suite_platform,
+        s.id AS suite_id, s.name AS suite_name, s.slug AS suite_slug, s.platform AS suite_platform, s.engine AS suite_engine,
         latest.id AS last_result_id, latest.test_run_id AS last_run_id,
         latest.status AS last_status, latest.error_message AS last_error_message,
         latest.completed_at AS last_run_at, latest.api_trace AS last_api_trace,
@@ -672,9 +717,11 @@ router.get('/generation-runs', ...staffOnlyChain, async (req, res) => {
   try {
     await reconcileStaleGenerationRuns(req.db, req.params.id)
     const { rows } = await req.db.query(`
-      SELECT gr.*, s.id AS suite_pk, s.name AS suite_name, s.slug AS suite_slug, s.platform AS suite_platform
+      SELECT gr.*, s.id AS suite_pk, s.name AS suite_name, s.slug AS suite_slug, s.platform AS suite_platform,
+        ts.name AS target_suite_name
       FROM generation_runs gr
       JOIN automation_suites s ON s.id = gr.suite_id
+      LEFT JOIN automation_suites ts ON ts.id = gr.target_suite_id
       WHERE gr.project_id = $1
       ORDER BY gr.started_at DESC
       LIMIT 20
@@ -710,6 +757,18 @@ router.get('/generation-runs', ...staffOnlyChain, async (req, res) => {
     const withPrStatus = await Promise.all(withFailedIds.map(async r => {
       if (r.pr_url) {
         const prStatus = await getPrStatus(r.pr_url)
+        // A move only ever actually happens once its PR merges — the file
+        // isn't at its new path in master until then, so flipping suite_id
+        // any earlier would make the roster lie about what a suite's own CI
+        // run will actually find. WHERE suite_id=r.suite_id (the OLD suite)
+        // makes this self-limiting: once applied, the row no longer matches,
+        // so a second pass over the same merged PR is a harmless no-op.
+        if (r.kind === 'move' && prStatus.merged && r.target_suite_id) {
+          await req.db.query(
+            `UPDATE automated_test_cases SET suite_id=$1 WHERE suite_id=$2 AND title=$3`,
+            [r.target_suite_id, r.suite_id, r.target_title]
+          )
+        }
         return { ...r, pr_status: prStatus }
       }
       // A failed run (heal or generate) that still has a branch_name (no PR)

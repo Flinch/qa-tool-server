@@ -508,10 +508,12 @@ router.get('/:id/engineering-health', requireTenantAccess, requireRole('qa_engin
         LIMIT 10
       `, [projectId]),
       req.db.query(`
-        SELECT id, pr_url, branch_name, status, kind, target_title, completed_at
-        FROM generation_runs
-        WHERE project_id = $1 AND pr_url IS NOT NULL
-        ORDER BY started_at DESC
+        SELECT gr.id, gr.pr_url, gr.branch_name, gr.status, gr.kind, gr.target_title, gr.completed_at,
+          ts.name AS target_suite_name
+        FROM generation_runs gr
+        LEFT JOIN automation_suites ts ON ts.id = gr.target_suite_id
+        WHERE gr.project_id = $1 AND gr.pr_url IS NOT NULL
+        ORDER BY gr.started_at DESC
         LIMIT 10
       `, [projectId]),
       req.db.query(`

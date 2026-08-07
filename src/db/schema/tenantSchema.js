@@ -616,4 +616,21 @@ CREATE INDEX IF NOT EXISTS idx_saved_views_project ON saved_views(project_id);
 -- triggerTestCaseRerun functions server-side. NULL for any row that
 -- predates this column.
 ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS triggered_from TEXT;
+
+-- Move-to-suite: reassigns an already-generated test case's file into a
+-- different suite. Not a metadata-only reassignment: automationTrigger.js's
+-- triggerMoveRun dispatches a real git mv + PR against the actual repo-relative
+-- suite directory (same review-then-merge gate as every other change to
+-- tests/generated/*), so target_suite_id below is the DECLARED destination,
+-- not yet the roster's live suite_id. GET /generation-runs applies the roster
+-- update (automated_test_cases.suite_id = target_suite_id) only once it
+-- confirms the PR merged, via the same live getPrStatus check that route
+-- already runs per row for other kinds. Same drop-then-recreate pattern as
+-- automation_suites_engine_check above.
+ALTER TABLE generation_runs DROP CONSTRAINT IF EXISTS generation_runs_kind_check;
+ALTER TABLE generation_runs ADD CONSTRAINT generation_runs_kind_check
+  CHECK (kind IN ('generate','heal','auth_setup','move'));
+
+ALTER TABLE generation_runs ADD COLUMN IF NOT EXISTS
+  target_suite_id INTEGER REFERENCES automation_suites(id) ON DELETE SET NULL;
 `

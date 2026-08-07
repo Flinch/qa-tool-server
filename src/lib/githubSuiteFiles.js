@@ -18,7 +18,7 @@ async function ghGet(path) {
   return res.json()
 }
 
-function suiteDirectory(suite) {
+export function suiteDirectory(suite) {
   return suite.platform === 'web'
     ? `tests/generated/${suite.slug}`
     : `tests/generated-mobile/${suite.platform}/${suite.slug}`
