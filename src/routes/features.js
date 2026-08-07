@@ -15,12 +15,35 @@ const staffOnly = requireRole('qa_engineer', 'admin')
 router.get('/', async (req, res) => {
   try {
     const { rows } = await req.db.query(`
-      WITH latest_execution AS (
-        SELECT DISTINCT ON (erc.test_case_id) erc.test_case_id, erc.status
+      WITH latest_manual AS (
+        SELECT DISTINCT ON (erc.test_case_id) erc.test_case_id, erc.status, erc.executed_at AS at
         FROM execution_run_test_cases erc
         JOIN execution_runs er ON er.id = erc.execution_run_id
         WHERE er.project_id = $1 AND erc.status != 'not_run'
         ORDER BY erc.test_case_id, erc.executed_at DESC NULLS LAST
+      ),
+      -- Same fix as GET /:id/health — a suite's own real runs never fed this
+      -- at all before, only manually-tracked execution_run_test_cases did.
+      latest_suite AS (
+        SELECT DISTINCT ON (atc.test_case_id) atc.test_case_id,
+          CASE trr.status WHEN 'passed' THEN 'pass' WHEN 'failed' THEN 'fail' ELSE 'blocked' END AS status,
+          tr.completed_at AS at
+        FROM test_run_results trr
+        JOIN test_runs tr ON tr.id = trr.test_run_id
+        JOIN automated_test_cases atc ON atc.suite_id = tr.suite_id AND atc.title = trr.test_title
+        WHERE tr.project_id = $1 AND tr.scope = 'suite' AND atc.test_case_id IS NOT NULL
+        ORDER BY atc.test_case_id, tr.completed_at DESC NULLS LAST
+      ),
+      latest_execution AS (
+        SELECT COALESCE(m.test_case_id, su.test_case_id) AS test_case_id,
+          CASE
+            WHEN m.at IS NULL THEN su.status
+            WHEN su.at IS NULL THEN m.status
+            WHEN m.at >= su.at THEN m.status
+            ELSE su.status
+          END AS status
+        FROM latest_manual m
+        FULL OUTER JOIN latest_suite su ON su.test_case_id = m.test_case_id
       )
       SELECT
         f.id, f.name, f.description,

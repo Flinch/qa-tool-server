@@ -33,21 +33,52 @@ async function assertRunOwnership(db, projectId, runId) {
 
 // GET / — execution runs for a project, with pass/fail/not-run/blocked + suite counts.
 // Staff + read-only clients who are project members.
+//
+// Real bug, confirmed live: totals here only ever counted manually-tracked
+// execution_run_test_cases, never a bundled suite's own results — a suite
+// run from inside this execution (via POST .../suites/:suiteId/run below,
+// which does update execution_run_suites.latest_test_run_id) genuinely
+// changed that one suite's own card, but never moved this run-level
+// aggregate. Fixed by folding each suite's latest run (total/passed/failed,
+// skipped counted as not-run — a suite result has no "blocked" concept of
+// its own) into the same totals, via pre-aggregated CTEs so joining both
+// one-to-many relations (test cases, suites) in one query can't fan out
+// and inflate either side — same lesson as the GET /projects fan-out fix.
 router.get('/', async (req, res) => {
   try {
     const { rows } = await req.db.query(`
+      WITH tc_agg AS (
+        SELECT execution_run_id,
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE status='pass')::int AS passed,
+          COUNT(*) FILTER (WHERE status='fail')::int AS failed,
+          COUNT(*) FILTER (WHERE status='not_run')::int AS not_run,
+          COUNT(*) FILTER (WHERE status='blocked')::int AS blocked
+        FROM execution_run_test_cases
+        GROUP BY execution_run_id
+      ),
+      suite_agg AS (
+        SELECT es.execution_run_id,
+          COUNT(es.id)::int AS suite_count,
+          COALESCE(SUM(tr.total), 0)::int AS total,
+          COALESCE(SUM(tr.passed), 0)::int AS passed,
+          COALESCE(SUM(tr.failed), 0)::int AS failed,
+          COALESCE(SUM(tr.skipped), 0)::int AS not_run
+        FROM execution_run_suites es
+        LEFT JOIN test_runs tr ON tr.id = es.latest_test_run_id
+        GROUP BY es.execution_run_id
+      )
       SELECT er.*,
-        COUNT(DISTINCT etc.id)::int AS total_test_cases,
-        COUNT(DISTINCT etc.id) FILTER (WHERE etc.status='pass')::int AS passed,
-        COUNT(DISTINCT etc.id) FILTER (WHERE etc.status='fail')::int AS failed,
-        COUNT(DISTINCT etc.id) FILTER (WHERE etc.status='not_run')::int AS not_run,
-        COUNT(DISTINCT etc.id) FILTER (WHERE etc.status='blocked')::int AS blocked,
-        COUNT(DISTINCT es.id)::int AS suite_count
+        COALESCE(tc.total, 0) + COALESCE(sa.total, 0) AS total_test_cases,
+        COALESCE(tc.passed, 0) + COALESCE(sa.passed, 0) AS passed,
+        COALESCE(tc.failed, 0) + COALESCE(sa.failed, 0) AS failed,
+        COALESCE(tc.not_run, 0) + COALESCE(sa.not_run, 0) AS not_run,
+        COALESCE(tc.blocked, 0) AS blocked,
+        COALESCE(sa.suite_count, 0) AS suite_count
       FROM execution_runs er
-      LEFT JOIN execution_run_test_cases etc ON etc.execution_run_id = er.id
-      LEFT JOIN execution_run_suites es ON es.execution_run_id = er.id
+      LEFT JOIN tc_agg tc ON tc.execution_run_id = er.id
+      LEFT JOIN suite_agg sa ON sa.execution_run_id = er.id
       WHERE er.project_id = $1
-      GROUP BY er.id
       ORDER BY er.created_at DESC
     `, [req.params.id])
     res.json(rows)

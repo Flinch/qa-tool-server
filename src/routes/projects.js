@@ -207,15 +207,40 @@ router.patch('/:id/test-config', requireTenantAccess, requireRole('qa_engineer',
 router.get('/:id/stats', requireTenantAccess, async (req, res) => {
   try {
     // Same fix as GET /:id/health — passed/failed/notRun sourced from real
-    // execution history (execution_run_test_cases), not test_cases.status,
-    // which execution runs never write to.
+    // execution history, not test_cases.status, which execution runs never
+    // write to. Merges manual tracking (execution_run_test_cases) with a
+    // suite's own real runs (test_run_results), whichever is more recent per
+    // test case — a suite run never fed this at all before, confirmed live
+    // as a real undercount (see the matching /:id/health fix for the full
+    // story).
     const { rows } = await req.db.query(`
-      WITH latest_execution AS (
-        SELECT DISTINCT ON (erc.test_case_id) erc.test_case_id, erc.status
+      WITH latest_manual AS (
+        SELECT DISTINCT ON (erc.test_case_id) erc.test_case_id, erc.status, erc.executed_at AS at
         FROM execution_run_test_cases erc
         JOIN execution_runs er ON er.id = erc.execution_run_id
         WHERE er.project_id = $1 AND erc.status != 'not_run'
         ORDER BY erc.test_case_id, erc.executed_at DESC NULLS LAST
+      ),
+      latest_suite AS (
+        SELECT DISTINCT ON (atc.test_case_id) atc.test_case_id,
+          CASE trr.status WHEN 'passed' THEN 'pass' WHEN 'failed' THEN 'fail' ELSE 'blocked' END AS status,
+          tr.completed_at AS at
+        FROM test_run_results trr
+        JOIN test_runs tr ON tr.id = trr.test_run_id
+        JOIN automated_test_cases atc ON atc.suite_id = tr.suite_id AND atc.title = trr.test_title
+        WHERE tr.project_id = $1 AND tr.scope = 'suite' AND atc.test_case_id IS NOT NULL
+        ORDER BY atc.test_case_id, tr.completed_at DESC NULLS LAST
+      ),
+      latest_execution AS (
+        SELECT COALESCE(m.test_case_id, su.test_case_id) AS test_case_id,
+          CASE
+            WHEN m.at IS NULL THEN su.status
+            WHEN su.at IS NULL THEN m.status
+            WHEN m.at >= su.at THEN m.status
+            ELSE su.status
+          END AS status
+        FROM latest_manual m
+        FULL OUTER JOIN latest_suite su ON su.test_case_id = m.test_case_id
       )
       SELECT
         COUNT(DISTINCT tc.id)::int AS "testCases",
@@ -259,12 +284,46 @@ async function computePlatformScores(db, projectId) {
   return Promise.all(activePlatforms.map(async platform => {
     const [tcRows, reqRows, bugRows, flakyTests] = await Promise.all([
       db.query(`
-        WITH latest_execution AS (
-          SELECT DISTINCT ON (erc.test_case_id) erc.test_case_id, erc.status
+        WITH latest_manual AS (
+          SELECT DISTINCT ON (erc.test_case_id) erc.test_case_id, erc.status, erc.executed_at AS at
           FROM execution_run_test_cases erc
           JOIN execution_runs er ON er.id = erc.execution_run_id
           WHERE er.project_id = $1 AND er.platform = $2 AND erc.status != 'not_run'
           ORDER BY erc.test_case_id, erc.executed_at DESC NULLS LAST
+        ),
+        -- A suite's own real runs (nightly, Automation page, or from inside
+        -- an execution run — all the same underlying test_runs/scope='suite'
+        -- rows) never fed the score at all before this: only manually-
+        -- tracked execution_run_test_cases did. Confirmed live: a suite run
+        -- from inside an execution moved that suite's own card but nothing
+        -- else. Matched back to a real test_cases row via
+        -- automated_test_cases.test_case_id — an orphan generated test with
+        -- no such link can't affect this count either way, correctly.
+        latest_suite AS (
+          SELECT DISTINCT ON (atc.test_case_id) atc.test_case_id,
+            CASE trr.status WHEN 'passed' THEN 'pass' WHEN 'failed' THEN 'fail' ELSE 'blocked' END AS status,
+            tr.completed_at AS at
+          FROM test_run_results trr
+          JOIN test_runs tr ON tr.id = trr.test_run_id
+          JOIN automated_test_cases atc ON atc.suite_id = tr.suite_id AND atc.title = trr.test_title
+          JOIN automation_suites s ON s.id = tr.suite_id
+          WHERE tr.project_id = $1 AND tr.scope = 'suite' AND atc.test_case_id IS NOT NULL AND s.platform = $2
+          ORDER BY atc.test_case_id, tr.completed_at DESC NULLS LAST
+        ),
+        -- Whichever source has the more recent verdict wins per test case —
+        -- a test case tracked both ways (marked manually once, automated
+        -- since) should reflect its true latest state, not whichever source
+        -- happens to be listed first.
+        latest_execution AS (
+          SELECT COALESCE(m.test_case_id, su.test_case_id) AS test_case_id,
+            CASE
+              WHEN m.at IS NULL THEN su.status
+              WHEN su.at IS NULL THEN m.status
+              WHEN m.at >= su.at THEN m.status
+              ELSE su.status
+            END AS status
+          FROM latest_manual m
+          FULL OUTER JOIN latest_suite su ON su.test_case_id = m.test_case_id
         )
         SELECT
           COUNT(DISTINCT tc.id)::int AS total,
@@ -325,12 +384,39 @@ router.get('/:id/health', requireTenantAccess, async (req, res) => {
 
     const [testCaseRows, bugRows, coverageRows, trendRows, weekRows, priorWeekRows, automatedCatchRows, requirementCoverageRows, uncoveredRequirementRows, bugHotspotRows] = await Promise.all([
       req.db.query(`
-        WITH latest_execution AS (
-          SELECT DISTINCT ON (erc.test_case_id) erc.test_case_id, erc.status
+        WITH latest_manual AS (
+          SELECT DISTINCT ON (erc.test_case_id) erc.test_case_id, erc.status, erc.executed_at AS at
           FROM execution_run_test_cases erc
           JOIN execution_runs er ON er.id = erc.execution_run_id
           WHERE er.project_id = $1 AND erc.status != 'not_run'
           ORDER BY erc.test_case_id, erc.executed_at DESC NULLS LAST
+        ),
+        -- A suite's own real runs (nightly, Automation page, or from inside
+        -- an execution run) never fed this at all before — only manually-
+        -- tracked execution_run_test_cases did. Confirmed live: a suite run
+        -- from inside an execution moved that suite's own card but never
+        -- this project-wide number. Matched back to a real test_cases row
+        -- via automated_test_cases.test_case_id.
+        latest_suite AS (
+          SELECT DISTINCT ON (atc.test_case_id) atc.test_case_id,
+            CASE trr.status WHEN 'passed' THEN 'pass' WHEN 'failed' THEN 'fail' ELSE 'blocked' END AS status,
+            tr.completed_at AS at
+          FROM test_run_results trr
+          JOIN test_runs tr ON tr.id = trr.test_run_id
+          JOIN automated_test_cases atc ON atc.suite_id = tr.suite_id AND atc.title = trr.test_title
+          WHERE tr.project_id = $1 AND tr.scope = 'suite' AND atc.test_case_id IS NOT NULL
+          ORDER BY atc.test_case_id, tr.completed_at DESC NULLS LAST
+        ),
+        latest_execution AS (
+          SELECT COALESCE(m.test_case_id, su.test_case_id) AS test_case_id,
+            CASE
+              WHEN m.at IS NULL THEN su.status
+              WHEN su.at IS NULL THEN m.status
+              WHEN m.at >= su.at THEN m.status
+              ELSE su.status
+            END AS status
+          FROM latest_manual m
+          FULL OUTER JOIN latest_suite su ON su.test_case_id = m.test_case_id
         )
         SELECT
           COUNT(DISTINCT tc.id)::int AS total,
