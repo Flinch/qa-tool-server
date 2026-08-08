@@ -102,14 +102,24 @@ async function segmentOrDiffRequirements(db, projectId, rawText, {
 
   // Existing feature names for this project, passed to the AI as context so
   // it reuses a real feature instead of minting a near-duplicate when a
-  // requirement clearly belongs to one already tracked.
+  // requirement clearly belongs to one already tracked. Only features with
+  // at least one requirement already linked count as "established" here —
+  // every project is seeded with one empty "General" feature at provisioning
+  // (scripts/provisionTenant.js), and surfacing that as an "existing feature,
+  // reuse when it fits" option was quietly biasing the AI to dump everything
+  // into it instead of proposing real categories, especially on a brand-new
+  // project's very first batch (its only "existing" feature was that empty
+  // placeholder). A feature actually earns a place in this list by being
+  // used, not by merely existing.
   const { rows: existingFeatures } = await db.query(
-    `SELECT name FROM features WHERE project_id=$1 ORDER BY name`,
+    `SELECT f.name FROM features f
+     WHERE f.project_id=$1 AND EXISTS (SELECT 1 FROM requirements r WHERE r.feature_id = f.id AND r.status='active')
+     ORDER BY f.name`,
     [projectId]
   )
   const featureContext = existingFeatures.length > 0
     ? existingFeatures.map(f => f.name).join(', ')
-    : '(none yet — propose new ones)'
+    : '(none yet — propose a coherent, specific set based on what the requirements/observed app behavior actually describe, not a single generic catch-all)'
 
   const guidance = instructions?.trim()
     ? `\n\nAdditional guidance from the user for this pass — follow it (it may affect scope, what to skip, or how high-level vs. comprehensive to be): ${instructions.trim()}`
