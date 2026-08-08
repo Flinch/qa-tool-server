@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>sauce-demo-android — Maestro report</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #17171a; color: #e6e6e6; margin: 0; padding: 2.5rem 1.5rem; }
+  .wrap { max-width: 780px; margin: 0 auto; }
+  h1 { font-size: 1.2rem; margin: 0 0 0.25rem; }
+  .meta { color: #999; font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .summary { display: flex; gap: 1.5rem; margin-bottom: 2rem; font-size: 0.85rem; }
+  .summary b { font-size: 1.3rem; display: block; }
+  .row { border: 1px solid #333; border-radius: 4px; padding: 0.9rem 1rem; margin-bottom: 0.6rem; }
+  .row-head { display: flex; align-items: center; gap: 0.7rem; }
+  .status { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; border: 1px solid; border-radius: 3px; padding: 0.1rem 0.5rem; }
+  .title { font-weight: 600; flex: 1; }
+  .duration { color: #999; font-size: 0.8rem; }
+  .error { margin-top: 0.5rem; font-size: 0.82rem; color: #e08a80; white-space: pre-wrap; }
+  .screenshot { margin-top: 0.75rem; max-width: 100%; border: 1px solid #333; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>sauce-demo-android</h1>
+    <div class="meta">android · 2026-08-08T17:37:08.440Z</div>
+    <div class="summary">
+      <div><b>6</b>total</div>
+      <div style="color:#3a9c6f"><b>3</b>passed</div>
+      <div style="color:#c1443a"><b>3</b>failed</div>
+      <div style="color:#a08a2f"><b>0</b>skipped</div>
+    </div>
+    
+    <div class="row">
+      <div class="row-head">
+        <span class="status" style="color:#c1443a;border-color:#c1443a">failed</span>
+        <span class="title">tc-75-browse-catalog-and-add-product-to-cart</span>
+        <span class="duration">31.0s</span>
+      </div>
+      <div class="error">Assertion is false: &quot;1&quot;, id: com.saucelabs.mydemoapp.android:id/cartTV is visible</div>
+      
+    </div>
+
+    <div class="row">
+      <div class="row-head">
+        <span class="status" style="color:#3a9c6f;border-color:#3a9c6f">passed</span>
+        <span class="title">tc-87-product-detail-page-renders-all-required-elements-for-a-vali</span>
+        <span class="duration">8.0s</span>
+      </div>
+      
+      
+    </div>
+
+    <div class="row">
+      <div class="row-head">
+        <span class="status" style="color:#3a9c6f;border-color:#3a9c6f">passed</span>
+        <span class="title">tc-91-sort-catalog-by-price-in-ascending-order</span>
+        <span class="duration">10.0s</span>
+      </div>
+      
+      
+    </div>
+
+    <div class="row">
+      <div class="row-head">
+        <span class="status" style="color:#3a9c6f;border-color:#3a9c6f">passed</span>
+        <span class="title">tc-90-sort-catalog-by-name-in-descending-order</span>
+        <span class="duration">9.0s</span>
+      </div>
+      
+      
+    </div>
+
+    <div class="row">
+      <div class="row-head">
+        <span class="status" style="color:#c1443a;border-color:#c1443a">failed</span>
+        <span class="title">tc-77-add-product-to-cart-and-complete-checkout</span>
+        <span class="duration">50.0s</span>
+      </div>
+      <div class="error">maestro.android.DeviceServerDiedException: Device server died during &#39;isWindowUpdating&#39; on RFCR8026ZTJ (470ms since last byte, connection age 115100ms): StatusRuntimeException: UNAVAILABLE
+	at maestro.android.AndroidDeviceConnection.onGrpcDeath(AndroidDeviceConnection.kt:309)
+	at maestro.android.AndroidDeviceConnection.mapTransport(AndroidDeviceConnection.kt:296)
+	at maestro.android.AndroidDeviceConnection.execute(AndroidDeviceConnection.kt:121)
+	at maestro.drivers.AndroidDriver.waitForWindowToSettle-6OQmXwk(AndroidDriver.kt:731)
+	at maestro.drivers.AndroidDriver.access$waitForWindowToSettle-6OQmXwk(AndroidDriver.kt:70)
+	at maestro.drivers.AndroidDriver$waitForAppToSettle$1.invoke-prqvCes(AndroidDriver.kt:716)
+	at maestro.drivers.AndroidDriver$waitForAppToSettle$1.invoke(AndroidDriver.kt:714)
+	at maestro.utils.Metrics.measured(Metrics.kt:48)
+	at maestro.drivers.AndroidDriver.waitForAppToSettle-5RpGHs4(AndroidDriver.kt:714)
+	at maestro.Maestro$waitForAppToSettle$2.invoke-F9mIFpk(Maestro.kt:573)
+	at maestro.Maestro$waitForAppToSettle$2.invoke(Maestro.kt:572)
+	at kotlinx.coroutines.InterruptibleKt.runInterruptibleInExpectedContext(Interruptible.kt:48)
+	at kotlinx.coroutines.InterruptibleKt.access$runInterruptibleInExpectedContext(Interruptible.kt:1)
+	at kotlinx.coroutines.InterruptibleKt$runInterruptible$2.invokeSuspend(Interruptible.kt:40)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:124)
+	at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:89)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:586)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:820)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:717)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:704)
+Caused by: io.grpc.StatusRuntimeException: UNAVAILABLE
+	at io.grpc.stub.ClientCalls.toStatusRuntimeException(ClientCalls.java:275)
+	at io.grpc.stub.ClientCalls.getUnchecked(ClientCalls.java:256)
+	at io.grpc.stub.ClientCalls.blockingUnaryCall(ClientCalls.java:169)
+	at maestro_android.MaestroDriverGrpc$MaestroDriverBlockingStub.isWindowUpdating(MaestroDriverGrpc.java:789)
+	at maestro.drivers.AndroidDriver.waitForWindowToSettle_6OQmXwk$lambda$58(AndroidDriver.kt:732)
+	at maestro.android.AndroidDeviceConnection.execute(AndroidDeviceConnection.kt:119)
+	... 19 more
+Caused by: java.io.IOException: Command failed (host:transport:RFCR8026ZTJ): device &#39;RFCR8026ZTJ&#39; not found
+	at dadb.adbserver.AdbServer.send$dadb(AdbServer.kt:103)
+	at dadb.adbserver.AdbServerDadb.open(AdbServer.kt:148)
+	at maestro.android.AndroidDeviceConnection.buildChannel$lambda$2(AndroidDeviceConnection.kt:97)
+	at maestro.android.AdbSocket.connect(AdbSocketFactory.kt:40)
+	at maestro.android.AdbSocket.connect(AdbSocketFactory.kt:44)
+	at maestro.android.AdbSocketFactory.createSocket(AdbSocketFactory.kt:19)
+	at maestro.android.AdbSocketFactory.createSocket(AdbSocketFactory.kt:25)
+	at io.grpc.okhttp.OkHttpClientTransport$3.run(OkHttpClientTransport.java:535)
+	at io.grpc.internal.SerializingExecutor.run(SerializingExecutor.java:133)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+	at java.base/java.lang.Thread.run(Thread.java:1516)</div>
+      
+    </div>
+
+    <div class="row">
+      <div class="row-head">
+        <span class="status" style="color:#c1443a;border-color:#c1443a">failed</span>
+        <span class="title">tc-76-user-login-and-logout</span>
+        <span class="duration">0.0s</span>
+      </div>
+      <div class="error">Unknown error</div>
+      
+    </div>
+  </div>
+</body>
+</html>
