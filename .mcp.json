@@ -12,11 +12,7 @@
       "args": [
         "mcp",
         "--no-viewer"
-      ],
-      "env": {
-        "TEST_USER_NAME": "${TEST_USER_NAME}",
-        "TEST_USER_PASSWORD": "${TEST_USER_PASSWORD}"
-      }
+      ]
     },
     "device-status": {
       "command": "node",

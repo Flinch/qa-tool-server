@@ -1,4 +1,5 @@
-import { spawn } from 'child_process'
+import { spawn, execFile } from 'child_process'
+import fs from 'fs'
 import readline from 'readline'
 import https from 'https'
 import http from 'http'
@@ -6,16 +7,32 @@ import http from 'http'
 // APP_ID comes from fetch-run-config.js's writeEnv() (now additive there —
 // see that file's comment) resolving project_test_config.mobile_app_id_ios/
 // android for whichever `platform` this run was dispatched with.
+//
+// TEST_USER_NAME/TEST_USER_PASSWORD are read directly here, by this real
+// Node process, and used ONLY in the raw `maestro test -e ...` CLI call
+// below — never passed into an agent's prompt or the maestro MCP server.
+// Confirmed live (twice) that a Claude Code subagent has no way to get a
+// real secret into a Maestro flow run through the `mcp__maestro__run` tool:
+// Maestro's `${VAR}` substitution requires an explicit `-e KEY=VALUE` CLI
+// flag, which that tool's schema doesn't expose (only device_id/yaml) — so
+// any credential token in an agent-authored flow always resolved to the
+// literal string "undefined". See mobile-login-flow-writer.md for the split
+// this forces: one agent maps the login screen's real structure (never
+// touching a real credential), this script executes it for real afterward.
 const {
   CORRELATION_ID,
   WEBHOOK_BASE_URL,
   WEBHOOK_SECRET,
   APP_ID,
+  TEST_USER_NAME,
+  TEST_USER_PASSWORD,
   GITHUB_RUN_URL,
   INSTRUCTIONS,
   GENERATION_COST_CAP_USD = '5',
   AGENT_TIMEOUT_MS = String(15 * 60 * 1000),
 } = process.env
+
+const LOGIN_FLOW_PATH = 'mobile-explore-login-flow.yaml'
 
 const COST_CAP = Number(GENERATION_COST_CAP_USD)
 const AGENT_TIMEOUT = Number(AGENT_TIMEOUT_MS)
@@ -174,14 +191,81 @@ async function runAgent(prompt) {
   return result
 }
 
+// The one place a real credential ever gets used — a direct CLI call, no
+// agent or MCP tool involved. `-e` is Maestro's own documented mechanism
+// for resolving ${VAR} tokens in a flow file; confirmed working via
+// `maestro test --help` (unlike the mcp__maestro__run tool, which has no
+// equivalent flag). TEST_USER_NAME/PASSWORD are already ::add-mask::ed by
+// fetch-run-config.js, so they're redacted from this step's log too despite
+// appearing in the argv here.
+function runLoginFlow(flowPath) {
+  return new Promise((resolve, reject) => {
+    execFile('maestro', [
+      'test', '--no-ansi',
+      '-e', `TEST_USER_NAME=${TEST_USER_NAME || ''}`,
+      '-e', `TEST_USER_PASSWORD=${TEST_USER_PASSWORD || ''}`,
+      flowPath,
+    ], { maxBuffer: 20 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (stdout) console.log(stdout)
+      if (stderr) console.error(stderr)
+      if (err) {
+        reject(new Error(`Login flow run failed (exit code ${err.code}): ${(stderr || stdout || err.message).slice(0, 1000)}`))
+        return
+      }
+      resolve()
+    })
+  })
+}
+
 async function main() {
   await reportEvent('exploring')
 
+  if (!TEST_USER_NAME || !TEST_USER_PASSWORD) {
+    console.log('No test credentials configured for this project — skipping the login-mapping phase entirely.')
+  }
+
+  // Phase 1: map the login screen's real structure (if any) without ever
+  // touching a real credential — see mobile-login-flow-writer.md for why
+  // this has to be a separate, narrower agent from the explorer below.
+  let loggedIn = false
+  if (TEST_USER_NAME && TEST_USER_PASSWORD) {
+    try {
+      fs.rmSync(LOGIN_FLOW_PATH, { force: true })
+    } catch { /* ignore */ }
+
+    await runAgent(
+      `Use the mobile-login-flow-writer agent to find the login screen (if any) for the real, live mobile app with ` +
+      `app id ${APP_ID}, and write a Maestro login flow to the exact path "${LOGIN_FLOW_PATH}" using ` +
+      `\${TEST_USER_NAME}/\${TEST_USER_PASSWORD} tokens — never a real or probe credential in the written file.`
+    )
+
+    if (fs.existsSync(LOGIN_FLOW_PATH)) {
+      console.log(`Login flow written to ${LOGIN_FLOW_PATH} — running it for real with the actual test account.`)
+      try {
+        await runLoginFlow(LOGIN_FLOW_PATH)
+        loggedIn = true
+        console.log('Login flow completed successfully.')
+      } finally {
+        fs.rmSync(LOGIN_FLOW_PATH, { force: true })
+      }
+    } else {
+      console.log('No login flow was written (no login screen found, or it could not be mapped) — exploring fresh.')
+    }
+  }
+
+  // Phase 2: the actual exploration, now either already logged in (device
+  // state persists across separate `claude -p` invocations since it's a
+  // real physical device, not per-session state) or starting fresh.
+  const stateGuidance = loggedIn
+    ? `\n\nThe app is already open and logged in — a login flow just ran successfully with the real test account. ` +
+      `Do NOT call launchApp with clearState (that would log you back out) — call inspect_screen first to see ` +
+      `where you actually are, then continue.`
+    : ''
   const guidance = INSTRUCTIONS?.trim()
     ? `\n\nAdditional guidance from the user for this exploration — follow it: ${INSTRUCTIONS.trim()}`
     : ''
   const result = await runAgent(
-    `Use the mobile-app-explorer agent to explore the real, live mobile app with app id ${APP_ID} and produce a plain-English summary of its screens, flows, and real UI element names.${guidance}`
+    `Use the mobile-app-explorer agent to explore the real, live mobile app with app id ${APP_ID} and produce a plain-English summary of its screens, flows, and real UI element names.${stateGuidance}${guidance}`
   )
 
   const summary = (result.result || '').trim()

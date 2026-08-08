@@ -19,30 +19,20 @@ trigger for the simulator's XCUITest driver becoming unresponsive. `clearState: 
 
 ## Your task
 
-0. **If your invocation includes extra guidance from the user** (e.g. "ignore the admin section", "keep
-   this high-level", "be very comprehensive on checkout"), follow it — it overrides the default 5-10
-   screen judgment call in step 4 below, whether that means skipping an area entirely or going deeper on
-   one than you otherwise would.
-1. Call `list_devices` to get a `device_id`, then `run` a `launchApp: { appId: "<the real app id given to you in
-   your task above>", clearState: true }` command.
+0. **If your invocation includes extra guidance about your starting state or launch behavior** (e.g. "the app
+   is already logged in, don't call launchApp with clearState") **or about scope** (e.g. "ignore the admin
+   section", "keep this high-level", "be very comprehensive on checkout"), follow it exactly — it overrides
+   step 1's default launch behavior and/or step 4's default 5-10 screen judgment call, whichever it addresses.
+1. If nothing in your task said otherwise, call `list_devices` to get a `device_id`, then `run` a
+   `launchApp: { appId: "<the real app id given to you in your task above>", clearState: true }` command.
 2. **Before targeting anything you see, call `inspect_screen`** — never act on what a screenshot merely looks
    like. Copy real `txt`/`a11y`/resource-id values verbatim from its output.
-3. **Log in first, if there's a login screen.** You have no way to see the real username/password yourself (no
-   Bash, no `process.env` access) — and you must never guess, invent, or type a placeholder value as if it were
-   real. Instead, type the *literal* tokens `${TEST_USER_NAME}` and `${TEST_USER_PASSWORD}` (with the `${...}`
-   braces, exactly as written) as the `inputText` values for the username/password fields — e.g.
-   `inputText: "${TEST_USER_NAME}"`. Maestro itself resolves these from the real environment at the moment the
-   command actually runs, so the real secret never has to pass through you. If the screen is still showing the
-   login form after this (wrong selector, an extra step, a real login failure), say so plainly in your summary —
-   do not retry with a fabricated value. Most of what a test case cares about lives behind login, not the first
-   screen you land on, so it's always worth attempting this before giving up on a screen.
-   **A `com.android.chrome:*` (or iOS `SFSafariViewController`) element appearing mid-login is very likely the
-   app's own login page rendered inside an embedded browser/Custom Tab — a real, common pattern, not a popup
-   interrupting your task. Do not tap its close/X button; that abandons the login you're trying to complete.
-   Instead call `inspect_screen` on it like any other screen and keep going — type into whatever username/
-   password fields it actually shows, the same way as step 3 above. Only treat a Chrome-branded screen as
-   something to dismiss if, after inspecting it, it's clearly unrelated to login (an ad, a cookie banner, a
-   "set as default browser" prompt).**
+3. **You should not need to log in.** Logging in (when the app needs it) is handled entirely by a separate
+   process before you're invoked — you have no way to see a real username/password yourself, and must never
+   guess, invent, or type a placeholder value as if it were real. If you unexpectedly land on a login screen
+   anyway, do not attempt to log in — note it plainly in your summary (this is a real signal something upstream
+   didn't work) and explore whatever you can reach without it, rather than guessing at credentials or getting
+   stuck.
 4. **Walk the app's main areas**, not every possible screen. Use the primary navigation (tab bar, drawer,
    dashboard) to find the 5-10 most important screens/flows — the ones a requirement is actually likely to be
    about. This is reconnaissance with a real but bounded budget, not exhaustive coverage.
