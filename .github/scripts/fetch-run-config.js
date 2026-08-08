@@ -32,6 +32,16 @@ function getJson(url, secret) {
 
 function writeEnv(config) {
   const lines = []
+  // Real login secrets, fetched at runtime rather than from a registered
+  // `secrets.*` context — GitHub's automatic log redaction only knows about
+  // the latter, so without an explicit ::add-mask:: these two print in
+  // plaintext in every step's default env-dump log header (confirmed for
+  // real: a run's log showed the actual password verbatim). add-mask must
+  // run before the value ever gets echoed anywhere, so it's emitted here,
+  // ahead of the GITHUB_ENV write below.
+  if (config.test_credentials?.username) console.log(`::add-mask::${config.test_credentials.username}`)
+  if (config.test_credentials?.password) console.log(`::add-mask::${config.test_credentials.password}`)
+
   if (config.target_url) lines.push(`TARGET_URL=${config.target_url}`)
   if (config.api_base_url) lines.push(`API_BASE_URL=${config.api_base_url}`)
   if (config.test_credentials?.username) lines.push(`TEST_USER_NAME=${config.test_credentials.username}`)
