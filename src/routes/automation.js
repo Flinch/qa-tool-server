@@ -689,7 +689,7 @@ router.post('/auth-setup/generate', ...staffOnlyChain, async (req, res) => {
 // platform. No PR, no code — purely informational, so unlike /generate this
 // never blocks anything and isn't gated behind auth-setup.
 router.post('/explore', ...staffOnlyChain, async (req, res) => {
-  const { platform } = req.body
+  const { platform, instructions } = req.body
   if (!['web', 'ios', 'android'].includes(platform)) return res.status(400).json({ error: 'platform must be web, ios, or android' })
 
   try {
@@ -699,6 +699,7 @@ router.post('/explore', ...staffOnlyChain, async (req, res) => {
       projectId: req.params.id,
       platform,
       userId: req.userId,
+      instructions,
     })
     res.status(202).json(run)
   } catch (e) {

@@ -19,6 +19,10 @@ trigger for the simulator's XCUITest driver becoming unresponsive. `clearState: 
 
 ## Your task
 
+0. **If your invocation includes extra guidance from the user** (e.g. "ignore the admin section", "keep
+   this high-level", "be very comprehensive on checkout"), follow it — it overrides the default 5-10
+   screen judgment call in step 4 below, whether that means skipping an area entirely or going deeper on
+   one than you otherwise would.
 1. Call `list_devices` to get a `device_id`, then `run` a `launchApp: { appId: "$APP_ID", clearState: true }`
    command (the real app id is in `process.env.APP_ID`).
 2. **Before targeting anything you see, call `inspect_screen`** — never act on what a screenshot merely looks

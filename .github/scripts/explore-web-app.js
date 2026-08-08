@@ -13,6 +13,7 @@ const {
   WEBHOOK_SECRET,
   TARGET_URL,
   GITHUB_RUN_URL,
+  INSTRUCTIONS,
   GENERATION_COST_CAP_USD = '5',
   AGENT_TIMEOUT_MS = String(15 * 60 * 1000),
 } = process.env
@@ -177,8 +178,11 @@ async function runAgent(prompt) {
 async function main() {
   await reportEvent('exploring')
 
+  const guidance = INSTRUCTIONS?.trim()
+    ? `\n\nAdditional guidance from the user for this exploration — follow it: ${INSTRUCTIONS.trim()}`
+    : ''
   const result = await runAgent(
-    `Use the web-app-explorer agent to explore the real, live web app at ${TARGET_URL} and produce a plain-English summary of its screens, flows, and real UI element names.`
+    `Use the web-app-explorer agent to explore the real, live web app at ${TARGET_URL} and produce a plain-English summary of its screens, flows, and real UI element names.${guidance}`
   )
 
   const summary = (result.result || '').trim()

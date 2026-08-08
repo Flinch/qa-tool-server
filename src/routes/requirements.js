@@ -75,6 +75,147 @@ router.post('/', staffOnly, async (req, res) => {
   }
 })
 
+// Shared by POST /upload (an actual requirements document/paste) and POST
+// /generate-from-exploration (an app-exploration summary standing in for
+// one) — same "segment fresh, or diff against what's already tracked"
+// decision, same prompts, just parameterized on how the source text is
+// described to the AI (`sourceDescription`/headings) since an exploration
+// summary isn't a written spec and needs to be framed as observed behavior
+// to infer requirements FROM, not text to extract them out of. `instructions`
+// is optional free-text user guidance (scope, granularity) appended to
+// either prompt. No writes to `requirements` here — caller's response is
+// reviewed and edited before POST /apply-diff commits anything.
+async function segmentOrDiffRequirements(db, projectId, rawText, {
+  sourceDescription = 'requirements document',
+  headingCreate = 'Document',
+  headingDiff = 'New document',
+  instructions,
+} = {}) {
+  const { rows: existing } = await db.query(
+    `SELECT r.id, r.title, r.description, COUNT(DISTINCT rtc.test_case_id)::int AS linked_test_case_count
+     FROM requirements r
+     LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
+     WHERE r.project_id=$1 AND r.status='active'
+     GROUP BY r.id`,
+    [projectId]
+  )
+
+  // Existing feature names for this project, passed to the AI as context so
+  // it reuses a real feature instead of minting a near-duplicate when a
+  // requirement clearly belongs to one already tracked.
+  const { rows: existingFeatures } = await db.query(
+    `SELECT name FROM features WHERE project_id=$1 ORDER BY name`,
+    [projectId]
+  )
+  const featureContext = existingFeatures.length > 0
+    ? existingFeatures.map(f => f.name).join(', ')
+    : '(none yet — propose new ones)'
+
+  const guidance = instructions?.trim()
+    ? `\n\nAdditional guidance from the user for this pass — follow it (it may affect scope, what to skip, or how high-level vs. comprehensive to be): ${instructions.trim()}`
+    : ''
+
+  if (existing.length === 0) {
+    const prompt = `You are a senior QA/product analyst. Given the following ${sourceDescription}, break it down into a list of discrete, individually testable requirements, and group them into a small number of coherent product features.
+
+Existing features already tracked for this project (reuse one of these names when a requirement clearly belongs to it, rather than inventing a near-duplicate): ${featureContext}${guidance}
+
+Return ONLY a valid JSON array with no preamble, no markdown, no explanation. Each object must have:
+- "title": string — short, specific requirement name
+- "description": string — the full requirement detail, rewritten clearly if needed
+- "feature_name": string — a short, specific feature/module name this requirement belongs to (reuse an existing one above when it fits, otherwise propose a new concise name)
+- "ambiguity_flag": string or null — a short (one sentence) reason this requirement is ambiguous or missing acceptance criteria (e.g. "no defined error message" or "'quickly' is not a measurable threshold"), or null if it's clear and testable as written
+- "estimated_effort": "S", "M", or "L" — rough testing effort: S = a single straightforward check, M = a few related scenarios/edge cases, L = a multi-step flow or several distinct edge cases to cover
+
+Rules:
+- Split compound requirements into separate items when they describe genuinely different behavior
+- Do not invent requirements that aren't actually in the ${sourceDescription}
+- Aim for individually testable units, not a paragraph-by-paragraph copy
+- Keep the total number of distinct feature_name values small and coherent — group related requirements under the same feature rather than creating a new one for each
+- Only set ambiguity_flag when there's a genuine, specific gap — not for stylistic nitpicks
+
+${headingCreate}:
+${rawText}`
+
+    const message = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4000,
+      messages: [{ role: 'user', content: prompt }],
+    })
+
+    const raw = message.content[0].text.trim()
+    const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
+    const parsed = JSON.parse(cleaned)
+
+    const newItems = parsed.map(r => ({
+      title: r.title, description: r.description || '', feature_name: r.feature_name || '',
+      ambiguity_flag: r.ambiguity_flag || null,
+      estimated_effort: ['S', 'M', 'L'].includes(r.estimated_effort) ? r.estimated_effort : null,
+    }))
+
+    return { mode: 'created', diff: { modified: [], removed: [], new: newItems, unchangedCount: 0 } }
+  }
+
+  // Diff mode — no writes to `requirements` here, just classification.
+  const currentList = existing.map(r => `[id=${r.id}] Title: ${r.title}\nDescription: ${r.description || '(none)'}`).join('\n\n')
+
+  const diffPrompt = `You are a senior QA/product analyst. Compare an updated ${sourceDescription} against the current list of tracked requirements for this project, and classify what changed.
+
+Current requirements:
+${currentList}
+
+${headingDiff}:
+${rawText}
+
+Existing features already tracked for this project (reuse one of these names for a new requirement when it clearly belongs to it, rather than inventing a near-duplicate): ${featureContext}${guidance}
+
+Return ONLY a valid JSON object with no preamble, no markdown, no explanation, with this exact shape:
+{
+  "modified": [{"id": 12, "title": "...", "description": "...", "ambiguity_flag": null, "estimated_effort": "M"}],
+  "removed": [13, 15],
+  "new": [{"title": "...", "description": "...", "feature_name": "...", "ambiguity_flag": null, "estimated_effort": "S"}]
+}
+
+Rules:
+- "modified": existing requirements (use their real id) whose actual meaning or behavior changed based on the ${sourceDescription} above — title/description are the updated versions. Only mark something modified if the meaning changed, not just wording. Do not add "feature_name" to modified items — they keep whatever feature they already have.
+- "removed": ids of existing requirements no longer present in the ${sourceDescription} above at all.
+- "new": requirements described in the ${sourceDescription} above that don't correspond to any existing one. Each needs a "feature_name" — a short feature/module name (reuse an existing one above when it fits, otherwise propose a concise new one). Keep the total number of distinct feature_name values small and coherent.
+- Any existing requirement not mentioned in "modified" or "removed" is assumed unchanged — do not list unchanged ones anywhere.
+- Do not invent requirements that aren't actually reflected in the ${sourceDescription} above.
+- Every "modified" and "new" item needs "ambiguity_flag" (a short one-sentence reason it's ambiguous or missing acceptance criteria, or null if clear and testable) and "estimated_effort" ("S"/"M"/"L" testing effort). Only set ambiguity_flag for a genuine, specific gap, not stylistic nitpicks.`
+
+  const message = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 4000,
+    messages: [{ role: 'user', content: diffPrompt }],
+  })
+
+  const raw = message.content[0].text.trim()
+  const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
+  const diffResult = JSON.parse(cleaned)
+
+  const sanitizeEffort = (e) => ['S', 'M', 'L'].includes(e) ? e : null
+
+  const byId = Object.fromEntries(existing.map(r => [r.id, r]))
+  const modified = (diffResult.modified || [])
+    .filter(m => byId[m.id])
+    .map(m => ({
+      id: m.id, title: m.title, description: m.description || '', old: byId[m.id],
+      ambiguity_flag: m.ambiguity_flag || null, estimated_effort: sanitizeEffort(m.estimated_effort),
+    }))
+  const removed = (diffResult.removed || [])
+    .filter(id => byId[id])
+    .map(id => byId[id])
+  const newItems = (diffResult.new || []).map(n => ({
+    ...n,
+    ambiguity_flag: n.ambiguity_flag || null,
+    estimated_effort: sanitizeEffort(n.estimated_effort),
+  }))
+  const unchangedCount = existing.length - modified.length - removed.length
+
+  return { mode: 'diff', diff: { modified, removed, new: newItems, unchangedCount } }
+}
+
 // POST /upload — parse a requirements document (paste or file). If the
 // project has no active requirements yet, segments the doc and creates them
 // directly (Phase 2). If it already has requirements, diffs the new text
@@ -85,7 +226,6 @@ router.post('/upload', staffOnly, async (req, res) => {
   const { filename, mimetype, data, text, platform } = req.body
   if (!data && !text?.trim()) return res.status(400).json({ error: 'A file or pasted text is required' })
   if (platform !== undefined && !['web', 'ios', 'android'].includes(platform)) return res.status(400).json({ error: 'Invalid platform' })
-  const uploadPlatform = platform || 'web'
 
   try {
     const rawText = data ? await extractDocumentText({ filename, mimetype, data }) : text.trim()
@@ -98,138 +238,49 @@ router.post('/upload', staffOnly, async (req, res) => {
     )
     const doc = docRows[0]
 
-    const { rows: existing } = await req.db.query(
-      `SELECT r.id, r.title, r.description, COUNT(DISTINCT rtc.test_case_id)::int AS linked_test_case_count
-       FROM requirements r
-       LEFT JOIN requirement_test_cases rtc ON rtc.requirement_id = r.id
-       WHERE r.project_id=$1 AND r.status='active'
-       GROUP BY r.id`,
-      [req.params.id]
-    )
-
-    // Existing feature names for this project, passed to the AI as context so
-    // it reuses a real feature instead of minting a near-duplicate when a
-    // requirement clearly belongs to one already tracked.
-    const { rows: existingFeatures } = await req.db.query(
-      `SELECT name FROM features WHERE project_id=$1 ORDER BY name`,
-      [req.params.id]
-    )
-    const featureContext = existingFeatures.length > 0
-      ? existingFeatures.map(f => f.name).join(', ')
-      : '(none yet — propose new ones)'
-
-    if (existing.length === 0) {
-      // No writes here either, same as diff mode below — the AI's proposed
-      // requirements AND its suggested feature per requirement are both
-      // reviewed and editable before POST /apply-diff commits anything.
-      const prompt = `You are a senior QA/product analyst. Given the following requirements document, break it down into a list of discrete, individually testable requirements, and group them into a small number of coherent product features.
-
-Existing features already tracked for this project (reuse one of these names when a requirement clearly belongs to it, rather than inventing a near-duplicate): ${featureContext}
-
-Return ONLY a valid JSON array with no preamble, no markdown, no explanation. Each object must have:
-- "title": string — short, specific requirement name
-- "description": string — the full requirement detail, rewritten clearly if needed
-- "feature_name": string — a short, specific feature/module name this requirement belongs to (reuse an existing one above when it fits, otherwise propose a new concise name)
-- "ambiguity_flag": string or null — a short (one sentence) reason this requirement is ambiguous or missing acceptance criteria (e.g. "no defined error message" or "'quickly' is not a measurable threshold"), or null if it's clear and testable as written
-- "estimated_effort": "S", "M", or "L" — rough testing effort: S = a single straightforward check, M = a few related scenarios/edge cases, L = a multi-step flow or several distinct edge cases to cover
-
-Rules:
-- Split compound requirements into separate items when they describe genuinely different behavior
-- Do not invent requirements that aren't actually in the document
-- Aim for individually testable units, not a paragraph-by-paragraph copy
-- Keep the total number of distinct feature_name values small and coherent — group related requirements under the same feature rather than creating a new one for each
-- Only set ambiguity_flag when there's a genuine, specific gap — not for stylistic nitpicks
-
-Document:
-${rawText}`
-
-      const message = await anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 4000,
-        messages: [{ role: 'user', content: prompt }],
-      })
-
-      const raw = message.content[0].text.trim()
-      const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
-      const parsed = JSON.parse(cleaned)
-
-      const newItems = parsed.map(r => ({
-        title: r.title, description: r.description || '', feature_name: r.feature_name || '',
-        ambiguity_flag: r.ambiguity_flag || null,
-        estimated_effort: ['S', 'M', 'L'].includes(r.estimated_effort) ? r.estimated_effort : null,
-      }))
-
-      return res.status(201).json({
-        mode: 'created',
-        document: doc,
-        diff: { modified: [], removed: [], new: newItems, unchangedCount: 0 },
-      })
-    }
-
-    // Diff mode — no writes to `requirements` here, just classification.
-    const currentList = existing.map(r => `[id=${r.id}] Title: ${r.title}\nDescription: ${r.description || '(none)'}`).join('\n\n')
-
-    const diffPrompt = `You are a senior QA/product analyst. Compare an updated requirements document against the current list of tracked requirements for this project, and classify what changed.
-
-Current requirements:
-${currentList}
-
-New document:
-${rawText}
-
-Existing features already tracked for this project (reuse one of these names for a new requirement when it clearly belongs to it, rather than inventing a near-duplicate): ${featureContext}
-
-Return ONLY a valid JSON object with no preamble, no markdown, no explanation, with this exact shape:
-{
-  "modified": [{"id": 12, "title": "...", "description": "...", "ambiguity_flag": null, "estimated_effort": "M"}],
-  "removed": [13, 15],
-  "new": [{"title": "...", "description": "...", "feature_name": "...", "ambiguity_flag": null, "estimated_effort": "S"}]
-}
-
-Rules:
-- "modified": existing requirements (use their real id) whose actual meaning or behavior changed based on the new document — title/description are the updated versions. Only mark something modified if the meaning changed, not just wording. Do not add "feature_name" to modified items — they keep whatever feature they already have.
-- "removed": ids of existing requirements no longer present in the new document at all.
-- "new": requirements described in the new document that don't correspond to any existing one. Each needs a "feature_name" — a short feature/module name (reuse an existing one above when it fits, otherwise propose a concise new one). Keep the total number of distinct feature_name values small and coherent.
-- Any existing requirement not mentioned in "modified" or "removed" is assumed unchanged — do not list unchanged ones anywhere.
-- Do not invent requirements that aren't actually in the document.
-- Every "modified" and "new" item needs "ambiguity_flag" (a short one-sentence reason it's ambiguous or missing acceptance criteria, or null if clear and testable) and "estimated_effort" ("S"/"M"/"L" testing effort). Only set ambiguity_flag for a genuine, specific gap, not stylistic nitpicks.`
-
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 4000,
-      messages: [{ role: 'user', content: diffPrompt }],
-    })
-
-    const raw = message.content[0].text.trim()
-    const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
-    const diffResult = JSON.parse(cleaned)
-
-    const sanitizeEffort = (e) => ['S', 'M', 'L'].includes(e) ? e : null
-
-    const byId = Object.fromEntries(existing.map(r => [r.id, r]))
-    const modified = (diffResult.modified || [])
-      .filter(m => byId[m.id])
-      .map(m => ({
-        id: m.id, title: m.title, description: m.description || '', old: byId[m.id],
-        ambiguity_flag: m.ambiguity_flag || null, estimated_effort: sanitizeEffort(m.estimated_effort),
-      }))
-    const removed = (diffResult.removed || [])
-      .filter(id => byId[id])
-      .map(id => byId[id])
-    const newItems = (diffResult.new || []).map(n => ({
-      ...n,
-      ambiguity_flag: n.ambiguity_flag || null,
-      estimated_effort: sanitizeEffort(n.estimated_effort),
-    }))
-    const unchangedCount = existing.length - modified.length - removed.length
-
-    res.status(201).json({
-      mode: 'diff',
-      document: doc,
-      diff: { modified, removed, new: newItems, unchangedCount },
-    })
+    const { mode, diff } = await segmentOrDiffRequirements(req.db, req.params.id, rawText)
+    res.status(201).json({ mode, document: doc, diff })
   } catch (e) {
     console.error('Requirement upload error:', e)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// POST /generate-from-exploration — for a project with no requirements doc
+// at all (or one being automated without one): stand in the persisted
+// "Explore app" summary (app_explorations) for an uploaded document and run
+// it through the exact same segment-or-diff pipeline as POST /upload, so the
+// result lands in the same review UI. Requires an exploration to already
+// exist for `platform` — triggering a fresh one is POST /automation/explore,
+// a separate step the frontend calls first when needed.
+router.post('/generate-from-exploration', staffOnly, async (req, res) => {
+  const { platform, instructions } = req.body
+  if (!['web', 'ios', 'android'].includes(platform)) return res.status(400).json({ error: 'platform must be web, ios, or android' })
+
+  try {
+    const { rows: expRows } = await req.db.query(
+      `SELECT summary, created_at FROM app_explorations WHERE project_id=$1 AND platform=$2`,
+      [req.params.id, platform]
+    )
+    const exploration = expRows[0]
+    if (!exploration) return res.status(400).json({ error: `No exploration found for "${platform}" yet — explore the app first.` })
+
+    const { rows: docRows } = await req.db.query(
+      `INSERT INTO requirement_documents (project_id, filename, raw_text, uploaded_by, source)
+       VALUES ($1,$2,$3,$4,'exploration') RETURNING *`,
+      [req.params.id, `App exploration (${platform}, ${new Date(exploration.created_at).toLocaleDateString()})`, exploration.summary, req.userId]
+    )
+    const doc = docRows[0]
+
+    const { mode, diff } = await segmentOrDiffRequirements(req.db, req.params.id, exploration.summary, {
+      sourceDescription: 'summary of what was actually observed while exploring the live app (this is not a written spec — infer the testable requirements this observed behavior implies)',
+      headingCreate: 'Observed app behavior',
+      headingDiff: 'New observed app behavior',
+      instructions,
+    })
+    res.status(201).json({ mode, document: doc, diff })
+  } catch (e) {
+    console.error('Requirements generate-from-exploration error:', e)
     res.status(500).json({ error: e.message })
   }
 })
@@ -383,10 +434,19 @@ router.post('/generate-test-cases/review', staffOnly, async (req, res) => {
       }
     }
 
+    // Surfaces whether live exploration data actually informed this batch —
+    // previously this was silent (the AI prompt used it if present with no
+    // visible trace), so staff had no way to tell a grounded diff from a
+    // requirements-text-only guess.
+    const explorationCoverage = Object.fromEntries(
+      platforms.map(p => [p, { explored: explorationsByPlatform.has(p), created_at: explorationsByPlatform.get(p)?.created_at || null }])
+    )
+
     res.json({
       diff: { modified, removed, new: newItems },
       unchangedCount: requirements.length - reviewedCount,
       requirementTitleById,
+      explorationCoverage,
     })
   } catch (e) {
     console.error('Requirements generate-test-cases review error:', e)

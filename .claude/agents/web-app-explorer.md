@@ -12,6 +12,10 @@ final response; there is no file to create and nothing to fix or verify.
 
 ## Your task
 
+0. **If your invocation includes extra guidance from the user** (e.g. "ignore the admin section", "keep
+   this high-level", "be very comprehensive on checkout"), follow it — it overrides the default 5-10
+   screen judgment call in step 2 below, whether that means skipping an area entirely or going deeper on
+   one than you otherwise would.
 1. **Log in first, if there's a login screen.** Credentials are in `process.env.TEST_USER_NAME` /
    `process.env.TEST_USER_PASSWORD` when the app needs them. Most of what a test case cares about lives
    behind login, not on the public landing page — don't stop at the login form.

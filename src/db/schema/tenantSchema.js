@@ -759,4 +759,20 @@ CREATE TABLE IF NOT EXISTS app_explorations (
   created_at        TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(project_id, platform)
 );
+
+-- "Generate requirements from app" reuses the same explore pipeline above,
+-- then runs its persisted summary through the same segment-or-diff logic
+-- POST /upload already uses for a real uploaded document — so the resulting
+-- requirements attach to a real requirement_documents row exactly like an
+-- upload would. source just records which path produced it, for future
+-- traceability (not read anywhere yet).
+ALTER TABLE requirement_documents ADD COLUMN IF NOT EXISTS
+  source TEXT NOT NULL DEFAULT 'upload' CHECK (source IN ('upload','exploration'));
+
+-- Free-text guidance a user optionally supplies for an explore run (e.g.
+-- "ignore the admin section", "keep these high-level") — threaded straight
+-- through to the workflow_dispatch inputs (see triggerExploreRun), not
+-- fetched back via GET /run-config. Persisted here purely for audit/debug
+-- visibility into what a given run was asked to do.
+ALTER TABLE generation_runs ADD COLUMN IF NOT EXISTS instructions TEXT;
 `

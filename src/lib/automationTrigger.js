@@ -617,7 +617,7 @@ export async function triggerAuthSetupRun({ db, tenantId, projectId, userId }) {
 // GITHUB_ORANGEHRM_EXPLORE_WORKFLOW_ID exists yet; add one (and its own
 // explore-web-app-orangehrm.yml) if that project needs this before a
 // second self-hosted project makes the general pattern worth it.
-export async function triggerExploreRun({ db, tenantId, projectId, platform, userId }) {
+export async function triggerExploreRun({ db, tenantId, projectId, platform, userId, instructions }) {
   if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
     throw new TriggerError(500, 'Test generation workflow is not configured on the server')
   }
@@ -632,11 +632,15 @@ export async function triggerExploreRun({ db, tenantId, projectId, platform, use
   }
 
   const correlationId = crypto.randomUUID()
+  // Capped defensively — this rides along in a GitHub workflow_dispatch
+  // inputs payload and an agent prompt, neither of which needs more than a
+  // few sentences of steering.
+  const trimmedInstructions = instructions?.trim()?.slice(0, 1000) || null
 
   const { rows } = await db.query(
-    `INSERT INTO generation_runs (project_id, suite_id, correlation_id, status, kind, platform, created_by)
-     VALUES ($1,NULL,$2,'pending','explore',$3,$4) RETURNING *`,
-    [projectId, correlationId, platform, userId]
+    `INSERT INTO generation_runs (project_id, suite_id, correlation_id, status, kind, platform, created_by, instructions)
+     VALUES ($1,NULL,$2,'pending','explore',$3,$4,$5) RETURNING *`,
+    [projectId, correlationId, platform, userId, trimmedInstructions]
   )
   await recordDispatch(correlationId, tenantId, 'generation_run')
 
@@ -655,6 +659,7 @@ export async function triggerExploreRun({ db, tenantId, projectId, platform, use
         inputs: {
           correlation_id: correlationId,
           platform,
+          instructions: trimmedInstructions || '',
         },
       }),
     }

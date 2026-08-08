@@ -11,6 +11,10 @@ on:
         description: 'web'
         required: true
         type: string
+      instructions:
+        description: 'Optional free-text guidance for this exploration pass (e.g. skip a section, target depth)'
+        required: false
+        type: string
 
 # No contents/pull-requests permissions needed — unlike every other
 # generation pipeline, this one never writes a file or opens a PR. It only
@@ -64,4 +68,5 @@ jobs:
           GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GENERATION_COST_CAP_USD: ${{ vars.GENERATION_COST_CAP_USD || '5' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          INSTRUCTIONS: ${{ inputs.instructions }}
         run: node .github/scripts/explore-web-app.js
