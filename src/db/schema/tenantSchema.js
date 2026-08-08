@@ -515,11 +515,10 @@ CREATE TABLE IF NOT EXISTS project_test_config (
 -- triggerAuthSetupRun): rows of this kind have suite_id=NULL (not
 -- suite-scoped) and reuse target_title to stash the target_url they were
 -- generated against, so status resolution can detect a stale run after a
--- project's target changes. Same drop-then-recreate pattern as
--- automation_suites_engine_check above.
-ALTER TABLE generation_runs DROP CONSTRAINT IF EXISTS generation_runs_kind_check;
-ALTER TABLE generation_runs ADD CONSTRAINT generation_runs_kind_check
-  CHECK (kind IN ('generate','heal','auth_setup'));
+-- project's target changes. (The actual CHECK constraint widening for this
+-- and every later kind lives in ONE place further down, not repeated
+-- per-kind here — see the comment above generation_runs_kind_check's final
+-- definition for why.)
 
 -- Archived (not deleted) state for test_cases — set when a test case loses
 -- its LAST linked requirement, either via the diff-based generation review
@@ -625,11 +624,8 @@ ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS triggered_from TEXT;
 -- not yet the roster's live suite_id. GET /generation-runs applies the roster
 -- update (automated_test_cases.suite_id = target_suite_id) only once it
 -- confirms the PR merged, via the same live getPrStatus check that route
--- already runs per row for other kinds. Same drop-then-recreate pattern as
--- automation_suites_engine_check above.
-ALTER TABLE generation_runs DROP CONSTRAINT IF EXISTS generation_runs_kind_check;
-ALTER TABLE generation_runs ADD CONSTRAINT generation_runs_kind_check
-  CHECK (kind IN ('generate','heal','auth_setup','move'));
+-- already runs per row for other kinds. (kind='move' is added to the CHECK
+-- constraint in its one consolidated definition further down.)
 
 ALTER TABLE generation_runs ADD COLUMN IF NOT EXISTS
   target_suite_id INTEGER REFERENCES automation_suites(id) ON DELETE SET NULL;
@@ -743,6 +739,20 @@ WHERE er.project_id = single.project_id AND er.platform IS NULL;
 -- support all three platforms, hence the new platform column below
 -- (auth_setup has no equivalent column; GET /run-config's UNION branch for
 -- it just hardcodes 'web').
+--
+-- generation_runs_kind_check's ONE consolidated definition: this whole
+-- schema file replays on every deploy (railway.toml's startCommand), so
+-- every earlier "widen the CHECK to add kind X" drop-then-recreate that used
+-- to live inline near each kind's own comment (auth_setup's, then move's)
+-- was a real bug waiting to happen — on a database that already has a real
+-- 'explore' row, replaying an OLDER, narrower version of this same
+-- constraint (e.g. one written back when only 'move' existed) fails outright
+-- with "check constraint ... is violated by some row", because at THAT
+-- point in the replayed script the newer kind isn't in the list yet. Caught
+-- for real: this exact failure broke a production deploy once a live
+-- kind='explore' row existed. Fixed by keeping only this single, final,
+-- always-current list — adding a new kind in the future means editing THIS
+-- CHECK in place, never adding another drop-then-recreate block elsewhere.
 ALTER TABLE generation_runs DROP CONSTRAINT IF EXISTS generation_runs_kind_check;
 ALTER TABLE generation_runs ADD CONSTRAINT generation_runs_kind_check
   CHECK (kind IN ('generate','heal','auth_setup','move','explore'));
