@@ -2,13 +2,11 @@
 // field, used by every AI prompt that generates or rewrites test cases
 // (generateTestCasesFromRequirements.js, combineTestCases.js).
 //
-// automationCandidate used to mean "is this technically scriptable" —
-// which made a trivial "form shows a validation error" check just as
-// eligible as a real top-to-bottom checkout flow, since both have
-// deterministic steps and a clear assertion. That conflated two different
-// questions. It's reserved now for the curated, deliberately small set of
-// critical, cross-cutting, top-to-bottom flows produced by the dedicated
-// "review critical flows" path (generateCriticalFlows.js) — not something
-// per-requirement or combine generation should set true on their own.
-export const AUTOMATION_GUIDANCE = `- "automationCandidate": boolean — almost always false. This is reserved for a small, deliberately curated set of critical end-to-end flows maintained separately (via a dedicated "review critical flows" pass that reasons over the whole requirement set at once) — not something to set true here just because a test happens to be scriptable. Mark true only in the rare case this individual test IS itself already a genuine, self-contained, top-to-bottom critical journey through the app's core functionality — not merely because it has deterministic steps and a clear assertion.
+// Back to the broader "is this technically scriptable" meaning: any test
+// case with deterministic steps and a clear pass/fail assertion is eligible,
+// not just curated critical end-to-end flows or API tests — a
+// straightforward functional or integration check is just as valid a
+// candidate as a top-to-bottom journey, as long as it doesn't rely on human
+// judgment (visual design review, subjective wording, etc.) to verify.
+export const AUTOMATION_GUIDANCE = `- "automationCandidate": boolean — true if this test case is a good fit for automation: deterministic steps, a clear pass/fail assertion, and no reliance on human judgment to verify. Not limited to critical end-to-end flows or API tests — functional and integration checks are equally eligible whenever they're reliably scriptable. False only when the test genuinely can't be scripted reliably (e.g. it depends on subjective visual/design judgment, or on something outside the app's own behavior).
 - "automationReasoning": string — one short sentence explaining the automationCandidate call (omit or leave empty when automationCandidate is false)`
