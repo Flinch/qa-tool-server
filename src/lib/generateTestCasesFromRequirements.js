@@ -12,10 +12,21 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 // and generateCriticalFlows.js already use. Does not touch the database —
 // callers own applying the reviewed diff.
 //
-// `requirements` — each item: { id, title, description, testCases: [{id,
-// title, type, steps, expected}] } — testCases is that requirement's
+// `requirements` — each item: { id, title, description, platform, testCases:
+// [{id, title, type, steps, expected}] } — testCases is that requirement's
 // CURRENTLY linked test cases (empty array for a requirement with none yet).
-export async function reviewTestCasesForRequirements(requirements) {
+//
+// `explorationsByPlatform` — optional Map<platform, {summary, created_at}>
+// from a prior "Explore app" run (see automationTrigger.js's
+// triggerExploreRun). This is the only place live app knowledge enters an
+// otherwise pure text-in/text-out pipeline — without it, steps are guessed
+// from requirement wording alone, which is often vague relative to how the
+// real UI actually behaves. Keyed by platform, not passed globally, since
+// one batched call can span requirements of different platforms at once.
+// Omitted entirely (not even a placeholder) for a requirement whose platform
+// was never explored — same "honest absence beats a fabricated guess"
+// posture used elsewhere in this codebase.
+export async function reviewTestCasesForRequirements(requirements, explorationsByPlatform = new Map()) {
   const list = requirements.map(r => {
     const existing = (r.testCases || []).length > 0
       ? r.testCases.map(tc => {
@@ -23,7 +34,11 @@ export async function reviewTestCasesForRequirements(requirements) {
           return `  [id=${tc.id}] Title: ${tc.title}\n  Type: ${tc.type}\n  Steps:\n${steps}\n  Expected: ${tc.expected || '(none)'}`
         }).join('\n\n')
       : '  (none tracked yet)'
-    return `[requirementId=${r.id}] Title: ${r.title}\nDescription: ${r.description || '(none)'}\nCurrently linked test cases:\n${existing}`
+    const exploration = explorationsByPlatform.get(r.platform)
+    const explorationBlock = exploration
+      ? `\nKnown app behavior (${r.platform}, from a live exploration on ${new Date(exploration.created_at).toLocaleDateString()}): ${exploration.summary}\n(Ground steps in this where relevant — the app may have changed since.)`
+      : ''
+    return `[requirementId=${r.id}] Title: ${r.title}\nDescription: ${r.description || '(none)'}${explorationBlock}\nCurrently linked test cases:\n${existing}`
   }).join('\n\n---\n\n')
 
   const prompt = `You are a senior QA engineer. For each of the following requirements, decide what test case(s) SHOULD exist to verify it right now, and classify the difference against what's currently linked to it.

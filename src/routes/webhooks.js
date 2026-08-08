@@ -443,7 +443,14 @@ router.get('/run-config/:correlationId', verifySecret, async (req, res) => {
        -- Playwright-only concept today (no mobile equivalent).
        SELECT gr.project_id, 'web' AS suite_platform
        FROM generation_runs gr
-       WHERE gr.correlation_id = $1 AND gr.kind = 'auth_setup'`,
+       WHERE gr.correlation_id = $1 AND gr.kind = 'auth_setup'
+       UNION ALL
+       -- "Explore app" is also suite-less, but unlike auth_setup it isn't
+       -- web-only — its own platform column (set at dispatch time, since
+       -- there's no suite to derive it from) is the source of truth here.
+       SELECT gr.project_id, gr.platform AS suite_platform
+       FROM generation_runs gr
+       WHERE gr.correlation_id = $1 AND gr.kind = 'explore'`,
       [req.params.correlationId]
     )
     const run = runRows[0]
@@ -581,7 +588,7 @@ router.get('/generation-history/:correlationId', verifySecret, async (req, res) 
 // GET /generation-payload above — correlation_id is the only identifier in
 // this payload at all.
 router.post('/generation-events', verifySecret, async (req, res) => {
-  const { correlation_id, status, pr_url, branch_name, error_message, github_run_url } = req.body
+  const { correlation_id, status, pr_url, branch_name, error_message, github_run_url, summary } = req.body
 
   if (!GENERATION_STATUSES.includes(status)) {
     return res.status(400).json({ error: `status must be one of: ${GENERATION_STATUSES.join(', ')}` })
@@ -593,7 +600,7 @@ router.post('/generation-events', verifySecret, async (req, res) => {
     if (!db) return res.status(404).json({ error: 'Unknown correlation id' })
 
     const { rows: existing } = await db.query(
-      `SELECT id FROM generation_runs WHERE correlation_id=$1`,
+      `SELECT id, project_id, platform FROM generation_runs WHERE correlation_id=$1`,
       [correlation_id]
     )
     if (!existing[0]) return res.status(404).json({ error: 'Unknown correlation id' })
@@ -616,6 +623,18 @@ router.post('/generation-events', verifySecret, async (req, res) => {
       [status, pr_url || null, branch_name || null, error_message || null, github_run_url || null, isTerminal, correlation_id]
     )
     const run = rows[0]
+
+    // "Explore app" (kind='explore') has no PR — its result IS this text,
+    // reported directly on the same 'completed' event every other pipeline
+    // already sends. One row per project+platform, overwritten on re-explore.
+    if (summary && status === 'completed') {
+      await db.query(
+        `INSERT INTO app_explorations (project_id, platform, summary, generation_run_id)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (project_id, platform) DO UPDATE SET summary=$3, generation_run_id=$4, created_at=NOW()`,
+        [existing[0].project_id, existing[0].platform, summary, run.id]
+      )
+    }
 
     broadcast(tenantId, 'generation_progress', { generation_run_id: run.id, status, pr_url: run.pr_url })
     if (isTerminal) {

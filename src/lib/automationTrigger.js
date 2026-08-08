@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import { query } from '../db/pool.js' // control-plane pool from here on
 import { broadcast } from './sse.js'
 import { suiteDirectory } from './githubSuiteFiles.js'
+import { resolveTestEnvironment } from './testEnvironment.js'
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN
 const GITHUB_OWNER = process.env.GITHUB_OWNER
@@ -37,6 +38,11 @@ const GITHUB_AUTH_SETUP_WORKFLOW_ID = process.env.GITHUB_AUTH_SETUP_WORKFLOW_ID 
 // platform/engine (no per-platform split like generate/heal/run need, since
 // there's no test execution or per-project auth involved).
 const GITHUB_MOVE_TEST_WORKFLOW_ID = process.env.GITHUB_MOVE_TEST_WORKFLOW_ID // e.g. "move-test.yml"
+// Walks the real, live target and produces a persisted summary of app
+// behavior — no code written, no PR, so (unlike generate/heal) there's
+// exactly one workflow per platform-family, not per platform × engine.
+const GITHUB_EXPLORE_WEB_WORKFLOW_ID = process.env.GITHUB_EXPLORE_WEB_WORKFLOW_ID // e.g. "explore-web-app.yml"
+const GITHUB_EXPLORE_MOBILE_WORKFLOW_ID = process.env.GITHUB_EXPLORE_MOBILE_WORKFLOW_ID // e.g. "explore-mobile-app.yml"
 // Project 7 (the OrangeHRM/"owasp" tenant) runs suite/rerun dispatches
 // against a private, ephemeral, self-hosted OrangeHRM instance spun up
 // inside the CI job itself, instead of the shared public demo every other
@@ -579,6 +585,77 @@ export async function triggerAuthSetupRun({ db, tenantId, projectId, userId }) {
       body: JSON.stringify({
         ref: 'master',
         inputs: { correlation_id: correlationId },
+      }),
+    }
+  )
+
+  if (!ghRes.ok) {
+    const errText = (await ghRes.text()).slice(0, 500)
+    await db.query(
+      `UPDATE generation_runs SET status='failed', error_message=$2, completed_at=NOW() WHERE id=$1`,
+      [rows[0].id, `GitHub Actions dispatch failed: ${errText}`]
+    )
+    throw new TriggerError(502, `GitHub Actions dispatch failed: ${errText}`)
+  }
+
+  return rows[0]
+}
+
+// "Explore app" — an agent walks the real, live target and produces a
+// persisted summary of app behavior (see app_explorations), later injected
+// as context into requirements-based test case generation. No code written,
+// no PR — unlike every other pipeline here, this reports its own result
+// text directly rather than a branch/PR. Web accepts the resolved target
+// (custom or the shared demo fallback — any project can explore its web
+// app, not just ones with a custom target, unlike auth-setup which only
+// makes sense for a custom one). Mobile requires a real resolved app id.
+//
+// Known gap: project 7 (OrangeHRM)'s web target only exists inside an
+// ephemeral self-hosted container spun up by playwright-orangehrm.yml —
+// exploring it against the plain public-demo workflow would hit the same
+// ERR_CONNECTION_REFUSED already documented for generation/heal/run. No
+// GITHUB_ORANGEHRM_EXPLORE_WORKFLOW_ID exists yet; add one (and its own
+// explore-web-app-orangehrm.yml) if that project needs this before a
+// second self-hosted project makes the general pattern worth it.
+export async function triggerExploreRun({ db, tenantId, projectId, platform, userId }) {
+  if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
+    throw new TriggerError(500, 'Test generation workflow is not configured on the server')
+  }
+  const workflowId = platform === 'web' ? GITHUB_EXPLORE_WEB_WORKFLOW_ID : GITHUB_EXPLORE_MOBILE_WORKFLOW_ID
+  if (!workflowId) {
+    throw new TriggerError(500, `No explore workflow configured for "${platform}"`)
+  }
+
+  const env = await resolveTestEnvironment(db, projectId, platform)
+  if (platform !== 'web' && !env.mobileAppId) {
+    throw new TriggerError(400, `No app id configured for "${platform}" — set it on this project's Test Environment first`)
+  }
+
+  const correlationId = crypto.randomUUID()
+
+  const { rows } = await db.query(
+    `INSERT INTO generation_runs (project_id, suite_id, correlation_id, status, kind, platform, created_by)
+     VALUES ($1,NULL,$2,'pending','explore',$3,$4) RETURNING *`,
+    [projectId, correlationId, platform, userId]
+  )
+  await recordDispatch(correlationId, tenantId, 'generation_run')
+
+  const ref = platform === 'web' ? 'master' : GITHUB_MOBILE_GENERATION_REF
+  const ghRes = await fetch(
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${workflowId}/dispatches`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ref,
+        inputs: {
+          correlation_id: correlationId,
+          platform,
+        },
       }),
     }
   )

@@ -3,7 +3,7 @@ import { query as controlQuery } from '../db/pool.js'
 import { requireAuth, requireRole, verifyToken } from '../middleware/auth.js'
 import { requireTenantAccess } from '../middleware/tenantAccess.js'
 import { subscribe, unsubscribe, broadcast } from '../lib/sse.js'
-import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileStaleGenerationRuns, triggerTestCaseRerun, triggerHealRun, triggerAuthSetupRun, triggerMoveRun } from '../lib/automationTrigger.js'
+import { triggerSuiteRun, reconcileStaleRuns, triggerGenerationRun, reconcileStaleGenerationRuns, triggerTestCaseRerun, triggerHealRun, triggerAuthSetupRun, triggerMoveRun, triggerExploreRun } from '../lib/automationTrigger.js'
 import { getPrStatus } from '../lib/githubPrStatus.js'
 import { listSuiteFiles, matchTestCaseToFile } from '../lib/githubSuiteFiles.js'
 import { isAuthSetupBlocking, getAuthSetupStatus } from '../lib/authSetupStatus.js'
@@ -680,6 +680,54 @@ router.post('/auth-setup/generate', ...staffOnlyChain, async (req, res) => {
     res.status(202).json(run)
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message })
+  }
+})
+
+// POST /explore — kick off "Explore app": an agent walks the real, live
+// target for `platform` and produces a persisted summary (app_explorations),
+// later injected as context into requirements-based generation for that
+// platform. No PR, no code — purely informational, so unlike /generate this
+// never blocks anything and isn't gated behind auth-setup.
+router.post('/explore', ...staffOnlyChain, async (req, res) => {
+  const { platform } = req.body
+  if (!['web', 'ios', 'android'].includes(platform)) return res.status(400).json({ error: 'platform must be web, ios, or android' })
+
+  try {
+    const run = await triggerExploreRun({
+      db: req.db,
+      tenantId: req.tenantId,
+      projectId: req.params.id,
+      platform,
+      userId: req.userId,
+    })
+    res.status(202).json(run)
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message })
+  }
+})
+
+// GET /app-explorations — the current exploration snapshot per platform
+// (one row max per platform, see app_explorations' UNIQUE constraint) plus
+// whether a fresh explore run is in flight for it right now, so the
+// frontend can show "exploring…" instead of stale/no data mid-run.
+router.get('/app-explorations', ...staffOnlyChain, async (req, res) => {
+  try {
+    const { rows: explorations } = await req.db.query(
+      `SELECT platform, summary, created_at FROM app_explorations WHERE project_id=$1`,
+      [req.params.id]
+    )
+    const { rows: inFlight } = await req.db.query(
+      `SELECT DISTINCT ON (platform) platform, status
+       FROM generation_runs
+       WHERE project_id=$1 AND kind='explore' AND status NOT IN ('completed','failed')
+       ORDER BY platform, started_at DESC`,
+      [req.params.id]
+    )
+    const inFlightPlatforms = new Set(inFlight.map(r => r.platform))
+    res.json(explorations.map(e => ({ ...e, exploring: inFlightPlatforms.has(e.platform) }))
+      .concat(inFlight.filter(r => !explorations.some(e => e.platform === r.platform)).map(r => ({ platform: r.platform, summary: null, created_at: null, exploring: true }))))
+  } catch (e) {
+    res.status(500).json({ error: e.message })
   }
 })
 

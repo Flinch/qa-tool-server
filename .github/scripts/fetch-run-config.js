@@ -38,6 +38,10 @@ function writeEnv(config) {
   if (config.test_credentials?.password) lines.push(`TEST_USER_PASSWORD=${config.test_credentials.password}`)
   if (config.test_credentials?.displayName) lines.push(`TEST_USER_DISPLAY_NAME=${config.test_credentials.displayName}`)
   if (config.auth_setup_file) lines.push(`AUTH_SETUP_FILE=${config.auth_setup_file}`)
+  // Previously unused by every existing (web-only) caller of this script —
+  // additive for explore-mobile-app.yml, which needs the resolved app id
+  // and has no plan-fetching payload of its own to carry it instead.
+  if (config.app_id) lines.push(`APP_ID=${config.app_id}`)
 
   if (lines.length === 0) return
   if (GITHUB_ENV) {

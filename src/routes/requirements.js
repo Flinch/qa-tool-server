@@ -340,8 +340,19 @@ router.post('/generate-test-cases/review', staffOnly, async (req, res) => {
     const byRequirement = new Map(requirements.map(r => [r.id, []]))
     for (const tc of linkedRows) byRequirement.get(tc.requirement_id).push(tc)
 
+    // Whichever platforms are actually present in this batch — a project
+    // that's explored web but not iOS shouldn't pay for (or receive) an
+    // exploration lookup for a platform none of these requirements use.
+    const platforms = [...new Set(requirements.map(r => r.platform))]
+    const { rows: explorationRows } = await req.db.query(
+      `SELECT platform, summary, created_at FROM app_explorations WHERE project_id=$1 AND platform = ANY($2::text[])`,
+      [req.params.id, platforms]
+    )
+    const explorationsByPlatform = new Map(explorationRows.map(e => [e.platform, e]))
+
     const rawDiff = await reviewTestCasesForRequirements(
-      requirements.map(r => ({ ...r, testCases: byRequirement.get(r.id) }))
+      requirements.map(r => ({ ...r, testCases: byRequirement.get(r.id) })),
+      explorationsByPlatform
     )
 
     // Flatten the AI's per-requirement diffs into one combined diff, same

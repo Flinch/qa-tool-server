@@ -1,0 +1,67 @@
+name: Explore Web App
+
+on:
+  workflow_dispatch:
+    inputs:
+      correlation_id:
+        description: 'Correlation ID linking this run back to a pending generation_runs row (kind=explore)'
+        required: true
+        type: string
+      platform:
+        description: 'web'
+        required: true
+        type: string
+
+# No contents/pull-requests permissions needed — unlike every other
+# generation pipeline, this one never writes a file or opens a PR. It only
+# posts a summary back over the webhook.
+jobs:
+  explore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      # Same reasoning as generate-tests.yml's identical step — a fresh CI
+      # checkout is always an untrusted workspace, and --permission-mode
+      # dontAsk silently denies tools like Write in one without this.
+      - name: Trust this workspace for Claude Code
+        run: |
+          node -e "
+            const fs = require('fs');
+            const file = process.env.HOME + '/.claude.json';
+            const config = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf-8')) : {};
+            config.projects = config.projects || {};
+            config.projects[process.env.GITHUB_WORKSPACE] = {
+              ...(config.projects[process.env.GITHUB_WORKSPACE] || {}),
+              hasTrustDialogAccepted: true,
+            };
+            fs.writeFileSync(file, JSON.stringify(config));
+          "
+
+      - name: Fetch test environment
+        env:
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+          WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+        run: node .github/scripts/fetch-run-config.js
+
+      - name: Explore app
+        env:
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+          WEBHOOK_BASE_URL: ${{ secrets.WEBHOOK_BASE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GENERATION_COST_CAP_USD: ${{ vars.GENERATION_COST_CAP_USD || '5' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node .github/scripts/explore-web-app.js

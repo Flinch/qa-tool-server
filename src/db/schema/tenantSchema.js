@@ -730,4 +730,33 @@ FROM (
   HAVING COUNT(DISTINCT platform) = 1
 ) single
 WHERE er.project_id = single.project_id AND er.platform IS NULL;
+
+-- "Explore app" — a staff-triggered agent walks the real, live target
+-- (project_test_config.target_url for web, mobile_app_id_ios/android for
+-- mobile) and produces a persisted summary of real app behavior, later
+-- injected as extra context into requirements-based test case generation
+-- (which is otherwise a pure text-in/text-out call with zero app
+-- knowledge). One row per project+platform — re-exploring overwrites,
+-- no history needed. Not suite-scoped (there's no suite involved at all),
+-- same reasoning as generation_runs.kind='auth_setup' already being
+-- suite-less — except auth_setup is hardcoded web-only and this needs to
+-- support all three platforms, hence the new platform column below
+-- (auth_setup has no equivalent column; GET /run-config's UNION branch for
+-- it just hardcodes 'web').
+ALTER TABLE generation_runs DROP CONSTRAINT IF EXISTS generation_runs_kind_check;
+ALTER TABLE generation_runs ADD CONSTRAINT generation_runs_kind_check
+  CHECK (kind IN ('generate','heal','auth_setup','move','explore'));
+
+ALTER TABLE generation_runs ADD COLUMN IF NOT EXISTS
+  platform TEXT CHECK (platform IN ('web','ios','android'));
+
+CREATE TABLE IF NOT EXISTS app_explorations (
+  id                SERIAL PRIMARY KEY,
+  project_id        INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  platform          TEXT NOT NULL CHECK (platform IN ('web','ios','android')),
+  summary           TEXT NOT NULL,
+  generation_run_id INTEGER REFERENCES generation_runs(id) ON DELETE SET NULL,
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(project_id, platform)
+);
 `
