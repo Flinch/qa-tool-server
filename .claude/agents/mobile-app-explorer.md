@@ -36,6 +36,13 @@ trigger for the simulator's XCUITest driver becoming unresponsive. `clearState: 
    login form after this (wrong selector, an extra step, a real login failure), say so plainly in your summary —
    do not retry with a fabricated value. Most of what a test case cares about lives behind login, not the first
    screen you land on, so it's always worth attempting this before giving up on a screen.
+   **A `com.android.chrome:*` (or iOS `SFSafariViewController`) element appearing mid-login is very likely the
+   app's own login page rendered inside an embedded browser/Custom Tab — a real, common pattern, not a popup
+   interrupting your task. Do not tap its close/X button; that abandons the login you're trying to complete.
+   Instead call `inspect_screen` on it like any other screen and keep going — type into whatever username/
+   password fields it actually shows, the same way as step 3 above. Only treat a Chrome-branded screen as
+   something to dismiss if, after inspecting it, it's clearly unrelated to login (an ad, a cookie banner, a
+   "set as default browser" prompt).**
 4. **Walk the app's main areas**, not every possible screen. Use the primary navigation (tab bar, drawer,
    dashboard) to find the 5-10 most important screens/flows — the ones a requirement is actually likely to be
    about. This is reconnaissance with a real but bounded budget, not exhaustive coverage.
